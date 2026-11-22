@@ -299,7 +299,7 @@ def upsert_lease(
     *,
     preserve_coordination_root: bool = False,
     preserve_declared_paths: bool = False,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Acquire or renew the lease with one opaque possession generation.
 
@@ -355,7 +355,7 @@ def delete_lease(
     issue_id: int,
     generation: str,
     *,
-    commit: bool = True,
+    commit: bool,
 ) -> bool:
     """Release exactly one lease possession.
 

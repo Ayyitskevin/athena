@@ -73,7 +73,7 @@ _UNGATED = object()
 
 
 def index_document(
-    conn: sqlite3.Connection, *, kind: str, source_id: int, commit: bool = True
+    conn: sqlite3.Connection, *, kind: str, source_id: int, commit: bool
 ) -> None:
     """Make the search_index entry for one source match its live row exactly.
 

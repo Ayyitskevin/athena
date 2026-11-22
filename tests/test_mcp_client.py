@@ -1153,7 +1153,7 @@ def test_mission_control_observation_through_client(tmp_path):
         conn = db.connect(db_file)
         try:
             automation.record_rule_failure(
-                conn, rule["id"], "RuntimeError: operator-visible"
+                conn, rule["id"], "RuntimeError: operator-visible", commit=True
             )
         finally:
             conn.close()

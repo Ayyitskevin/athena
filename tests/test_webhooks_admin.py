@@ -51,24 +51,32 @@ def _login(client, email="a@e.com", password="pw"):
 
 def test_pause_stops_delivery_and_resume_restores_it(tmp_path):
     conn = _conn(tmp_path / "toggle.db")
-    wid = webhooks.create_webhook(conn, url=HOOK, created_by=1, start_cursor=0)["id"]
-    activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=1)
+    wid = webhooks.create_webhook(
+        conn, url=HOOK, created_by=1, start_cursor=0, commit=True
+    )["id"]
+    activity.record(
+        conn, actor_id=1, verb="created", target_kind="issue", target_id=1, commit=True
+    )
 
     # Paused → the delivery pass skips it entirely (cursor untouched).
-    assert webhooks.set_webhook_active(conn, wid, False)["active"] == 0
+    assert webhooks.set_webhook_active(conn, wid, False, commit=True)["active"] == 0
     assert webhooks.deliver_pending(conn, poster=_Poster(), now=NOW) == 0
     assert webhooks.get_webhook(conn, wid)["cursor"] == 0  # nothing lost
 
     # Resumed → it delivers the event it was holding at.
-    assert webhooks.set_webhook_active(conn, wid, True)["active"] == 1
+    assert webhooks.set_webhook_active(conn, wid, True, commit=True)["active"] == 1
     assert webhooks.deliver_pending(conn, poster=_Poster(), now=NOW) == 1
     conn.close()
 
 
 def test_resume_clears_a_stale_backoff(tmp_path):
     conn = _conn(tmp_path / "backoff.db")
-    wid = webhooks.create_webhook(conn, url=HOOK, created_by=1, start_cursor=0)["id"]
-    activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=1)
+    wid = webhooks.create_webhook(
+        conn, url=HOOK, created_by=1, start_cursor=0, commit=True
+    )["id"]
+    activity.record(
+        conn, actor_id=1, verb="created", target_kind="issue", target_id=1, commit=True
+    )
 
     # A failure arms backoff: still active, but gated until next_attempt_at.
     assert (
@@ -81,7 +89,7 @@ def test_resume_clears_a_stale_backoff(tmp_path):
     assert webhooks.deliver_pending(conn, poster=_Poster(), now=NOW) == 0
 
     # Resuming (operator fixed the receiver) clears the gate, so it retries now.
-    cleared = webhooks.set_webhook_active(conn, wid, True)
+    cleared = webhooks.set_webhook_active(conn, wid, True, commit=True)
     assert cleared["failure_count"] == 0
     assert cleared["last_error"] is None
     assert cleared["next_attempt_at"] is None
@@ -91,7 +99,7 @@ def test_resume_clears_a_stale_backoff(tmp_path):
 
 def test_set_active_unknown_webhook_is_none(tmp_path):
     conn = _conn(tmp_path / "missing.db")
-    assert webhooks.set_webhook_active(conn, 999, True) is None
+    assert webhooks.set_webhook_active(conn, 999, True, commit=True) is None
     conn.close()
 
 

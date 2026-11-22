@@ -283,6 +283,7 @@ def test_humans_and_automation_are_not_gated(tmp_path):
             action_type="set_status",
             action_params={"status": "done"},
             created_by=1,
+            commit=True,
         )
         conn.commit()
         conn.close()

@@ -288,6 +288,7 @@ def test_a_waiter_wakes_for_a_visible_event_written_by_another_connection(feed):
         verb="noted",
         target_kind="issue",
         target_id=feed["public_issue"],
+        commit=True,
     )["id"]
     thread.join(timeout=5)
     assert box, "the waiter never returned"
@@ -314,6 +315,7 @@ def test_a_waiter_does_not_wake_for_an_event_it_may_not_see(feed):
         verb="noted",
         target_kind="issue",
         target_id=feed["hidden_issue"],
+        commit=True,
     )["id"]
     thread.join(timeout=5)
     assert box, "the waiter never returned"
@@ -352,6 +354,7 @@ def test_past_the_waiter_cap_the_answer_is_immediate_and_labelled(feed, monkeypa
         verb="noted",
         target_kind="issue",
         target_id=feed["public_issue"],
+        commit=True,
     )
     parked.join(timeout=5)
     assert parked_box and parked_box[0][0].json()["wait"]["outcome"] == "event"

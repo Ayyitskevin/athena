@@ -18,12 +18,12 @@ def _database(path):
 
 
 def _space(conn, key):
-    return spaces.create_space(conn, key=key, name=key, created_by=1)["id"]
+    return spaces.create_space(conn, key=key, name=key, created_by=1, commit=True)["id"]
 
 
 def _page(conn, space_id, title, body=""):
     return pages.create_page(
-        conn, space_id=space_id, title=title, body=body, created_by=1
+        conn, space_id=space_id, title=title, body=body, created_by=1, commit=True
     )["id"]
 
 
@@ -48,7 +48,9 @@ def test_import_renamed_runbook_and_external_namesake(tmp_path, legacy):
     _page(origin, other, "External")
     local = _page(origin, docs, "Local source", "[[Handbook]]")
     external = _page(origin, docs, "External source", "[[External]]")
-    pages.update_page(origin, runbook, title="Renamed handbook", editor_id=1)
+    pages.update_page(
+        origin, runbook, title="Renamed handbook", editor_id=1, commit=True
+    )
     _page(origin, docs, "Handbook")
     bundle = portability.export_bundle(origin, "space", docs)
     if legacy:
@@ -75,7 +77,9 @@ def test_import_renamed_runbook_and_external_namesake(tmp_path, legacy):
         assert links.source_title_targets(target, "page", source_id) == {
             token.lower(): expected_id
         }
-        pages.update_page(target, source_id, editor_id=1, body=body + " retained")
+        pages.update_page(
+            target, source_id, editor_id=1, body=body + " retained", commit=True
+        )
         _assert_edges(
             target, "page", source_id, {expected_id} if expected_id else set()
         )
@@ -89,8 +93,8 @@ def test_legacy_space_import_recovers_distinct_titles_from_page_history(tmp_path
     first = _page(origin, docs, "Alpha")
     second = _page(origin, docs, "Bravo")
     _page(origin, docs, "Procedure", "[[Alpha]] and [[Bravo]]")
-    pages.update_page(origin, first, title="New alpha", editor_id=1)
-    pages.update_page(origin, second, title="New bravo", editor_id=1)
+    pages.update_page(origin, first, title="New alpha", editor_id=1, commit=True)
+    pages.update_page(origin, second, title="New bravo", editor_id=1, commit=True)
     bundle = portability.export_bundle(origin, "space", docs)
     del bundle["title_bindings"]
 
@@ -112,13 +116,16 @@ def test_project_import_does_not_acquire_destination_runbook_on_next_edit(
 ):
     origin = _database(tmp_path / "project.db")
     _page(origin, _space(origin, "OPS"), "On call")
-    project = projects.create_project(origin, name="Handoff", key="OPS", created_by=1)
+    project = projects.create_project(
+        origin, name="Handoff", key="OPS", created_by=1, commit=True
+    )
     issues.create_issue(
         origin,
         title="Investigate",
         body="[[On call]]",
         project_id=project["id"],
         created_by=1,
+        commit=True,
     )
     bundle = portability.export_bundle(origin, "project", project["id"])
     if legacy:
@@ -130,7 +137,7 @@ def test_project_import_does_not_acquire_destination_runbook_on_next_edit(
         "SELECT id FROM issues WHERE title = 'Investigate'"
     ).fetchone()[0]
     assert links.source_title_targets(target, "issue", issue_id) == {"on call": None}
-    issues.update_issue(target, issue_id, body="[[On call]] kept")
+    issues.update_issue(target, issue_id, body="[[On call]] kept", commit=True)
     _assert_edges(target, "issue", issue_id, set())
     origin.close()
     target.close()
@@ -171,7 +178,9 @@ def test_import_distinguishes_missing_binding_from_retryable_forward_reference(
     guide = target.execute(
         "SELECT id, body FROM pages WHERE title = 'Guide'"
     ).fetchone()
-    pages.update_page(target, guide["id"], editor_id=1, body=guide["body"] + " edited")
+    pages.update_page(
+        target, guide["id"], editor_id=1, body=guide["body"] + " edited", commit=True
+    )
     _assert_edges(target, "page", guide["id"], {future})
     origin.close()
     target.close()

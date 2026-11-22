@@ -75,7 +75,7 @@ def test_subresource_404s_for_outsider_on_private_issue(tmp_path, sub):
         assert client.get(url, headers=H_ADMIN).status_code == 200
 
         # Membership opens it up.
-        access.add_project_member(conn, pp, 3, added_by=2)
+        access.add_project_member(conn, pp, 3, added_by=2, commit=True)
         assert client.get(url, headers=H_OUTSIDER).status_code == 200
 
 
@@ -121,7 +121,7 @@ def test_children_list_hides_a_private_child_under_a_public_parent(tmp_path):
         assert [row["id"] for row in client.get(url, headers=H_CREATOR).json()] == [c]
         assert [row["id"] for row in client.get(url, headers=H_ADMIN).json()] == [c]
         # Membership reveals it to the outsider.
-        access.add_project_member(conn, pp, 3, added_by=2)
+        access.add_project_member(conn, pp, 3, added_by=2, commit=True)
         assert [row["id"] for row in client.get(url, headers=H_OUTSIDER).json()] == [c]
         conn.close()
 

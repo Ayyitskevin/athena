@@ -64,16 +64,20 @@ def test_keys_count_from_one_per_project(tmp_path):
     conn = _migrated_conn(tmp_path / "n.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    ath = projects.create_project(conn, name="Athena", key="ATH", created_by=1)
-    mise = projects.create_project(conn, name="Mise", key="MISE", created_by=1)
+    ath = projects.create_project(
+        conn, name="Athena", key="ATH", created_by=1, commit=True
+    )
+    mise = projects.create_project(
+        conn, name="Mise", key="MISE", created_by=1, commit=True
+    )
     a1 = issues.create_issue(
-        conn, title="t", body="", created_by=1, project_id=ath["id"]
+        conn, title="t", body="", created_by=1, project_id=ath["id"], commit=True
     )
     a2 = issues.create_issue(
-        conn, title="t", body="", created_by=1, project_id=ath["id"]
+        conn, title="t", body="", created_by=1, project_id=ath["id"], commit=True
     )
     m1 = issues.create_issue(
-        conn, title="t", body="", created_by=1, project_id=mise["id"]
+        conn, title="t", body="", created_by=1, project_id=mise["id"], commit=True
     )
     assert (a1["key"], a2["key"], m1["key"]) == ("ATH-1", "ATH-2", "MISE-1")
 
@@ -83,7 +87,7 @@ def test_backlog_issue_has_no_key(tmp_path):
     conn = _migrated_conn(tmp_path / "b.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    issue = issues.create_issue(conn, title="loose", body="", created_by=1)
+    issue = issues.create_issue(conn, title="loose", body="", created_by=1, commit=True)
     assert issue["key"] is None
 
 
@@ -94,19 +98,25 @@ def test_moving_an_issue_retires_its_number(tmp_path):
     conn = _migrated_conn(tmp_path / "m.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    ath = projects.create_project(conn, name="Athena", key="ATH", created_by=1)
-    mise = projects.create_project(conn, name="Mise", key="MISE", created_by=1)
-    issues.create_issue(conn, title="t", body="", created_by=1, project_id=ath["id"])
+    ath = projects.create_project(
+        conn, name="Athena", key="ATH", created_by=1, commit=True
+    )
+    mise = projects.create_project(
+        conn, name="Mise", key="MISE", created_by=1, commit=True
+    )
+    issues.create_issue(
+        conn, title="t", body="", created_by=1, project_id=ath["id"], commit=True
+    )
     a2 = issues.create_issue(
-        conn, title="t", body="", created_by=1, project_id=ath["id"]
+        conn, title="t", body="", created_by=1, project_id=ath["id"], commit=True
     )
     assert a2["key"] == "ATH-2"
     # Move ATH-2 to Mise: it gives up 2 and is handed a fresh MISE number.
-    moved = issues.set_project(conn, a2["id"], mise["id"])
+    moved = issues.set_project(conn, a2["id"], mise["id"], commit=True)
     assert moved["key"] == "MISE-1"
     # A new Athena issue must NOT reclaim the retired 2 — it gets 3.
     a3 = issues.create_issue(
-        conn, title="t", body="", created_by=1, project_id=ath["id"]
+        conn, title="t", body="", created_by=1, project_id=ath["id"], commit=True
     )
     assert a3["key"] == "ATH-3"
     # And the retired ATH-2 ref no longer resolves to anything.
@@ -119,11 +129,13 @@ def test_reassigning_same_project_keeps_number(tmp_path):
     conn = _migrated_conn(tmp_path / "s.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    ath = projects.create_project(conn, name="Athena", key="ATH", created_by=1)
-    a1 = issues.create_issue(
-        conn, title="t", body="", created_by=1, project_id=ath["id"]
+    ath = projects.create_project(
+        conn, name="Athena", key="ATH", created_by=1, commit=True
     )
-    again = issues.set_project(conn, a1["id"], ath["id"])
+    a1 = issues.create_issue(
+        conn, title="t", body="", created_by=1, project_id=ath["id"], commit=True
+    )
+    again = issues.set_project(conn, a1["id"], ath["id"], commit=True)
     assert again["key"] == "ATH-1"
 
 
@@ -131,11 +143,13 @@ def test_removing_from_project_clears_key(tmp_path):
     conn = _migrated_conn(tmp_path / "r.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    ath = projects.create_project(conn, name="Athena", key="ATH", created_by=1)
-    a1 = issues.create_issue(
-        conn, title="t", body="", created_by=1, project_id=ath["id"]
+    ath = projects.create_project(
+        conn, name="Athena", key="ATH", created_by=1, commit=True
     )
-    cleared = issues.set_project(conn, a1["id"], None)
+    a1 = issues.create_issue(
+        conn, title="t", body="", created_by=1, project_id=ath["id"], commit=True
+    )
+    cleared = issues.set_project(conn, a1["id"], None, commit=True)
     assert cleared["key"] is None
 
 
@@ -143,9 +157,11 @@ def test_get_by_ref_resolves_id_and_key(tmp_path):
     conn = _migrated_conn(tmp_path / "g.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    ath = projects.create_project(conn, name="Athena", key="ATH", created_by=1)
+    ath = projects.create_project(
+        conn, name="Athena", key="ATH", created_by=1, commit=True
+    )
     a1 = issues.create_issue(
-        conn, title="hi", body="", created_by=1, project_id=ath["id"]
+        conn, title="hi", body="", created_by=1, project_id=ath["id"], commit=True
     )
     assert issues.get_by_ref(conn, str(a1["id"]))["id"] == a1["id"]
     assert issues.get_by_ref(conn, "ATH-1")["id"] == a1["id"]
@@ -256,12 +272,19 @@ def test_key_crosslink_resolves_and_backlinks(tmp_path):
     conn = _migrated_conn(tmp_path / "x.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    ath = projects.create_project(conn, name="Athena", key="ATH", created_by=1)
+    ath = projects.create_project(
+        conn, name="Athena", key="ATH", created_by=1, commit=True
+    )
     target = issues.create_issue(
-        conn, title="Target", body="", created_by=1, project_id=ath["id"]
+        conn, title="Target", body="", created_by=1, project_id=ath["id"], commit=True
     )
     source = issues.create_issue(
-        conn, title="Source", body="see [[ATH-1]]", created_by=1, project_id=ath["id"]
+        conn,
+        title="Source",
+        body="see [[ATH-1]]",
+        created_by=1,
+        project_id=ath["id"],
+        commit=True,
     )
     html = render_body(conn, source["body"])
     assert f'href="/aegis/issues/{target["id"]}"' in str(html)
@@ -277,13 +300,16 @@ def test_broken_key_crosslink_renders_broken_without_backlink(tmp_path):
     conn = _migrated_conn(tmp_path / "xb.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    ath = projects.create_project(conn, name="Athena", key="ATH", created_by=1)
+    ath = projects.create_project(
+        conn, name="Athena", key="ATH", created_by=1, commit=True
+    )
     source = issues.create_issue(
         conn,
         title="Source",
         body="ghost [[ATH-99]]",
         created_by=1,
         project_id=ath["id"],
+        commit=True,
     )
     html = str(render_body(conn, source["body"]))
     assert "xref broken" in html

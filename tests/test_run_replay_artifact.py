@@ -33,6 +33,7 @@ def _rec(conn, *, run_id, parent=None, forked_from=None, target_id=1, verb="crea
             target_kind="issue",
             target_id=target_id,
             detail=f"{verb} issue {target_id}",
+            commit=True,
         )
     finally:
         run_context.reset_forked_from_event_id(fork_token)

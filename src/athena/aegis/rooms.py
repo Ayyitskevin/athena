@@ -58,7 +58,7 @@ def create_room(
     name: str,
     slug: str,
     blurb: str = "",
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     conn.execute(
         "INSERT INTO project_rooms (project_id, slug, name, blurb) VALUES (?, ?, ?, ?)",
@@ -76,7 +76,7 @@ def set_issue_room(
     issue_id: int,
     room_id: int | None,
     *,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     conn.execute("UPDATE issues SET room_id = ? WHERE id = ?", (room_id, issue_id))
     if commit:

@@ -64,7 +64,9 @@ def _actor(conn, uid):
 def _delegated_issue(conn):
     """An issue delegated to AgentA (2) and AgentB (3), owned by 1."""
     admin = _actor(conn, 1)
-    issue = issues.create_issue(conn, title="work", body="do it", created_by=1)
+    issue = issues.create_issue(
+        conn, title="work", body="do it", created_by=1, commit=True
+    )
     for agent_id in (2, 3):
         issue_commands.add_contributor(
             conn,
@@ -654,14 +656,17 @@ def test_holder_yields_with_reason_and_run_stamp(tmp_path, reason, note):
     conn = _migrated_conn(tmp_path / f"yield-{reason}.db")
     _seed(conn)
     issue = _delegated_issue(conn)
-    issues.set_assignee(conn, issue["id"], 2)
-    blocker = issues.create_issue(conn, title="existing blocker", body="", created_by=1)
+    issues.set_assignee(conn, issue["id"], 2, commit=True)
+    blocker = issues.create_issue(
+        conn, title="existing blocker", body="", created_by=1, commit=True
+    )
     reason_text, inserted = dependencies.add_link(
         conn,
         from_id=issue["id"],
         to_id=blocker["id"],
         relation="blocked_by",
         created_by=1,
+        commit=True,
     )
     assert reason_text is None and inserted is True
     lease = _claim(conn, 2, issue["id"])

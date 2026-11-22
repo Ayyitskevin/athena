@@ -448,6 +448,7 @@ def test_event_automation_policy_rejection_records_one_failure(tmp_path):
             action_params={"status": CUSTOM_DONE},
             conditions={"project_id": scenario.project["id"]},
             created_by=scenario.admin["id"],
+            commit=True,
         )
         conn.close()
         changed = client.patch(

@@ -151,7 +151,7 @@ def test_privacy_manage_404s_for_outsider_on_private(tmp_path):
         )
         from athena.core import access
 
-        access.add_project_member(conn, pp, 3, added_by=2)
+        access.add_project_member(conn, pp, 3, added_by=2, commit=True)
         assert (
             client.put(
                 f"/projects/{pp}/visibility",

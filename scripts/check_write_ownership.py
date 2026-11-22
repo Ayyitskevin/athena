@@ -1,9 +1,11 @@
 """Enforce transport write ownership and the activity append-path census.
 
 The doctrine (AGENTS.md's cardinal rule, docs/COMMAND_MIGRATION.md): transports
-— ``web/*``, ``mcp/*``, and ``*_api.py`` — parse transport input and translate
-results. They never execute INSERT/UPDATE/DELETE themselves, and they never
-call a data module's mutating helper directly. A write lives behind a command
+— every module that defines an ``APIRouter`` or registers routes, middleware or
+exception handlers on the app (so ``aegis/api.py``, ``mentor/api.py`` and
+``main.py``), plus ``web/*``, ``mcp/*`` and ``*_api.py`` — parse transport input
+and translate results. They never execute INSERT/UPDATE/DELETE themselves, and
+they never call a data module's mutating helper directly. A write lives behind a command
 module (the ``*_commands.py`` naming convention IS the self-declaration) or
 behind one of the designated data-module writers that COMMAND_MIGRATION.md
 documents: the personal-state category, the login/session flow, and the
@@ -137,9 +139,6 @@ ALLOWED_TRANSPORT_WRITES: dict[tuple[str, str, str], str] = {
     ("athena.web.auth", "athena.core.users", "verify_credentials"): (
         "transparent password rehash on login; the documented bounded exception"
     ),
-    ("athena.web.auth", "athena.core.security_events", "record_failure"): (
-        "best-effort login-failure audit; the refusal must go out regardless"
-    ),
     # --- The auth dependency itself records boundary refusals (scope_denied,
     # revoked_token_used, ...) as part of authenticating, on every transport.
     ("*", "athena.core.identity", "current_actor"): (
@@ -154,6 +153,12 @@ ALLOWED_TRANSPORT_WRITES: dict[tuple[str, str, str], str] = {
     # have no exception here: icarus_commands.apply_callback owns them.
     ("athena.aegis.forge_api", "athena.aegis.forge", "land_delivery"): (
         "the HMAC-verified delivery path writes imported history by design"
+    ),
+    # --- The composition root's startup (main.py's lifespan) brings the schema
+    # current before the first request: DDL and its ledger, with no actor and no
+    # activity event, owned by core/db. It is not a request handler's write.
+    ("athena.main", "athena.core.db", "migrate"): (
+        "startup schema migration in the app lifespan; DDL, not a domain write"
     ),
 }
 
@@ -199,12 +204,71 @@ def _inventory_modules(package_root: Path) -> dict[str, Path]:
     return modules
 
 
-def _is_transport(module: str) -> bool:
-    """Transports are the HTTP/MCP adapters the doctrine binds: the web layer,
-    the MCP server/client, and every REST surface (``*_api.py``)."""
+# Structural transport markers (B5). Constructing a router or the app, or
+# registering a route, router, middleware or exception handler on one, puts the
+# module's functions on the HTTP surface whatever the file is called.
+_ROUTER_CONSTRUCTORS = frozenset({"APIRouter", "FastAPI"})
+_REGISTRATION_METHODS = frozenset(
+    {
+        "add_api_route",
+        "add_api_websocket_route",
+        "add_exception_handler",
+        "add_middleware",
+        "add_route",
+        "add_websocket_route",
+        "api_route",
+        "exception_handler",
+        "include_router",
+        "middleware",
+        "mount",
+        "websocket",
+        "websocket_route",
+    }
+)
+_ROUTE_DECORATORS = frozenset(
+    {"delete", "get", "head", "options", "patch", "post", "put", "trace"}
+)
+
+
+def _registers_routes(tree: ast.AST) -> bool:
+    """True when the module builds a router or the app, or registers a route,
+    router, middleware or exception handler on one (``@x.get(...)``,
+    ``app.add_exception_handler(...)``, ``app.include_router(...)``, ...)."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = (
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else None
+            )
+            if name in _ROUTER_CONSTRUCTORS:
+                return True
+            if isinstance(func, ast.Attribute) and func.attr in _REGISTRATION_METHODS:
+                return True
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for decorator in node.decorator_list:
+                target = decorator.func if isinstance(decorator, ast.Call) else None
+                if (
+                    isinstance(target, ast.Attribute)
+                    and target.attr in _ROUTE_DECORATORS
+                ):
+                    return True
+    return False
+
+
+def _is_transport(module: str, tree: ast.AST) -> bool:
+    """Transports are the adapters the doctrine binds: every module that defines
+    a router or registers routes or exception handlers on the app (structural,
+    so ``aegis/api.py``, ``mentor/api.py`` and ``main.py`` count), plus the web
+    and MCP packages as a whole and every ``*_api.py``, which were transports by
+    name before the structural test and stay so even where a helper module
+    registers nothing."""
     base = module.rpartition(".")[2]
     area = module.partition(".")[2].partition(".")[0]
-    return area in {"web", "mcp"} or base.endswith("_api")
+    return area in {"web", "mcp"} or base.endswith("_api") or _registers_routes(tree)
 
 
 def _is_command_module(module: str) -> bool:
@@ -335,9 +399,12 @@ def build_writer_registry(
     through the static call graph. Transports are excluded from propagation:
     every call inside a transport is checked directly, so transport-local
     helpers add nothing but false hops."""
+    transports = {
+        module for module, tree in trees.items() if _is_transport(module, tree)
+    }
     registry: dict[tuple[str, str], tuple[Path, int]] = {}
     for module, tree in sorted(trees.items()):
-        if _is_transport(module):
+        if module in transports:
             continue
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
@@ -349,7 +416,7 @@ def build_writer_registry(
     while changed:
         changed = False
         for module, tree in sorted(trees.items()):
-            if _is_transport(module):
+            if module in transports:
                 continue
             imports = _import_table(tree, module=module, path=modules[module])
             for node in ast.walk(tree):
@@ -658,10 +725,10 @@ def find_violations(
     violations = find_activity_append_violations(modules, trees)
 
     for module in sorted(modules):
-        if not _is_transport(module):
+        tree = trees[module]
+        if not _is_transport(module, tree):
             continue
         path = modules[module]
-        tree = trees[module]
         for constant in _non_docstring_constants(tree):
             if _WRITE_SQL_RE.search(constant.value):
                 violations.append(

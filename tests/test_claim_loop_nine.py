@@ -30,8 +30,8 @@ def _actor(conn, uid):
 
 def _delegated_pair(conn):
     admin = _actor(conn, 1)
-    first = issues.create_issue(conn, title="one", body="a", created_by=1)
-    second = issues.create_issue(conn, title="two", body="b", created_by=1)
+    first = issues.create_issue(conn, title="one", body="a", created_by=1, commit=True)
+    second = issues.create_issue(conn, title="two", body="b", created_by=1, commit=True)
     for issue in (first, second):
         for agent_id in (2, 3):
             issue_commands.add_contributor(

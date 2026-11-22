@@ -82,7 +82,7 @@ def test_rest_project_list_hides_private(tmp_path):
             assert keys(h) == {"SEC", "OPN"}
 
         # Granting membership reveals it to the outsider.
-        access.add_project_member(conn, priv, 3, added_by=2)
+        access.add_project_member(conn, priv, 3, added_by=2, commit=True)
         assert keys(H_OUTSIDER) == {"SEC", "OPN"}
 
 

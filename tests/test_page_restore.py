@@ -39,10 +39,15 @@ def _space_with_page(conn, *, title="Runbook", body="v1 text", created_by=1):
     conn.execute("INSERT INTO users (email, name) VALUES ('b@e.com', 'B')")
     conn.commit()
     space = spaces.create_space(
-        conn, key="ENG", name="Engineering", created_by=created_by
+        conn, key="ENG", name="Engineering", created_by=created_by, commit=True
     )
     return pages.create_page(
-        conn, space_id=space["id"], title=title, body=body, created_by=created_by
+        conn,
+        space_id=space["id"],
+        title=title,
+        body=body,
+        created_by=created_by,
+        commit=True,
     )
 
 
@@ -55,13 +60,13 @@ def test_restore_makes_prior_content_live_and_keeps_current(tmp_path):
     conn = _migrated_conn(tmp_path / "r.db")
     page = _space_with_page(conn, body="v1 text")
     pages.update_page(
-        conn, page["id"], editor_id=1, body="v2 text"
+        conn, page["id"], editor_id=1, body="v2 text", commit=True
     )  # cuts version 1 (v1)
     pages.update_page(
-        conn, page["id"], editor_id=1, body="v3 text"
+        conn, page["id"], editor_id=1, body="v3 text", commit=True
     )  # cuts version 2 (v2)
 
-    restored = pages.restore_version(conn, page["id"], 1, editor_id=1)
+    restored = pages.restore_version(conn, page["id"], 1, editor_id=1, commit=True)
     assert restored["body"] == "v1 text"  # the old content is live again
     assert pages.get_page(conn, page["id"])["body"] == "v1 text"
     # The displaced live content (v3) is now the newest version; nothing lost.
@@ -74,9 +79,11 @@ def test_restore_missing_page_or_version_returns_none(tmp_path):
     conn = _migrated_conn(tmp_path / "rm.db")
     page = _space_with_page(conn)
     assert (
-        pages.restore_version(conn, page["id"], 99, editor_id=1) is None
+        pages.restore_version(conn, page["id"], 99, editor_id=1, commit=True) is None
     )  # no such version
-    assert pages.restore_version(conn, 999, 1, editor_id=1) is None  # no such page
+    assert (
+        pages.restore_version(conn, 999, 1, editor_id=1, commit=True) is None
+    )  # no such page
 
 
 def test_restore_identical_content_cuts_no_version(tmp_path):
@@ -84,13 +91,15 @@ def test_restore_identical_content_cuts_no_version(tmp_path):
     # no-change rule means we don't litter history with a duplicate snapshot.
     conn = _migrated_conn(tmp_path / "ri.db")
     page = _space_with_page(conn, body="v1 text")
-    pages.update_page(conn, page["id"], editor_id=1, body="v2 text")  # version 1 = v1
+    pages.update_page(
+        conn, page["id"], editor_id=1, body="v2 text", commit=True
+    )  # version 1 = v1
     pages.restore_version(
-        conn, page["id"], 1, editor_id=1
+        conn, page["id"], 1, editor_id=1, commit=True
     )  # live -> v1, version 2 = v2
     assert len(pages.list_page_versions(conn, page["id"])) == 2
     # restoring v1 again, when v1 is already live, changes nothing
-    pages.restore_version(conn, page["id"], 1, editor_id=1)
+    pages.restore_version(conn, page["id"], 1, editor_id=1, commit=True)
     assert len(pages.list_page_versions(conn, page["id"])) == 2
 
 
@@ -100,9 +109,11 @@ def test_restore_attributes_new_revision_to_the_restorer(tmp_path):
     conn = _migrated_conn(tmp_path / "ra.db")
     page = _space_with_page(conn, body="v1 text", created_by=1)  # user 1 = Ann
     pages.update_page(
-        conn, page["id"], editor_id=1, body="v2 text"
+        conn, page["id"], editor_id=1, body="v2 text", commit=True
     )  # Ann wrote v2; version1 = v1
-    pages.restore_version(conn, page["id"], 1, editor_id=2)  # user 2 = Bob restores v1
+    pages.restore_version(
+        conn, page["id"], 1, editor_id=2, commit=True
+    )  # user 2 = Bob restores v1
     live = pages.get_page(conn, page["id"])
     assert live["body"] == "v1 text"
     assert live["updated_by"] == 2  # the restore is Bob's edit

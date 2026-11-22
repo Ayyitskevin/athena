@@ -275,6 +275,7 @@ def test_active_admin_password_is_a_recovery_path(tmp_path):
         name="Admin",
         password="correct horse battery staple",
         role="admin",
+        commit=True,
     )
     try:
         assert deployment.has_configured_active_admin_credential(
@@ -294,6 +295,7 @@ def test_legacy_password_recovery_requires_the_historical_request_envelope(
         name="Admin",
         password="password",
         role="admin",
+        commit=True,
     )
     bounded_hash = conn.execute(
         "SELECT password_hash FROM users WHERE id = ?",
@@ -342,6 +344,7 @@ def test_legacy_unaddressable_admin_email_is_not_password_recovery(tmp_path, ema
         name="Legacy Admin",
         password="password",
         role="admin",
+        commit=True,
     )
     try:
         assert not deployment.has_configured_active_admin_credential(
@@ -359,12 +362,14 @@ def test_only_a_live_admin_scoped_token_counts_as_token_recovery(tmp_path):
         email="admin@example.com",
         name="Admin",
         role="admin",
+        commit=True,
     )
     read_token = tokens.create_token(
         conn,
         user_id=admin["id"],
         name="read only",
         scopes=["read"],
+        commit=True,
     )
     assert not deployment.has_configured_active_admin_credential(
         conn, enabled_oidc_issuer=None
@@ -374,6 +379,7 @@ def test_only_a_live_admin_scoped_token_counts_as_token_recovery(tmp_path):
         user_id=admin["id"],
         name="recovery",
         scopes=["admin"],
+        commit=True,
     )
     assert deployment.has_configured_active_admin_credential(
         conn, enabled_oidc_issuer=None
@@ -382,6 +388,7 @@ def test_only_a_live_admin_scoped_token_counts_as_token_recovery(tmp_path):
         conn,
         user_id=admin["id"],
         token_id=admin_token["id"],
+        commit=True,
     )
     assert not deployment.has_configured_active_admin_credential(
         conn, enabled_oidc_issuer=None
@@ -397,12 +404,14 @@ def test_only_a_matching_enabled_oidc_identity_counts_as_sso_recovery(tmp_path):
         email="admin@example.com",
         name="Admin",
         role="admin",
+        commit=True,
     )
     oidc.link_identity(
         conn,
         issuer="https://idp.example",
         subject="admin-subject",
         user_id=admin["id"],
+        commit=True,
     )
     assert not deployment.has_configured_active_admin_credential(
         conn, enabled_oidc_issuer=None
@@ -421,7 +430,7 @@ def test_only_a_matching_enabled_oidc_identity_counts_as_sso_recovery(tmp_path):
     assert not deployment.has_configured_active_admin_credential(
         conn, enabled_oidc_issuer="https://idp.example"
     )
-    users.set_paused(conn, admin["id"], True)
+    users.set_paused(conn, admin["id"], True, commit=True)
     assert not deployment.has_configured_active_admin_credential(
         conn, enabled_oidc_issuer="https://idp.example"
     )
@@ -437,6 +446,7 @@ def test_malformed_stored_password_and_token_verifiers_do_not_count_as_recovery(
         email="admin@example.com",
         name="Admin",
         role="admin",
+        commit=True,
     )
     conn.execute(
         "UPDATE users SET password_hash = 'malformed' WHERE id = ?",
@@ -452,6 +462,7 @@ def test_malformed_stored_password_and_token_verifiers_do_not_count_as_recovery(
         user_id=admin["id"],
         name="malformed recovery",
         scopes=["admin"],
+        commit=True,
     )
     conn.execute(
         "UPDATE api_tokens SET token_hash = 'malformed' WHERE id = ?",
@@ -471,12 +482,14 @@ def test_non_text_stored_token_scopes_do_not_count_as_recovery(tmp_path):
         email="admin@example.com",
         name="Admin",
         role="admin",
+        commit=True,
     )
     token = tokens.create_token(
         conn,
         user_id=admin["id"],
         name="malformed scopes",
         scopes=["admin"],
+        commit=True,
     )
     conn.execute(
         "UPDATE api_tokens SET scopes = ? WHERE id = ?",
@@ -509,6 +522,7 @@ def test_database_posture_distinguishes_bootstrap_and_normal_startup(tmp_path):
         name="Admin",
         password="password",
         role="admin",
+        commit=True,
     )
     with pytest.raises(ValueError, match="zero users"):
         deployment.check_database_posture(
@@ -586,6 +600,7 @@ def test_rejected_bootstrap_does_not_migrate_a_nonempty_database(
         name="Admin",
         password="password",
         role="admin",
+        commit=True,
     )
     before = tuple(
         row[0]
@@ -798,6 +813,7 @@ def test_attachment_checks_treat_uri_metacharacters_as_path_bytes(tmp_path, file
         name="Admin",
         password="password",
         role="admin",
+        commit=True,
     )
     conn.execute(
         "INSERT INTO attachments "
@@ -834,6 +850,7 @@ def test_launcher_normal_start_requires_recoverable_admin_and_no_bootstrap_token
         name="Admin",
         password="password",
         role="admin",
+        commit=True,
     )
     conn.close()
     _configure_launcher(
@@ -866,6 +883,7 @@ def test_launcher_accepts_a_legacy_admin_hash_at_the_historical_body_cap(
         email="admin@example.com",
         name="Admin",
         role="admin",
+        commit=True,
     )
     conn.execute(
         "UPDATE users SET password_hash = ? WHERE id = ?",
@@ -904,6 +922,7 @@ def test_direct_http_launcher_refuses_secure_only_browser_cookies(
         name="Admin",
         password="password",
         role="admin",
+        commit=True,
     )
     conn.close()
     _configure_launcher(
@@ -934,6 +953,7 @@ def test_launcher_refuses_foreign_key_corruption_before_running(
         name="Admin",
         password="password",
         role="admin",
+        commit=True,
     )
     conn.close()
     raw = sqlite3.connect(db_path)
@@ -971,6 +991,7 @@ def test_launcher_refuses_logical_schema_loss_before_running(
         name="Admin",
         password="password",
         role="admin",
+        commit=True,
     )
     conn.execute("DROP TABLE sessions")
     conn.commit()
@@ -1077,6 +1098,7 @@ def test_tailnet_launcher_requires_exact_authority_and_positive_limits(
         name="Admin",
         password="password",
         role="admin",
+        commit=True,
     )
     conn.close()
     _configure_launcher(

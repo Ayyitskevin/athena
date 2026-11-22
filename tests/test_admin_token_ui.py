@@ -144,6 +144,7 @@ def test_viewer_can_view_tokens_but_cannot_manage_them(tmp_path):
                 user_id=viewer["id"],
                 name="viewer-token",
                 scopes=[tokens.READ_SCOPE],
+                commit=True,
             )
         finally:
             conn.close()

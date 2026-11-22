@@ -29,7 +29,13 @@ import sqlite3
 from fastapi import Depends, Header, HTTPException, Request
 
 from athena import config
-from athena.core import rate_limits, security_events, tokens, users
+from athena.core import (
+    rate_limits,
+    security_event_commands,
+    security_events,
+    tokens,
+    users,
+)
 from athena.core.deps import get_conn
 from athena.core.refusals import Refusal
 
@@ -57,7 +63,7 @@ def current_actor(
             if revoked is not None:
                 # A revoked credential being PRESENTED is the signal the kill
                 # switch exists for — attribute it to the token's owner.
-                security_events.record_failure(
+                security_event_commands.record_failure(
                     conn,
                     actor_id=revoked["user_id"],
                     verb=security_events.VERB_REVOKED_TOKEN_USED,
@@ -119,7 +125,7 @@ def _refuse_paused(
     regardless of that gate."""
     if actor.get("removed_at"):
         if bounded or _anon_rate_allows(request):
-            security_events.record_failure(
+            security_event_commands.record_failure(
                 conn,
                 actor_id=actor["id"],
                 verb=security_events.VERB_REMOVED_REFUSED,
@@ -132,7 +138,7 @@ def _refuse_paused(
     if not actor.get("paused_at"):
         return
     if bounded or _anon_rate_allows(request):
-        security_events.record_failure(
+        security_event_commands.record_failure(
             conn,
             actor_id=actor["id"],
             verb=security_events.VERB_PAUSED_REFUSED,

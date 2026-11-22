@@ -37,7 +37,7 @@ def test_archived_issue_is_hidden_from_search_but_findable_on_opt_in(tmp_path):
     assert _has(search.search(conn, "Payment", kind="issue"), iid)  # core search
 
     # Archive it — it must drop out of search, like every other list.
-    issues.set_archived(conn, iid, True)
+    issues.set_archived(conn, iid, True, commit=True)
     assert not _has(issue_search.search_issues(conn, "Payment"), iid)
     assert not _has(search.search(conn, "Payment", kind="issue"), iid)
     # The filtered branch already hid it; assert it still does (consistency).
@@ -49,5 +49,5 @@ def test_archived_issue_is_hidden_from_search_but_findable_on_opt_in(tmp_path):
     )
 
     # Restoring it brings it back to ordinary search.
-    issues.set_archived(conn, iid, False)
+    issues.set_archived(conn, iid, False, commit=True)
     assert _has(issue_search.search_issues(conn, "Payment"), iid)

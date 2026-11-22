@@ -22,7 +22,15 @@ import jwt
 from starlette.background import BackgroundTask
 
 from athena import config
-from athena.core import db, oidc, oidc_flow, security_events, sessions, users
+from athena.core import (
+    db,
+    oidc,
+    oidc_flow,
+    security_event_commands,
+    security_events,
+    sessions,
+    users,
+)
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
@@ -33,10 +41,11 @@ router = APIRouter()
 def _record_login_failure(db_path, user_id: int) -> None:
     """Record a failed login on its OWN connection, run as a response background
     task (after the bytes are sent) so it never enters the request's measured
-    latency. Best-effort: security_events.record_failure swallows its errors."""
+    latency. Best-effort: security_event_commands.record_failure swallows its
+    errors."""
     conn = db.connect(db_path)
     try:
-        security_events.record_failure(
+        security_event_commands.record_failure(
             conn,
             actor_id=user_id,
             verb=security_events.VERB_LOGIN_FAILED,
@@ -56,7 +65,7 @@ def _record_login_throttled(db_path, user_id: int) -> None:
     it does."""
     conn = db.connect(db_path)
     try:
-        security_events.record_failure(
+        security_event_commands.record_failure(
             conn,
             actor_id=user_id,
             verb=security_events.VERB_LOGIN_THROTTLED,

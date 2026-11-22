@@ -93,7 +93,9 @@ def _handoff_payload(generation, **overrides):
 
 
 def _delegated_issue(conn, title="narrative work"):
-    issue = issues.create_issue(conn, title=title, body="story", created_by=1)
+    issue = issues.create_issue(
+        conn, title=title, body="story", created_by=1, commit=True
+    )
     issue_commands.add_contributor(
         conn,
         actor=_actor(conn, 1),
@@ -106,7 +108,7 @@ def _delegated_issue(conn, title="narrative work"):
 
 def _checkin(conn, user_id=2, run_id=RUN_ID):
     cred = tokens.create_token(
-        conn, user_id=user_id, name="narrative-test", scopes=["read"]
+        conn, user_id=user_id, name="narrative-test", scopes=["read"], commit=True
     )
     agent_run_checkins.upsert_checkin(
         conn, agent_id=user_id, run_id=run_id, token_id=cred["id"]
@@ -235,6 +237,7 @@ def test_unknown_verbs_fail_closed_into_the_unclassified_count(tmp_path):
         target_kind="issue",
         target_id=issue["id"],
         detail="looks good",
+        commit=True,
     )
 
     narrative = issue_narrative.build_issue_narrative(

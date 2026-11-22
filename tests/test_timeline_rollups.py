@@ -36,10 +36,10 @@ def _conn(tmp_path, name="q.db"):
 
 def _issue(conn, title, *, project_id=None, status="open"):
     made = issues.create_issue(
-        conn, title=title, body="", created_by=1, project_id=project_id
+        conn, title=title, body="", created_by=1, project_id=project_id, commit=True
     )
     if status != "open":
-        issues.update_issue(conn, made["id"], status=status)
+        issues.update_issue(conn, made["id"], status=status, commit=True)
     return made["id"]
 
 
@@ -65,14 +65,16 @@ def test_lanes_run_in_date_order_with_undated_then_backlog_last(tmp_path):
     given a fabricated date, and the backlog sits last because it is where work
     waits when it is not scheduled at all."""
     conn = _conn(tmp_path)
-    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1, commit=True)[
+        "id"
+    ]
     later = sprints.create_sprint(
-        conn, project_id=pid, name="March", start_date="2026-03-01"
+        conn, project_id=pid, name="March", start_date="2026-03-01", commit=True
     )
     earlier = sprints.create_sprint(
-        conn, project_id=pid, name="January", start_date="2026-01-01"
+        conn, project_id=pid, name="January", start_date="2026-01-01", commit=True
     )
-    undated = sprints.create_sprint(conn, project_id=pid, name="Someday")
+    undated = sprints.create_sprint(conn, project_id=pid, name="Someday", commit=True)
     conn.commit()
 
     drawn = timeline.project_timeline(conn, project_id=pid)
@@ -92,13 +94,15 @@ def test_lanes_run_in_date_order_with_undated_then_backlog_last(tmp_path):
 
 def test_issues_land_in_their_sprint_lane_and_the_backlog_holds_the_rest(tmp_path):
     conn = _conn(tmp_path)
-    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1, commit=True)[
+        "id"
+    ]
     cycle = sprints.create_sprint(
-        conn, project_id=pid, name="C1", start_date="2026-01-01"
+        conn, project_id=pid, name="C1", start_date="2026-01-01", commit=True
     )
     scheduled = _issue(conn, "scheduled", project_id=pid)
     unscheduled = _issue(conn, "unscheduled", project_id=pid)
-    issues.set_sprint(conn, scheduled, cycle["id"])
+    issues.set_sprint(conn, scheduled, cycle["id"], commit=True)
     conn.commit()
 
     drawn = timeline.project_timeline(conn, project_id=pid)
@@ -113,7 +117,9 @@ def test_archived_issues_are_left_off_the_timeline(tmp_path):
     """Archived work is soft-deleted everywhere else; a roadmap that still drew
     it would show a plan nobody is working."""
     conn = _conn(tmp_path)
-    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1, commit=True)[
+        "id"
+    ]
     live = _issue(conn, "live", project_id=pid)
     gone = _issue(conn, "abandoned", project_id=pid)
     conn.execute(
@@ -127,15 +133,27 @@ def test_archived_issues_are_left_off_the_timeline(tmp_path):
 
 def test_edges_are_drawn_between_drawn_cards_and_directed_for_blocks(tmp_path):
     conn = _conn(tmp_path)
-    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1, commit=True)[
+        "id"
+    ]
     blocker = _issue(conn, "blocker", project_id=pid)
     blocked = _issue(conn, "blocked", project_id=pid)
     cousin = _issue(conn, "cousin", project_id=pid)
     dependencies.add_link(
-        conn, from_id=blocker, to_id=blocked, relation="blocks", created_by=1
+        conn,
+        from_id=blocker,
+        to_id=blocked,
+        relation="blocks",
+        created_by=1,
+        commit=True,
     )
     dependencies.add_link(
-        conn, from_id=blocked, to_id=cousin, relation="relates", created_by=1
+        conn,
+        from_id=blocked,
+        to_id=cousin,
+        relation="relates",
+        created_by=1,
+        commit=True,
     )
     conn.commit()
 
@@ -153,11 +171,18 @@ def test_a_dependency_leaving_the_view_is_counted_not_drawn(tmp_path):
     """An arrow to something off the picture reads as a rendering bug; no arrow
     at all reads as "nothing blocks this". The count is the third option."""
     conn = _conn(tmp_path)
-    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1, commit=True)[
+        "id"
+    ]
     inside = _issue(conn, "inside", project_id=pid)
     outside = _issue(conn, "outside")  # backlog: not in this project
     dependencies.add_link(
-        conn, from_id=inside, to_id=outside, relation="blocks", created_by=1
+        conn,
+        from_id=inside,
+        to_id=outside,
+        relation="blocks",
+        created_by=1,
+        commit=True,
     )
     conn.commit()
 
@@ -172,11 +197,18 @@ def test_a_dependency_onto_archived_work_is_not_an_outside_edge(tmp_path):
     history counted here would read as a live outside dependency that does not
     exist (review finding)."""
     conn = _conn(tmp_path)
-    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1, commit=True)[
+        "id"
+    ]
     inside = _issue(conn, "inside", project_id=pid)
     outside = _issue(conn, "outside")  # backlog: off the picture
     dependencies.add_link(
-        conn, from_id=inside, to_id=outside, relation="blocks", created_by=1
+        conn,
+        from_id=inside,
+        to_id=outside,
+        relation="blocks",
+        created_by=1,
+        commit=True,
     )
     conn.commit()
     assert timeline.project_timeline(conn, project_id=pid)["edges_outside"] == 1
@@ -193,13 +225,20 @@ def test_a_dependency_cycle_lays_out_without_hanging(tmp_path):
     data. Placement comes from sprint membership alone — nothing here sorts
     topologically, so a cycle can only change the arrows."""
     conn = _conn(tmp_path)
-    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1, commit=True)[
+        "id"
+    ]
     a = _issue(conn, "a", project_id=pid)
     b = _issue(conn, "b", project_id=pid)
     c = _issue(conn, "c", project_id=pid)
     for source, target in ((a, b), (b, c), (c, a)):
         dependencies.add_link(
-            conn, from_id=source, to_id=target, relation="blocks", created_by=1
+            conn,
+            from_id=source,
+            to_id=target,
+            relation="blocks",
+            created_by=1,
+            commit=True,
         )
     conn.commit()
 
@@ -210,13 +249,15 @@ def test_a_dependency_cycle_lays_out_without_hanging(tmp_path):
 
 def test_the_timeline_reports_what_each_lane_and_the_page_left_out(tmp_path):
     conn = _conn(tmp_path)
-    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1, commit=True)[
+        "id"
+    ]
     cycle = sprints.create_sprint(
-        conn, project_id=pid, name="C1", start_date="2026-01-01"
+        conn, project_id=pid, name="C1", start_date="2026-01-01", commit=True
     )
     for index in range(9):
         made = _issue(conn, f"issue {index}", project_id=pid)
-        issues.set_sprint(conn, made, cycle["id"])
+        issues.set_sprint(conn, made, cycle["id"], commit=True)
     conn.commit()
 
     drawn = timeline.project_timeline(conn, project_id=pid, max_per_lane=4)
@@ -235,13 +276,15 @@ def test_timeline_bounds_are_clamped_not_trusted(tmp_path):
     passing nonsense gets the default — both observed through what is actually
     drawn, not merely by the call not raising."""
     conn = _conn(tmp_path)
-    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1, commit=True)[
+        "id"
+    ]
     cycle = sprints.create_sprint(
-        conn, project_id=pid, name="C1", start_date="2026-01-01"
+        conn, project_id=pid, name="C1", start_date="2026-01-01", commit=True
     )
     for index in range(timeline.MAX_MAX_PER_LANE + 5):
         made = _issue(conn, f"issue {index}", project_id=pid)
-        issues.set_sprint(conn, made, cycle["id"])
+        issues.set_sprint(conn, made, cycle["id"], commit=True)
     conn.commit()
 
     greedy = timeline.project_timeline(
@@ -263,17 +306,19 @@ def test_a_lane_drained_by_the_page_ceiling_says_so(tmp_path):
     """The overall ceiling is spent left to right, so a later lane can be cut to
     nothing. A lane that merely looked empty would read as "no work here"."""
     conn = _conn(tmp_path)
-    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1, commit=True)[
+        "id"
+    ]
     first = sprints.create_sprint(
-        conn, project_id=pid, name="First", start_date="2026-01-01"
+        conn, project_id=pid, name="First", start_date="2026-01-01", commit=True
     )
     second = sprints.create_sprint(
-        conn, project_id=pid, name="Second", start_date="2026-02-01"
+        conn, project_id=pid, name="Second", start_date="2026-02-01", commit=True
     )
     for sprint in (first, second):
         for index in range(3):
             made = _issue(conn, f"{sprint['name']} {index}", project_id=pid)
-            issues.set_sprint(conn, made, sprint["id"])
+            issues.set_sprint(conn, made, sprint["id"], commit=True)
     conn.commit()
 
     drawn = timeline.project_timeline(conn, project_id=pid, max_items=3)
@@ -289,11 +334,13 @@ def test_edge_endpoints_sit_on_the_cards_they_connect(tmp_path):
     were computed separately they would drift, and an arrow would land beside
     the box it points at."""
     conn = _conn(tmp_path)
-    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1, commit=True)[
+        "id"
+    ]
     source = _issue(conn, "source", project_id=pid)
     target = _issue(conn, "target", project_id=pid)
     dependencies.add_link(
-        conn, from_id=source, to_id=target, relation="blocks", created_by=1
+        conn, from_id=source, to_id=target, relation="blocks", created_by=1, commit=True
     )
     conn.commit()
 
@@ -314,8 +361,12 @@ def test_the_off_picture_edge_count_ignores_work_the_viewer_cannot_see(tmp_path)
     one. A number that reacts to private work is an existence oracle just as
     surely as a title would be — the rule the rollup already follows."""
     conn = _conn(tmp_path)
-    public = projects.create_project(conn, key="PUB", name="Public", created_by=1)["id"]
-    secret = projects.create_project(conn, key="SEC", name="Secret", created_by=1)["id"]
+    public = projects.create_project(
+        conn, key="PUB", name="Public", created_by=1, commit=True
+    )["id"]
+    secret = projects.create_project(
+        conn, key="SEC", name="Secret", created_by=1, commit=True
+    )["id"]
     conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (secret,))
     shown = _issue(conn, "public work", project_id=public)
     hidden = _issue(conn, "classified", project_id=secret)
@@ -328,7 +379,7 @@ def test_the_off_picture_edge_count_ignores_work_the_viewer_cannot_see(tmp_path)
 
     before = outsider_count()
     dependencies.add_link(
-        conn, from_id=hidden, to_id=shown, relation="blocks", created_by=1
+        conn, from_id=hidden, to_id=shown, relation="blocks", created_by=1, commit=True
     )
     conn.commit()
     assert outsider_count() == before == 0
@@ -344,7 +395,12 @@ def test_the_off_picture_edge_count_ignores_work_the_viewer_cannot_see(tmp_path)
     # And a link to work the viewer CAN see is still counted for them.
     elsewhere = _issue(conn, "other public work")
     dependencies.add_link(
-        conn, from_id=shown, to_id=elsewhere, relation="blocks", created_by=1
+        conn,
+        from_id=shown,
+        to_id=elsewhere,
+        relation="blocks",
+        created_by=1,
+        commit=True,
     )
     conn.commit()
     assert outsider_count() == 1
@@ -354,7 +410,9 @@ def test_timeline_hides_issues_the_viewer_cannot_see(tmp_path):
     """The gate is on the ISSUES: a cross-project child of this project's work
     could sit in a private project, and an ungated lane would leak its title."""
     conn = _conn(tmp_path)
-    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1, commit=True)[
+        "id"
+    ]
     _issue(conn, "public work", project_id=pid)
     conn.commit()
 
@@ -381,7 +439,7 @@ def test_backlog_children_are_bucketed_individually(tmp_path):
     _issue(conn, "underway", status="in_progress")
     _issue(conn, "waiting")
     for child in (2, 3, 4):
-        issues.set_parent(conn, child, parent)
+        issues.set_parent(conn, child, parent, commit=True)
     conn.commit()
 
     rolled = rollups.child_rollup(conn, parent)
@@ -398,13 +456,15 @@ def test_done_ness_follows_the_project_category_not_the_status_name(tmp_path):
     conn = _conn(tmp_path)
     from athena.aegis import statuses
 
-    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
-    statuses.add_status(conn, pid, "shipped", "done")
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1, commit=True)[
+        "id"
+    ]
+    statuses.add_status(conn, pid, "shipped", "done", commit=True)
     conn.commit()
     parent = _issue(conn, "epic", project_id=pid)
     child = _issue(conn, "custom done", project_id=pid)
-    issues.update_issue(conn, child, status="shipped")
-    issues.set_parent(conn, child, parent)
+    issues.update_issue(conn, child, status="shipped", commit=True)
+    issues.set_parent(conn, child, parent, commit=True)
     conn.commit()
 
     rolled = rollups.child_rollup(conn, parent)
@@ -419,8 +479,8 @@ def test_archived_children_are_excluded_and_said_out_loud(tmp_path):
     parent = _issue(conn, "epic")
     live = _issue(conn, "live")
     gone = _issue(conn, "abandoned")
-    issues.set_parent(conn, live, parent)
-    issues.set_parent(conn, gone, parent)
+    issues.set_parent(conn, live, parent, commit=True)
+    issues.set_parent(conn, gone, parent, commit=True)
     conn.execute(
         "UPDATE issues SET archived_at = datetime('now') WHERE id = ?", (gone,)
     )
@@ -439,16 +499,16 @@ def test_percent_reserves_the_ends_for_the_truth(tmp_path):
     parent = _issue(conn, "epic")
     children = [_issue(conn, f"child {index}") for index in range(200)]
     for child in children:
-        issues.set_parent(conn, child, parent)
+        issues.set_parent(conn, child, parent, commit=True)
     for child in children[:199]:
-        issues.update_issue(conn, child, status="done")
+        issues.update_issue(conn, child, status="done", commit=True)
     conn.commit()
 
     nearly = rollups.child_rollup(conn, parent)
     assert nearly["done"] == 199 and nearly["total"] == 200
     assert nearly["percent_done"] == 99
 
-    issues.update_issue(conn, children[199], status="done")
+    issues.update_issue(conn, children[199], status="done", commit=True)
     conn.commit()
     assert rollups.child_rollup(conn, parent)["percent_done"] == 100
 
@@ -459,7 +519,7 @@ def test_a_parent_whose_children_are_all_archived_says_so(tmp_path):
     conn = _conn(tmp_path)
     parent = _issue(conn, "epic")
     child = _issue(conn, "abandoned")
-    issues.set_parent(conn, child, parent)
+    issues.set_parent(conn, child, parent, commit=True)
     conn.execute(
         "UPDATE issues SET archived_at = datetime('now') WHERE id = ?", (child,)
     )
@@ -477,7 +537,7 @@ def test_segment_widths_are_computed_once_for_both_surfaces(tmp_path):
     parent = _issue(conn, "epic")
     for index, status in enumerate(("done", "in_progress", "open", "open")):
         child = _issue(conn, f"child {index}", status=status)
-        issues.set_parent(conn, child, parent)
+        issues.set_parent(conn, child, parent, commit=True)
     conn.commit()
 
     rolled = rollups.child_rollup(conn, parent)
@@ -515,15 +575,15 @@ def test_rollup_counts_only_children_the_viewer_can_see(tmp_path):
     """A child may live in a private project under a visible parent. Counting it
     would turn the progress bar into an existence oracle for that work."""
     conn = _conn(tmp_path)
-    private = projects.create_project(conn, key="SEC", name="Secret", created_by=1)[
-        "id"
-    ]
+    private = projects.create_project(
+        conn, key="SEC", name="Secret", created_by=1, commit=True
+    )["id"]
     conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (private,))
     parent = _issue(conn, "epic")
     hidden = _issue(conn, "hidden child", project_id=private, status="done")
     open_child = _issue(conn, "open child")
-    issues.set_parent(conn, hidden, parent)
-    issues.set_parent(conn, open_child, parent)
+    issues.set_parent(conn, hidden, parent, commit=True)
+    issues.set_parent(conn, open_child, parent, commit=True)
     conn.commit()
 
     everything = rollups.child_rollup(conn, parent)
@@ -784,17 +844,19 @@ def test_ancient_sprint_lanes_drop_oldest_first_and_say_what_left(tmp_path):
     misfiled into the backlog — a card in the wrong lane is worse than an
     admitted omission (review finding)."""
     conn = _conn(tmp_path)
-    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1, commit=True)[
+        "id"
+    ]
     cycles = [
         sprints.create_sprint(
-            conn, project_id=pid, name=f"C{n}", start_date=f"2026-0{n}-01"
+            conn, project_id=pid, name=f"C{n}", start_date=f"2026-0{n}-01", commit=True
         )
         for n in range(1, 5)
     ]
     ancient = _issue(conn, "ancient work", project_id=pid)
-    issues.set_sprint(conn, ancient, cycles[0]["id"])
+    issues.set_sprint(conn, ancient, cycles[0]["id"], commit=True)
     fresh = _issue(conn, "fresh work", project_id=pid)
-    issues.set_sprint(conn, fresh, cycles[3]["id"])
+    issues.set_sprint(conn, fresh, cycles[3]["id"], commit=True)
     conn.commit()
 
     drawn = timeline.project_timeline(conn, project_id=pid, max_lanes=3)
@@ -815,7 +877,9 @@ def test_the_issue_read_is_bounded_and_admits_the_cap(tmp_path):
     anonymously on a public project. When the cap bites, the totals describe
     what was loaded and the flag says more exist (review finding)."""
     conn = _conn(tmp_path)
-    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1, commit=True)[
+        "id"
+    ]
     for n in range(5):
         _issue(conn, f"work {n}", project_id=pid)
     conn.commit()

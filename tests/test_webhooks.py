@@ -36,7 +36,7 @@ def _conn(db_file, role="admin"):
 
 def _event(conn, *, kind="issue", target_id=1, verb="created"):
     return activity.record(
-        conn, actor_id=1, verb=verb, target_kind=kind, target_id=target_id
+        conn, actor_id=1, verb=verb, target_kind=kind, target_id=target_id, commit=True
     )
 
 
@@ -205,7 +205,11 @@ def test_payload_carries_run_lineage_coordinates(tmp_path):
     # same run coordinates GET /events exposes.
     conn = _conn(tmp_path / "lineage.db")
     webhooks.create_webhook(
-        conn, url="https://93.184.216.34/hook", created_by=1, start_cursor=0
+        conn,
+        url="https://93.184.216.34/hook",
+        created_by=1,
+        start_cursor=0,
+        commit=True,
     )
     # An untagged event: the three lineage keys are present but null.
     plain = _event(conn, target_id=10, verb="created")
@@ -215,7 +219,12 @@ def test_payload_carries_run_lineage_coordinates(tmp_path):
     goal_token = run_context.set_run_id("goal-run")
     try:
         fork_from = activity.record(
-            conn, actor_id=1, verb="created", target_kind="issue", target_id=10
+            conn,
+            actor_id=1,
+            verb="created",
+            target_kind="issue",
+            target_id=10,
+            commit=True,
         )
     finally:
         run_context.reset_run_id(goal_token)
@@ -225,7 +234,12 @@ def test_payload_carries_run_lineage_coordinates(tmp_path):
     fork_token = run_context.set_forked_from_event_id(fork_from["id"])
     try:
         tagged = activity.record(
-            conn, actor_id=1, verb="changed_status", target_kind="issue", target_id=10
+            conn,
+            actor_id=1,
+            verb="changed_status",
+            target_kind="issue",
+            target_id=10,
+            commit=True,
         )
     finally:
         run_context.reset_forked_from_event_id(fork_token)
@@ -250,7 +264,11 @@ def test_payload_carries_run_lineage_coordinates(tmp_path):
 def test_delivery_signs_orders_and_advances_cursor(tmp_path):
     conn = _conn(tmp_path / "d.db")
     wh = webhooks.create_webhook(
-        conn, url="https://93.184.216.34/hook", created_by=1, start_cursor=0
+        conn,
+        url="https://93.184.216.34/hook",
+        created_by=1,
+        start_cursor=0,
+        commit=True,
     )
     e1 = _event(conn, target_id=10, verb="created")
     e2 = _event(conn, target_id=10, verb="changed_status")
@@ -280,6 +298,7 @@ def test_delivery_filters_by_event_kind(tmp_path):
         created_by=1,
         event_kind="page",
         start_cursor=0,
+        commit=True,
     )
     _event(conn, kind="issue", target_id=1)
     page_ev = _event(conn, kind="page", target_id=2)
@@ -296,7 +315,11 @@ def test_delivery_filters_by_event_kind(tmp_path):
 def test_failure_records_error_holds_cursor_and_backs_off(tmp_path):
     conn = _conn(tmp_path / "f.db")
     wh = webhooks.create_webhook(
-        conn, url="https://93.184.216.34/hook", created_by=1, start_cursor=0
+        conn,
+        url="https://93.184.216.34/hook",
+        created_by=1,
+        start_cursor=0,
+        commit=True,
     )
     _event(conn, target_id=1)
 
@@ -327,10 +350,14 @@ def test_failure_records_error_holds_cursor_and_backs_off(tmp_path):
 def test_one_bad_endpoint_does_not_block_others(tmp_path):
     conn = _conn(tmp_path / "iso.db")
     bad = webhooks.create_webhook(
-        conn, url="https://93.184.216.34/bad", created_by=1, start_cursor=0
+        conn, url="https://93.184.216.34/bad", created_by=1, start_cursor=0, commit=True
     )
     good = webhooks.create_webhook(
-        conn, url="https://93.184.216.34/good", created_by=1, start_cursor=0
+        conn,
+        url="https://93.184.216.34/good",
+        created_by=1,
+        start_cursor=0,
+        commit=True,
     )
     _event(conn, target_id=1)
 
@@ -351,7 +378,7 @@ def test_delivery_skips_unsafe_url_without_posting(tmp_path):
     # delivery time too, not just registration — DNS could have been re-pointed.
     conn = _conn(tmp_path / "u.db")
     wh = webhooks.create_webhook(
-        conn, url="http://127.0.0.1/hook", created_by=1, start_cursor=0
+        conn, url="http://127.0.0.1/hook", created_by=1, start_cursor=0, commit=True
     )
     _event(conn, target_id=1)
     poster = _Poster(ok=True)
@@ -368,7 +395,7 @@ def test_run_delivery_pass_executes_against_a_real_db(tmp_path):
     db_file = tmp_path / "live.db"
     conn = _conn(db_file)
     webhooks.create_webhook(
-        conn, url="http://127.0.0.1/hook", created_by=1, start_cursor=0
+        conn, url="http://127.0.0.1/hook", created_by=1, start_cursor=0, commit=True
     )
     _event(conn, target_id=1)
     conn.close()

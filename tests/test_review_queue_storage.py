@@ -23,6 +23,7 @@ def event(conn, item, *, reporter=3, imported=False, restricted=False, detail=No
         detail="generation " + "a" * 32 if detail is None else detail,
         imported_at="2020-01-01" if imported else None,
         **({"issue_project_ids": [999999]} if restricted else {}),
+        commit=True,
     )
 
 
@@ -225,7 +226,7 @@ def test_additive_migration_preserves_populated_baseline_without_backfill(
         )
         conn.commit()
         project = projects.create_project(
-            conn, name="Retained", key="OLD", created_by=1
+            conn, name="Retained", key="OLD", created_by=1, commit=True
         )
         item = issues.create_issue(
             conn,
@@ -233,6 +234,7 @@ def test_additive_migration_preserves_populated_baseline_without_backfill(
             body="baseline",
             created_by=1,
             project_id=project["id"],
+            commit=True,
         )
         source = event(conn, item, reporter=1)
         old_ledger = [

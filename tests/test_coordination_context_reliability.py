@@ -33,7 +33,12 @@ def board(tmp_path):
 
 def _issue(conn, *, project_id=None, title="Synthetic work"):
     return issues.create_issue(
-        conn, title=title, body="Synthetic brief", created_by=1, project_id=project_id
+        conn,
+        title=title,
+        body="Synthetic brief",
+        created_by=1,
+        project_id=project_id,
+        commit=True,
     )
 
 
@@ -41,7 +46,7 @@ def _held(
     conn, actor, *, project_id=None, handoff=False, title="Synthetic work", paths=None
 ):
     issue = _issue(conn, project_id=project_id, title=title)
-    issue = issues.set_assignee(conn, issue["id"], actor["id"])
+    issue = issues.set_assignee(conn, issue["id"], actor["id"], commit=True)
     tag = issue_etags.current_etag(conn, issue)
     held = lease_commands.claim_issue(
         conn, actor=actor, issue_id=issue["id"], if_match=[tag], paths=paths
@@ -76,10 +81,12 @@ def _write(path, statement, params=()):
 @pytest.mark.parametrize("change", ["revoke", "private"])
 def test_private_content_disappears_but_own_possession_survives(board, change):
     path, conn, _, member = board
-    project = projects.create_project(conn, name="Restricted", key="SEC", created_by=1)
+    project = projects.create_project(
+        conn, name="Restricted", key="SEC", created_by=1, commit=True
+    )
     if change == "revoke":
-        projects.set_visibility(conn, project["id"], "private")
-        access.add_project_member(conn, project["id"], member["id"], 1)
+        projects.set_visibility(conn, project["id"], "private", commit=True)
+        access.add_project_member(conn, project["id"], member["id"], 1, commit=True)
     issue, held = _held(
         conn, member, project_id=project["id"], handoff=True, paths=["src/private.py"]
     )
@@ -88,10 +95,10 @@ def test_private_content_disappears_but_own_possession_survives(board, change):
     assert len(before["asks"]["claim_handoffs"]["items"]) == 1
 
     if change == "revoke":
-        access.remove_project_member(conn, project["id"], member["id"])
+        access.remove_project_member(conn, project["id"], member["id"], commit=True)
     else:
-        projects.set_visibility(conn, project["id"], "private")
-    issues.update_issue(conn, issue["id"], title="PRIVATE NEW TITLE")
+        projects.set_visibility(conn, project["id"], "private", commit=True)
+    issues.update_issue(conn, issue["id"], title="PRIVATE NEW TITLE", commit=True)
     with TestClient(create_app(path)) as client:
         headers = {"X-Athena-Actor": str(member["id"])}
         assert client.get(f"/issues/{issue['id']}", headers=headers).status_code == 404
@@ -259,12 +266,12 @@ def test_handoff_bounds_and_office_count_do_not_reuse_held_display_limit(board, 
 def test_hidden_handoffs_are_filtered_before_the_bound_and_clipping(board):
     _, conn, _, member = board
     project = projects.create_project(
-        conn, name="Hidden later", key="HID", created_by=1
+        conn, name="Hidden later", key="HID", created_by=1, commit=True
     )
     for _ in range(21):
         _held(conn, member, project_id=project["id"], handoff=True)
     visible, _ = _held(conn, member, handoff=True)
-    projects.set_visibility(conn, project["id"], "private")
+    projects.set_visibility(conn, project["id"], "private", commit=True)
     packet = desk.build_desk(conn, actor=member)
     handoffs = packet["asks"]["claim_handoffs"]
     assert [x["issue_id"] for x in handoffs["items"]] == [visible["id"]]

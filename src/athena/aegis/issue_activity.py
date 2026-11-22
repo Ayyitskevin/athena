@@ -201,7 +201,7 @@ def record_created(
     actor_id: int,
     issue_id: int,
     body: str = "",
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """An issue was created. The first audit fact in its history. The creator starts
     watching it, so they hear about later activity without opting in; anyone named
@@ -255,7 +255,7 @@ def record_edited(
     issue_id: int,
     before: dict,
     after: dict,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """An issue's title or body was edited. No-op if neither actually changed — a
     resubmit of identical content (both surfaces send every field) isn't an audit
@@ -298,7 +298,7 @@ def record_status_change(
     issue_id: int,
     before: str,
     after: str,
-    commit: bool = True,
+    commit: bool,
     issue_project_ids: Collection[int | None] | None = None,
     before_project_id: int | None | object = _INFER_PROJECT,
     after_project_id: int | None | object = _INFER_PROJECT,
@@ -386,7 +386,7 @@ def record_blocked_close_override(
     actor_id: int,
     issue_id: int,
     issue_project_ids: Collection[int | None] | None = None,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record an explicit human override of a project's blocked-close policy.
 
@@ -417,7 +417,7 @@ def record_priority_change(
     issue_id: int,
     before: str,
     after: str,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record a priority transition as "before -> after". No-op if unchanged."""
     if before == after:
@@ -440,7 +440,7 @@ def record_assignee_change(
     issue_id: int,
     before: int | None,
     after: int | None,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record an assignment change. No-op if the assignee didn't change. Clearing
     records "unassigned" (no detail); setting records "assigned" with the new
@@ -506,7 +506,7 @@ def record_project_change(
     issue_id: int,
     before: int | None,
     after: int | None,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record a project move. No-op if the project didn't change. Clearing records
     "removed_from_project" with the old project's name; setting records
@@ -561,7 +561,7 @@ def record_sprint_change(
     after: int | None,
     issue_project_ids: Collection[int | None] | None = None,
     include_before_detail: bool = True,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record a sprint move with every referenced project in its access envelope.
 
@@ -619,7 +619,7 @@ def record_parent_change(
     issue_id: int,
     before: int | None,
     after: int | None,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record a parent (hierarchy) change. No-op if the parent didn't change.
     Clearing records "removed_parent"; setting records "set_parent" with the new
@@ -670,7 +670,7 @@ def record_link_added(
     issue_id: int,
     other_id: int,
     relation: str,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record that a typed dependency (blocks / blocked_by / relates) was declared
     FROM issue_id toward other_id, phrased as "<relation> <other key>".
@@ -699,7 +699,7 @@ def record_link_removed(
     issue_id: int,
     other_id: int,
     relation: str,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record that a typed dependency FROM issue_id toward other_id was removed —
     the mirror of record_link_added (verb "unlinked"), same cross-endpoint scoping."""
@@ -721,7 +721,7 @@ def record_contributor_added(
     actor_id: int,
     issue_id: int,
     user_id: int,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record that someone was delegated/added as a contributor, stamped with their
     display name. The new contributor starts watching the issue BEFORE we record the
@@ -748,7 +748,7 @@ def record_delegated(
     actor_id: int,
     issue_id: int,
     user_id: int,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record explicit agent delegation. Like contributor-add, the delegated agent
     starts watching before the event is recorded, so the delegation itself appears
@@ -777,7 +777,7 @@ def record_issue_claimed(
     renewed: bool,
     coordination_root: dict | None = None,
     path_fence: str = "issue_only",
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record that an actor took (or renewed) the exclusive lease on an issue — the
     coordination fact that stops a second agent from silently pulling the same work. The
@@ -807,7 +807,7 @@ def record_claim_completed(
     issue_id: int,
     generation: str,
     reported: dict | None = None,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Record that the leaseholder released the issue by completing its claimed work —
     the lease is gone and the issue is free for the next claimant. ``commit=False`` folds
@@ -842,7 +842,7 @@ def record_claim_yielded(
     handoff_token: str,
     reason: str,
     blocking_question: str,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Record an honest release that does not assert completion or reassignment."""
     question_excerpt = blocking_question[:200]
@@ -883,7 +883,7 @@ def record_claim_handoff_resumed(
     issue_id: int,
     handoff_token: str,
     generation: str,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Record explicit receipt of a handoff without claiming its blocker is solved."""
     return activity.record(
@@ -903,7 +903,7 @@ def record_delegation_declined(
     actor_id: int,
     issue_id: int,
     released_generation: str | None = None,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record that an actor declined a delegation handed to them (removing itself from the
     contributor set) — so the operator sees the work was refused, not silently dropped, and
@@ -929,7 +929,7 @@ def record_contributor_removed(
     actor_id: int,
     issue_id: int,
     user_id: int,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record that a contributor was removed, stamped with their display name. Caller
     records only when a pairing was actually removed. ``commit=False`` folds it into
@@ -952,7 +952,7 @@ def record_label_added(
     actor_id: int,
     issue_id: int,
     label_id: int,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record that a label was attached, stamped with the label's name. Caller
     records only when the attach actually created a new pairing. ``commit=False``
@@ -975,7 +975,7 @@ def record_label_removed(
     actor_id: int,
     issue_id: int,
     label_id: int,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record that a label was detached, stamped with the label's name. Caller
     records only when a pairing was actually removed. ``commit=False`` folds it into
@@ -998,7 +998,7 @@ def record_commented(
     actor_id: int,
     issue_id: int,
     body: str = "",
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record that someone commented on the issue. The event targets the issue (so
     it lands on the issue's History and the global feed links there); the comment
@@ -1024,7 +1024,7 @@ def record_commented(
 
 
 def record_comment_edited(
-    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, commit: bool = True
+    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, commit: bool
 ) -> None:
     """Record that a comment's body was edited — the previously-silent half of the
     comment lifecycle (who rewrote content). No detail: the current body lives on the
@@ -1041,7 +1041,7 @@ def record_comment_edited(
 
 
 def record_comment_deleted(
-    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, commit: bool = True
+    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, commit: bool
 ) -> None:
     """Record that a comment was removed from the issue — the audit-worthy half of
     the comment lifecycle (who took content down). No detail: the comment is gone.
@@ -1063,7 +1063,7 @@ def record_archive_change(
     issue_id: int,
     before: str | None,
     after: str | None,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record an archive (soft-delete) or restore. before/after are the issue's
     archived_at values — None means active, a timestamp means archived — so we

@@ -49,7 +49,7 @@ def test_record_returns_row_with_actor_name(tmp_path):
     conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("k@e.com", "Kevin"))
     conn.commit()
     row = activity.record(
-        conn, actor_id=1, verb="created", target_kind="issue", target_id=7
+        conn, actor_id=1, verb="created", target_kind="issue", target_id=7, commit=True
     )
     conn.close()
     assert row["actor_id"] == 1
@@ -67,8 +67,12 @@ def test_list_is_newest_first_and_target_scoped(tmp_path):
     conn = _migrated_conn(db_file)
     conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("k@e.com", "Kevin"))
     conn.commit()
-    activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=1)
-    activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=2)
+    activity.record(
+        conn, actor_id=1, verb="created", target_kind="issue", target_id=1, commit=True
+    )
+    activity.record(
+        conn, actor_id=1, verb="created", target_kind="issue", target_id=2, commit=True
+    )
     activity.record(
         conn,
         actor_id=1,
@@ -76,6 +80,7 @@ def test_list_is_newest_first_and_target_scoped(tmp_path):
         target_kind="issue",
         target_id=1,
         detail="open → done",
+        commit=True,
     )
 
     feed = activity.list_activity(conn)
@@ -95,8 +100,12 @@ def test_list_filters_by_actor_and_verb(tmp_path):
     conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("k@e.com", "Kevin"))
     conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("g@e.com", "Grok"))
     conn.commit()
-    activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=1)
-    activity.record(conn, actor_id=2, verb="created", target_kind="issue", target_id=2)
+    activity.record(
+        conn, actor_id=1, verb="created", target_kind="issue", target_id=1, commit=True
+    )
+    activity.record(
+        conn, actor_id=2, verb="created", target_kind="issue", target_id=2, commit=True
+    )
     activity.record(
         conn,
         actor_id=2,
@@ -104,6 +113,7 @@ def test_list_filters_by_actor_and_verb(tmp_path):
         target_kind="issue",
         target_id=2,
         detail="open → done",
+        commit=True,
     )
 
     by_grok = activity.list_activity(conn, actor_id=2)
@@ -123,7 +133,9 @@ def test_list_search_matches_actor_detail_and_target_ref(tmp_path):
     conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("k@e.com", "Kevin"))
     conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("g@e.com", "Grok"))
     conn.commit()
-    activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=1)
+    activity.record(
+        conn, actor_id=1, verb="created", target_kind="issue", target_id=1, commit=True
+    )
     activity.record(
         conn,
         actor_id=2,
@@ -131,6 +143,7 @@ def test_list_search_matches_actor_detail_and_target_ref(tmp_path):
         target_kind="issue",
         target_id=2,
         detail="open → done",
+        commit=True,
     )
 
     by_actor = activity.list_activity(conn, search="grok")
@@ -153,7 +166,12 @@ def test_before_id_cursor_walks_back(tmp_path):
     conn.commit()
     for _ in range(5):
         activity.record(
-            conn, actor_id=1, verb="created", target_kind="issue", target_id=1
+            conn,
+            actor_id=1,
+            verb="created",
+            target_kind="issue",
+            target_id=1,
+            commit=True,
         )
 
     page1 = activity.list_activity(conn, limit=2)
@@ -170,7 +188,9 @@ def test_distinct_verbs_reflects_only_recorded(tmp_path):
     conn = _migrated_conn(db_file)
     conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("k@e.com", "Kevin"))
     conn.commit()
-    activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=1)
+    activity.record(
+        conn, actor_id=1, verb="created", target_kind="issue", target_id=1, commit=True
+    )
     activity.record(
         conn,
         actor_id=1,
@@ -178,8 +198,11 @@ def test_distinct_verbs_reflects_only_recorded(tmp_path):
         target_kind="issue",
         target_id=1,
         detail="open → done",
+        commit=True,
     )
-    activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=2)
+    activity.record(
+        conn, actor_id=1, verb="created", target_kind="issue", target_id=2, commit=True
+    )
     verbs = activity.distinct_verbs(conn)
     conn.close()
     assert verbs == ["changed_status", "created"]  # alphabetical, deduped
@@ -199,6 +222,7 @@ def test_activity_csv_export_has_stable_headers_and_quotes_values(tmp_path):
         target_kind="issue",
         target_id=1,
         detail="contains, comma\nand newline",
+        commit=True,
     )
 
     csv_text = activity.to_csv(activity.list_activity(conn))

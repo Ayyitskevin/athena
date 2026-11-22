@@ -39,7 +39,12 @@ def _record_n(conn, n, *, actor_id=1, verb="created"):
     for i in range(n):
         rows.append(
             activity.record(
-                conn, actor_id=actor_id, verb=verb, target_kind="issue", target_id=i + 1
+                conn,
+                actor_id=actor_id,
+                verb=verb,
+                target_kind="issue",
+                target_id=i + 1,
+                commit=True,
             )
         )
     return rows

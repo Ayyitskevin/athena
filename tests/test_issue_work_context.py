@@ -452,6 +452,7 @@ def test_exact_bounds_order_and_text_excerpts_are_explicit(tmp_path):
                 target_kind="issue",
                 target_id=root["id"],
                 detail="A" * (work_context.ACTIVITY_DETAIL_LIMIT + 1),
+                commit=True,
             )
         finally:
             conn.close()

@@ -61,6 +61,8 @@ jobs:
         run: .venv/bin/python scripts/check_import_contracts.py
       - name: Check write ownership
         run: .venv/bin/python scripts/check_write_ownership.py
+      - name: Check transaction commits
+        run: .venv/bin/python scripts/check_transaction_commits.py
       - name: Check imported_at guards
         run: .venv/bin/python scripts/check_imported_at_guards.py
       - name: Check template styles

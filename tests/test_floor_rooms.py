@@ -11,12 +11,12 @@ def test_starter_pack_and_place_issue(tmp_path):
     conn = db.connect(tmp_path / "rooms.db")
     db.migrate(conn)
     admin = users.create_user(
-        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE
+        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE, commit=True
     )
     from athena.aegis import projects
 
     project = projects.create_project(
-        conn, name="Scranton", key="SCR", created_by=admin["id"]
+        conn, name="Scranton", key="SCR", created_by=admin["id"], commit=True
     )
     created = room_commands.stock_starter_rooms(
         conn, actor=admin, project_id=project["id"]
@@ -37,6 +37,7 @@ def test_starter_pack_and_place_issue(tmp_path):
         body="",
         created_by=admin["id"],
         project_id=project["id"],
+        commit=True,
     )
     warehouse = rooms.get_room_by_slug(conn, project["id"], "warehouse")
     assert warehouse is not None
@@ -64,13 +65,13 @@ def test_room_commands_refuse_bad_place_and_blank_name(tmp_path):
     conn = db.connect(tmp_path / "rooms-refuse.db")
     db.migrate(conn)
     admin = users.create_user(
-        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE
+        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE, commit=True
     )
     project = projects.create_project(
-        conn, name="Scranton", key="SCR", created_by=admin["id"]
+        conn, name="Scranton", key="SCR", created_by=admin["id"], commit=True
     )
     other = projects.create_project(
-        conn, name="Stamford", key="STF", created_by=admin["id"]
+        conn, name="Stamford", key="STF", created_by=admin["id"], commit=True
     )
     try:
         room_commands.create_room(
@@ -89,7 +90,9 @@ def test_room_commands_refuse_bad_place_and_blank_name(tmp_path):
         raise AssertionError("dup")
     except room_commands.RoomCommandError as exc:
         assert exc.kind == "conflict"
-    backlog = issues.create_issue(conn, title="orphan", body="", created_by=admin["id"])
+    backlog = issues.create_issue(
+        conn, title="orphan", body="", created_by=admin["id"], commit=True
+    )
     try:
         room_commands.place_issue(
             conn, actor=admin, issue_id=backlog["id"], room_id=warehouse["id"]
@@ -98,7 +101,12 @@ def test_room_commands_refuse_bad_place_and_blank_name(tmp_path):
     except room_commands.RoomCommandError as exc:
         assert "backlog" in exc.detail
     foreign = issues.create_issue(
-        conn, title="other", body="", created_by=admin["id"], project_id=other["id"]
+        conn,
+        title="other",
+        body="",
+        created_by=admin["id"],
+        project_id=other["id"],
+        commit=True,
     )
     try:
         room_commands.place_issue(

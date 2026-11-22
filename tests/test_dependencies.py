@@ -54,7 +54,7 @@ def test_blocked_by_is_the_inverse_blocks_row(tmp_path):
         b = _make_issue(client, "B")["id"]
         conn = db.connect(db_file)
         assert dependencies.add_link(
-            conn, from_id=a, to_id=b, relation="blocked_by", created_by=1
+            conn, from_id=a, to_id=b, relation="blocked_by", created_by=1, commit=True
         ) == (None, True)
 
         a_links = dependencies.list_links(conn, a)
@@ -83,7 +83,7 @@ def test_relates_is_symmetric_and_stored_once(tmp_path):
         conn = db.connect(db_file)
         # Declare from the HIGHER id to prove normalization (smaller id first).
         assert dependencies.add_link(
-            conn, from_id=b, to_id=a, relation="relates", created_by=1
+            conn, from_id=b, to_id=a, relation="relates", created_by=1, commit=True
         ) == (None, True)
         assert [x["id"] for x in dependencies.list_links(conn, a)["relates"]] == [b]
         assert [x["id"] for x in dependencies.list_links(conn, b)["relates"]] == [a]
@@ -113,7 +113,12 @@ def test_adding_same_edge_twice_is_a_noop(tmp_path):
             # reports inserted=True (the relates re-add from the other side is a no-op).
             assert (
                 dependencies.add_link(
-                    conn, from_id=frm, to_id=to, relation=relation, created_by=1
+                    conn,
+                    from_id=frm,
+                    to_id=to,
+                    relation=relation,
+                    created_by=1,
+                    commit=True,
                 )[0]
                 is None
             )
@@ -129,7 +134,7 @@ def test_self_link_rejected(tmp_path):
         a = _make_issue(client, "A")["id"]
         conn = db.connect(db_file)
         reason, _inserted = dependencies.add_link(
-            conn, from_id=a, to_id=a, relation="blocks", created_by=1
+            conn, from_id=a, to_id=a, relation="blocks", created_by=1, commit=True
         )
         assert reason is not None
         assert conn.execute("SELECT COUNT(*) FROM issue_links").fetchone()[0] == 0
@@ -147,10 +152,10 @@ def test_direct_block_contradiction_rejected(tmp_path):
         b = _make_issue(client, "B")["id"]
         conn = db.connect(db_file)
         assert dependencies.add_link(
-            conn, from_id=a, to_id=b, relation="blocks", created_by=1
+            conn, from_id=a, to_id=b, relation="blocks", created_by=1, commit=True
         ) == (None, True)
         reason, _inserted = dependencies.add_link(
-            conn, from_id=b, to_id=a, relation="blocks", created_by=1
+            conn, from_id=b, to_id=a, relation="blocks", created_by=1, commit=True
         )
         assert reason is not None and "block each other" in reason
         conn.close()
@@ -166,7 +171,7 @@ def test_unknown_relation_rejected(tmp_path):
         conn = db.connect(db_file)
         assert (
             dependencies.add_link(
-                conn, from_id=a, to_id=b, relation="nonsense", created_by=1
+                conn, from_id=a, to_id=b, relation="nonsense", created_by=1, commit=True
             )[0]
             is not None
         )
@@ -190,7 +195,12 @@ def test_open_blockers_counts_only_undone_and_empties_on_close(tmp_path):
         # b1 and b2 both block target.
         for b in (b1, b2):
             dependencies.add_link(
-                conn, from_id=b, to_id=target, relation="blocks", created_by=1
+                conn,
+                from_id=b,
+                to_id=target,
+                relation="blocks",
+                created_by=1,
+                commit=True,
             )
         assert {x["id"] for x in dependencies.open_blockers(conn, target)} == {b1, b2}
         # Close b1 -> only b2 still blocks.
@@ -212,7 +222,9 @@ def test_deleting_issue_cascades_its_links(tmp_path):
         a = _make_issue(client, "A")["id"]
         b = _make_issue(client, "B")["id"]
         conn = db.connect(db_file)
-        dependencies.add_link(conn, from_id=a, to_id=b, relation="blocks", created_by=1)
+        dependencies.add_link(
+            conn, from_id=a, to_id=b, relation="blocks", created_by=1, commit=True
+        )
         conn.execute("DELETE FROM issues WHERE id = ?", (a,))
         conn.commit()
         assert conn.execute("SELECT COUNT(*) FROM issue_links").fetchone()[0] == 0
@@ -303,6 +315,51 @@ def test_api_add_link_enforces_write_gate(tmp_path):
             headers={"X-Athena-Actor": "2"},
         )
         assert r.status_code == 403
+
+
+def test_a_refused_unlink_keeps_the_link(tmp_path):
+    # WHY (B5): the unlink command deletes the row and records "unlinked" in one
+    # transaction. remove_link used to commit its DELETE whatever commit= it was
+    # given, so when recording the event then failed, the delete had already
+    # landed: the link was gone and the trail never said so. A run bound to
+    # another actor makes the event refuse, which is a real way to fail late.
+    db_file = tmp_path / "unlink.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        _seed_user(db_file, email="other@e.com", name="Other")
+        a = _make_issue(client, "A")
+        b = _make_issue(client, "B")
+        added = client.post(
+            f"/issues/{a['id']}/links",
+            json={"target_ref": str(b["id"]), "relation": "blocks"},
+            headers=_H,
+        )
+        assert added.status_code == 201, added.text
+        bound = client.post(
+            "/issues",
+            json={"title": "binds the run"},
+            headers={"X-Athena-Actor": "2", "X-Athena-Run": "theirs"},
+        )
+        assert bound.status_code == 201, bound.text
+
+        refused = client.delete(
+            f"/issues/{a['id']}/links/blocks/{b['id']}",
+            headers={**_H, "X-Athena-Run": "theirs"},
+        )
+
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["code"] == "run_binding_conflict"
+        links = client.get(f"/issues/{a['id']}/links").json()
+        assert [x["id"] for x in links["blocks"]] == [b["id"]]
+        conn = db.connect(db_file)
+        try:
+            removed = conn.execute(
+                "SELECT COUNT(*) FROM activity WHERE verb = 'unlinked'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        assert removed == 0
 
 
 def test_api_list_missing_issue_is_404(tmp_path):

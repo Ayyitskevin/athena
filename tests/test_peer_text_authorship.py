@@ -956,7 +956,9 @@ def test_an_unknown_or_unseeable_author_is_null_never_a_guess(tmp_path):
         try:
             # A row with no native record of its writing (legacy, or an import
             # that brought no trail), and a newest edit that was imported.
-            legacy = issues.create_issue(conn, title="legacy", body="", created_by=1)
+            legacy = issues.create_issue(
+                conn, title="legacy", body="", created_by=1, commit=True
+            )
             activity.record(
                 conn,
                 actor_id=2,
@@ -965,6 +967,7 @@ def test_an_unknown_or_unseeable_author_is_null_never_a_guess(tmp_path):
                 target_id=native["id"],
                 detail="from a bundle",
                 imported_at="2026-01-01 00:00:00",
+                commit=True,
             )
             ids = [native["id"], legacy["id"], moved["id"]]
             as_admin = issue_activity.issue_text_authors(

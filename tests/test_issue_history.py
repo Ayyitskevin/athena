@@ -47,24 +47,26 @@ def _id_of(conn, issue_id, verb, detail=None):
 
 def test_projection_folds_status_priority_assignee_labels(tmp_path):
     conn = _conn(tmp_path / "fold.db")
-    iid = issues.create_issue(conn, title="x", body="", created_by=1)[
+    iid = issues.create_issue(conn, title="x", body="", created_by=1, commit=True)[
         "id"
     ]  # open / medium
-    bug = labels.get_or_create_label(conn, name="bug")["id"]
+    bug = labels.get_or_create_label(conn, name="bug", commit=True)["id"]
 
     ia.record_status_change(
-        conn, actor_id=1, issue_id=iid, before="open", after="in_progress"
+        conn, actor_id=1, issue_id=iid, before="open", after="in_progress", commit=True
     )
     ia.record_priority_change(
-        conn, actor_id=1, issue_id=iid, before="medium", after="high"
+        conn, actor_id=1, issue_id=iid, before="medium", after="high", commit=True
     )
-    ia.record_assignee_change(conn, actor_id=1, issue_id=iid, before=None, after=1)
-    ia.record_label_added(conn, actor_id=1, issue_id=iid, label_id=bug)
+    ia.record_assignee_change(
+        conn, actor_id=1, issue_id=iid, before=None, after=1, commit=True
+    )
+    ia.record_label_added(conn, actor_id=1, issue_id=iid, label_id=bug, commit=True)
     checkpoint = _id_of(conn, iid, "labeled", "bug")  # state right after the bug label
     ia.record_status_change(
-        conn, actor_id=1, issue_id=iid, before="in_progress", after="done"
+        conn, actor_id=1, issue_id=iid, before="in_progress", after="done", commit=True
     )
-    ia.record_label_removed(conn, actor_id=1, issue_id=iid, label_id=bug)
+    ia.record_label_removed(conn, actor_id=1, issue_id=iid, label_id=bug, commit=True)
 
     # Now: the last value of each field.
     now = issue_history.project_issue_state(conn, iid)
@@ -92,20 +94,36 @@ def test_projection_folds_status_priority_assignee_labels(tmp_path):
 
 def test_projection_sets_and_clears_parent_and_archive(tmp_path):
     conn = _conn(tmp_path / "pa.db")
-    parent = issues.create_issue(conn, title="epic", body="", created_by=1)["id"]
-    iid = issues.create_issue(conn, title="x", body="", created_by=1)["id"]
+    parent = issues.create_issue(
+        conn, title="epic", body="", created_by=1, commit=True
+    )["id"]
+    iid = issues.create_issue(conn, title="x", body="", created_by=1, commit=True)["id"]
 
-    ia.record_parent_change(conn, actor_id=1, issue_id=iid, before=None, after=parent)
+    ia.record_parent_change(
+        conn, actor_id=1, issue_id=iid, before=None, after=parent, commit=True
+    )
     ia.record_archive_change(
-        conn, actor_id=1, issue_id=iid, before=None, after="2026-01-01 00:00:00"
+        conn,
+        actor_id=1,
+        issue_id=iid,
+        before=None,
+        after="2026-01-01 00:00:00",
+        commit=True,
     )
     both = issue_history.project_issue_state(conn, iid)["state"]
     assert both["parent"] == f"#{parent}" and both["archived"] is True
 
     # Clearing both folds back to the defaults.
-    ia.record_parent_change(conn, actor_id=1, issue_id=iid, before=parent, after=None)
+    ia.record_parent_change(
+        conn, actor_id=1, issue_id=iid, before=parent, after=None, commit=True
+    )
     ia.record_archive_change(
-        conn, actor_id=1, issue_id=iid, before="2026-01-01 00:00:00", after=None
+        conn,
+        actor_id=1,
+        issue_id=iid,
+        before="2026-01-01 00:00:00",
+        after=None,
+        commit=True,
     )
     cleared = issue_history.project_issue_state(conn, iid)["state"]
     assert cleared["parent"] is None and cleared["archived"] is False
@@ -113,17 +131,25 @@ def test_projection_sets_and_clears_parent_and_archive(tmp_path):
 
 def test_projection_folds_sprint_membership(tmp_path):
     conn = _conn(tmp_path / "sprint.db")
-    pid = projects.create_project(conn, name="P", key="P", created_by=1)["id"]
-    sid = sprints.create_sprint(conn, project_id=pid, name="Sprint 1")["id"]
-    iid = issues.create_issue(conn, title="x", body="", created_by=1, project_id=pid)[
+    pid = projects.create_project(conn, name="P", key="P", created_by=1, commit=True)[
         "id"
     ]
+    sid = sprints.create_sprint(conn, project_id=pid, name="Sprint 1", commit=True)[
+        "id"
+    ]
+    iid = issues.create_issue(
+        conn, title="x", body="", created_by=1, project_id=pid, commit=True
+    )["id"]
 
-    ia.record_sprint_change(conn, actor_id=1, issue_id=iid, before=None, after=sid)
+    ia.record_sprint_change(
+        conn, actor_id=1, issue_id=iid, before=None, after=sid, commit=True
+    )
     assert issue_history.project_issue_state(conn, iid)["state"]["sprint"] == "Sprint 1"
 
     # Removing it from the sprint folds back to no sprint.
-    ia.record_sprint_change(conn, actor_id=1, issue_id=iid, before=sid, after=None)
+    ia.record_sprint_change(
+        conn, actor_id=1, issue_id=iid, before=sid, after=None, commit=True
+    )
     assert issue_history.project_issue_state(conn, iid)["state"]["sprint"] is None
 
 

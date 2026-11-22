@@ -55,6 +55,7 @@ def _rule(conn, *, action_type, params, pid, name="r", fail_closed=False):
         conditions={"project_id": pid},
         action_params=params,
         created_by=1,
+        commit=True,
     )
 
 
@@ -107,7 +108,7 @@ def test_a_replayed_firing_records_exactly_one_event(tmp_path):
         _, iid = _project_and_issue(client)
         conn = db.connect(db_file)
         sysid = automation.system_actor_id(conn)
-        label = labels.get_or_create_label(conn, name="auto")
+        label = labels.get_or_create_label(conn, name="auto", commit=True)
 
         assert (
             issue_commands.attach_label_as_automation(
@@ -153,7 +154,7 @@ def test_only_the_automation_account_may_use_the_bypass(tmp_path):
         _setup(client)
         _, iid = _project_and_issue(client)
         conn = db.connect(db_file)
-        label = labels.get_or_create_label(conn, name="auto")
+        label = labels.get_or_create_label(conn, name="auto", commit=True)
 
         for call in (
             lambda: issue_commands.attach_label_as_automation(
@@ -217,7 +218,7 @@ def test_pausing_the_automation_account_now_stops_label_and_contributor_rules(tm
 
         # Named explicitly, so the absence above cannot be some other rule not
         # matching: the pause is what refuses, and it says so.
-        label = labels.get_or_create_label(conn, name="auto")
+        label = labels.get_or_create_label(conn, name="auto", commit=True)
         for call in (
             lambda: issue_commands.attach_label_as_automation(
                 conn, actor_id=sysid, issue_id=iid, label_id=label["id"]

@@ -44,17 +44,20 @@ def test_delete_removes_page_and_its_history_and_indexes(tmp_path):
     # outgoing links) must go with it, or the index would describe a dead row.
     conn = _migrated_conn(tmp_path / "del.db")
     _seed_user(conn)
-    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
     pg = pages.create_page(
         conn,
         space_id=sp["id"],
         title="Zebra notes",
         body="see [[issue:1]] zebra",
         created_by=1,
+        commit=True,
     )
     # cut a version, but keep the [[issue:1]] link in the new body so the
     # outgoing-link precondition below is about delete, not about the edit.
-    pages.update_page(conn, pg["id"], editor_id=1, body="zebra revised see [[issue:1]]")
+    pages.update_page(
+        conn, pg["id"], editor_id=1, body="zebra revised see [[issue:1]]", commit=True
+    )
     # Preconditions: it's indexed and has history + an outgoing link.
     assert [h["source_id"] for h in search.search(conn, "zebra")] == [pg["id"]]
     assert pages.list_page_versions(conn, pg["id"]) != []
@@ -83,11 +86,13 @@ def test_delete_removes_a_page_that_has_comments(tmp_path):
 
     conn = _migrated_conn(tmp_path / "del_comments.db")
     _seed_user(conn)
-    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
     pg = pages.create_page(
-        conn, space_id=sp["id"], title="Chatty", body="hi", created_by=1
+        conn, space_id=sp["id"], title="Chatty", body="hi", created_by=1, commit=True
     )
-    page_comments.add_comment(conn, page_id=pg["id"], author_id=1, body="a note")
+    page_comments.add_comment(
+        conn, page_id=pg["id"], author_id=1, body="a note", commit=True
+    )
     assert page_comments.list_comments(conn, pg["id"]) != []
 
     assert pages.delete_page(conn, pg["id"]) is True
@@ -112,8 +117,10 @@ def test_delete_purges_orphan_attachments_and_watches_but_keeps_notifications(tm
         "INSERT INTO users (email, name) VALUES ('w@e.com', 'W')"
     )  # user 2 = watcher
     conn.commit()
-    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
-    pg = pages.create_page(conn, space_id=sp["id"], title="Doc", body="", created_by=1)
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
+    pg = pages.create_page(
+        conn, space_id=sp["id"], title="Doc", body="", created_by=1, commit=True
+    )
 
     # A blob-backed attachment, a watch, and — via a watched event — an inbox entry.
     att = attachments.store(
@@ -130,9 +137,14 @@ def test_delete_purges_orphan_attachments_and_watches_but_keeps_notifications(tm
         config.ATTACH_DIR, attachments.get_stored_name(conn, att["id"])
     )
     assert blob.exists()
-    notifications.watch(conn, 2, "page", pg["id"])
+    notifications.watch(conn, 2, "page", pg["id"], commit=True)
     activity.record(
-        conn, actor_id=1, verb="page.updated", target_kind="page", target_id=pg["id"]
+        conn,
+        actor_id=1,
+        verb="page.updated",
+        target_kind="page",
+        target_id=pg["id"],
+        commit=True,
     )
     events_before = [n["event_id"] for n in notifications.list_notifications(conn, 2)]
     assert events_before != []  # the watcher got an inbox entry
@@ -156,13 +168,14 @@ def test_delete_attempts_index_cleanup_when_blob_unlink_fails(tmp_path, monkeypa
 
     conn = _migrated_conn(tmp_path / "unlink-index-cleanup.db")
     _seed_user(conn)
-    space = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    space = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
     page = pages.create_page(
         conn,
         space_id=space["id"],
         title="Residual zebra",
         body="see [[issue:1]] residual zebra",
         created_by=1,
+        commit=True,
     )
     attachment = attachments.store(
         conn,
@@ -202,13 +215,14 @@ def test_delete_isolates_failed_link_cleanup_before_search_cleanup(
 ):
     conn = _migrated_conn(tmp_path / "projection-isolation.db")
     _seed_user(conn)
-    space = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    space = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
     page = pages.create_page(
         conn,
         space_id=space["id"],
         title="Isolated zebra",
         body="see [[issue:1]] isolated zebra",
         created_by=1,
+        commit=True,
     )
 
     def fail_after_partial_link_cleanup(
@@ -238,13 +252,14 @@ def test_delete_aggregates_cleanup_failures_and_still_clears_search(
 
     conn = _migrated_conn(tmp_path / "cleanup-group.db")
     _seed_user(conn)
-    space = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    space = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
     page = pages.create_page(
         conn,
         space_id=space["id"],
         title="Grouped cleanup zebra",
         body="see [[issue:1]] grouped cleanup zebra",
         created_by=1,
+        commit=True,
     )
 
     def fail_blob_cleanup(*args, **kwargs):
@@ -278,11 +293,13 @@ def test_delete_is_atomic_history_survives_a_failed_page_delete(tmp_path):
     # violation directly to prove the data-access layer itself can't half-delete.
     conn = _migrated_conn(tmp_path / "delatomic.db")
     _seed_user(conn)
-    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
     parent = pages.create_page(
-        conn, space_id=sp["id"], title="Parent", body="v1", created_by=1
+        conn, space_id=sp["id"], title="Parent", body="v1", created_by=1, commit=True
     )
-    pages.update_page(conn, parent["id"], editor_id=1, body="v2")  # cut version 1
+    pages.update_page(
+        conn, parent["id"], editor_id=1, body="v2", commit=True
+    )  # cut version 1
     pages.create_page(
         conn,
         space_id=sp["id"],
@@ -290,6 +307,7 @@ def test_delete_is_atomic_history_survives_a_failed_page_delete(tmp_path):
         body="",
         created_by=1,
         parent_id=parent["id"],
+        commit=True,
     )
     assert pages.list_page_versions(conn, parent["id"]) != []  # history exists
 
@@ -307,9 +325,9 @@ def test_inbound_links_survive_delete_as_broken(tmp_path):
     # just resolves "broken", exactly like a reference to something not yet made.
     conn = _migrated_conn(tmp_path / "delin.db")
     _seed_user(conn)
-    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
     target = pages.create_page(
-        conn, space_id=sp["id"], title="Target", body="", created_by=1
+        conn, space_id=sp["id"], title="Target", body="", created_by=1, commit=True
     )
     referrer = pages.create_page(
         conn,
@@ -317,6 +335,7 @@ def test_inbound_links_survive_delete_as_broken(tmp_path):
         title="Referrer",
         body=f"see [[page:{target['id']}]]",
         created_by=1,
+        commit=True,
     )
     pages.delete_page(conn, target["id"])
     # The referrer's link row still exists but now resolves as broken (not found).
@@ -327,9 +346,9 @@ def test_inbound_links_survive_delete_as_broken(tmp_path):
 def test_count_child_pages(tmp_path):
     conn = _migrated_conn(tmp_path / "cnt.db")
     _seed_user(conn)
-    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
     parent = pages.create_page(
-        conn, space_id=sp["id"], title="Parent", body="", created_by=1
+        conn, space_id=sp["id"], title="Parent", body="", created_by=1, commit=True
     )
     assert pages.count_child_pages(conn, parent["id"]) == 0
     pages.create_page(
@@ -339,6 +358,7 @@ def test_count_child_pages(tmp_path):
         body="",
         parent_id=parent["id"],
         created_by=1,
+        commit=True,
     )
     assert pages.count_child_pages(conn, parent["id"]) == 1
 
@@ -349,15 +369,31 @@ def test_count_child_pages(tmp_path):
 def _tree(conn):
     """A 3-deep chain A -> B -> C in one space, plus a sibling D under root."""
     _seed_user(conn)
-    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
-    a = pages.create_page(conn, space_id=sp["id"], title="A", body="", created_by=1)
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
+    a = pages.create_page(
+        conn, space_id=sp["id"], title="A", body="", created_by=1, commit=True
+    )
     b = pages.create_page(
-        conn, space_id=sp["id"], title="B", body="", parent_id=a["id"], created_by=1
+        conn,
+        space_id=sp["id"],
+        title="B",
+        body="",
+        parent_id=a["id"],
+        created_by=1,
+        commit=True,
     )
     c = pages.create_page(
-        conn, space_id=sp["id"], title="C", body="", parent_id=b["id"], created_by=1
+        conn,
+        space_id=sp["id"],
+        title="C",
+        body="",
+        parent_id=b["id"],
+        created_by=1,
+        commit=True,
     )
-    d = pages.create_page(conn, space_id=sp["id"], title="D", body="", created_by=1)
+    d = pages.create_page(
+        conn, space_id=sp["id"], title="D", body="", created_by=1, commit=True
+    )
     return sp, a, b, c, d
 
 
@@ -366,7 +402,7 @@ def test_move_to_root_and_under_sibling_is_allowed(tmp_path):
     sp, a, b, c, d = _tree(conn)
     assert pages.validate_move(conn, b, None) is None  # to top level
     assert pages.validate_move(conn, b, d["id"]) is None  # under an unrelated page
-    moved, err = pages.move(conn, b, d["id"])
+    moved, err = pages.move(conn, b, d["id"], commit=True)
     assert err is None
     assert moved["parent_id"] == d["id"]
 
@@ -384,9 +420,9 @@ def test_move_rejects_self_and_descendant_cycle(tmp_path):
 def test_move_rejects_cross_space_parent(tmp_path):
     conn = _migrated_conn(tmp_path / "xsp.db")
     sp, a, b, c, d = _tree(conn)
-    other = spaces.create_space(conn, key="OPS", name="Ops", created_by=1)
+    other = spaces.create_space(conn, key="OPS", name="Ops", created_by=1, commit=True)
     foreign = pages.create_page(
-        conn, space_id=other["id"], title="Foreign", body="", created_by=1
+        conn, space_id=other["id"], title="Foreign", body="", created_by=1, commit=True
     )
     assert pages.validate_move(conn, a, foreign["id"]) is not None
 
@@ -417,11 +453,11 @@ def test_move_validates_and_writes_atomically(tmp_path):
     conn = _migrated_conn(tmp_path / "atomic.db")
     sp, a, b, c, d = _tree(conn)  # a > b > c ; d is a separate root
     # Illegal: move a under its own descendant c — rejected, nothing written.
-    rejected, err = pages.move(conn, a, c["id"])
+    rejected, err = pages.move(conn, a, c["id"], commit=True)
     assert rejected is None and err is not None
     assert pages.get_page(conn, a["id"])["parent_id"] is None  # a stays a root
     # Legal: move b under the unrelated root d — succeeds and re-parents.
-    moved, err = pages.move(conn, b, d["id"])
+    moved, err = pages.move(conn, b, d["id"], commit=True)
     assert err is None and moved["parent_id"] == d["id"]
     assert pages.get_page(conn, b["id"])["parent_id"] == d["id"]
     conn.close()

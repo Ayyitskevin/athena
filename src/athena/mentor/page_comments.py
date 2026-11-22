@@ -33,7 +33,7 @@ def add_comment(
     page_id: int,
     author_id: int,
     body: str,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Append a comment and return it. Raises sqlite3.IntegrityError if the page
     or author doesn't exist (the foreign keys refuse the orphan). ``commit=False`` lets
@@ -57,7 +57,7 @@ def get_comment(conn: sqlite3.Connection, comment_id: int) -> dict | None:
 
 
 def update_comment(
-    conn: sqlite3.Connection, comment_id: int, *, body: str, commit: bool = True
+    conn: sqlite3.Connection, comment_id: int, *, body: str, commit: bool
 ) -> dict | None:
     """Replace a comment's body and return it, or None if no comment has that id.
     Author-ownership (only the author may edit) is enforced at the boundary, not
@@ -73,9 +73,7 @@ def update_comment(
     return get_comment(conn, comment_id)
 
 
-def delete_comment(
-    conn: sqlite3.Connection, comment_id: int, *, commit: bool = True
-) -> bool:
+def delete_comment(conn: sqlite3.Connection, comment_id: int, *, commit: bool) -> bool:
     """Delete a comment. Returns True if a row was removed, False if no comment
     had that id (so the caller can answer 404). ``commit=False`` lets an audited command
     fold the delete and its activity event into one transaction."""

@@ -45,18 +45,20 @@ def test_default_human_and_set_agent_round_trips(tmp_path):
         pass  # boot once to run migrations
     conn = db.connect(db_path)
     try:
-        human = users.create_user(conn, email="p@e.com", name="Person")
+        human = users.create_user(conn, email="p@e.com", name="Person", commit=True)
         assert human["is_agent"] is False
 
-        bot = users.create_user(conn, email="bot@e.com", name="Bot", is_agent=True)
+        bot = users.create_user(
+            conn, email="bot@e.com", name="Bot", is_agent=True, commit=True
+        )
         assert bot["is_agent"] is True
 
-        flipped = users.set_agent(conn, human["id"], True)
+        flipped = users.set_agent(conn, human["id"], True, commit=True)
         assert flipped["is_agent"] is True
         assert users.get_user(conn, human["id"])["is_agent"] is True
 
         # set_agent on a missing user is a clean None, not a crash.
-        assert users.set_agent(conn, 9999, True) is None
+        assert users.set_agent(conn, 9999, True, commit=True) is None
 
         listed = {u["email"]: u["is_agent"] for u in users.list_users(conn)}
         assert listed == {"p@e.com": True, "bot@e.com": True}

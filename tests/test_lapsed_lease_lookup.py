@@ -71,11 +71,11 @@ def test_lapsed_page_clamps_the_limit_and_preserves_the_full_count(conn):
 def test_lapsed_lookup_filters_before_paging_and_keeps_status_owner_semantics(conn):
     seed_leases(conn, 8)
     configured = projects.create_project(
-        conn, name="Configured", key="CFG", created_by=1
+        conn, name="Configured", key="CFG", created_by=1, commit=True
     )["id"]
-    empty = projects.create_project(conn, name="Empty menu", key="EMP", created_by=1)[
-        "id"
-    ]
+    empty = projects.create_project(
+        conn, name="Empty menu", key="EMP", created_by=1, commit=True
+    )["id"]
     conn.execute("DELETE FROM project_statuses")
     conn.execute(
         "INSERT INTO project_statuses (project_id, name, category, position) "

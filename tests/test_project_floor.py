@@ -127,16 +127,21 @@ def test_open_blockers_by_issue_matches_single_read(tmp_path):
     conn = db.connect(tmp_path / "blockers.db")
     db.migrate(conn)
     admin = users.create_user(
-        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE
+        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE, commit=True
     )
-    a = issues.create_issue(conn, title="blocker", body="", created_by=admin["id"])
-    b = issues.create_issue(conn, title="blocked", body="", created_by=admin["id"])
+    a = issues.create_issue(
+        conn, title="blocker", body="", created_by=admin["id"], commit=True
+    )
+    b = issues.create_issue(
+        conn, title="blocked", body="", created_by=admin["id"], commit=True
+    )
     dependencies.add_link(
         conn,
         from_id=a["id"],
         to_id=b["id"],
         relation="blocks",
         created_by=admin["id"],
+        commit=True,
     )
     single = dependencies.open_blockers(conn, b["id"], actor=admin)
     batched = dependencies.open_blockers_by_issue(conn, [a["id"], b["id"]], actor=admin)

@@ -97,6 +97,13 @@ STAGES = (
         (".venv/bin/python scripts/check_write_ownership.py",),
     ),
     Stage(
+        "transactions",
+        (PYTHON, "scripts/check_transaction_commits.py"),
+        True,
+        ("Check transaction commits",),
+        (".venv/bin/python scripts/check_transaction_commits.py",),
+    ),
+    Stage(
         "imported-at",
         (PYTHON, "scripts/check_imported_at_guards.py"),
         True,

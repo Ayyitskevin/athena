@@ -53,13 +53,16 @@ def test_project_export_bundle_captures_project_content_without_secrets(tmp_path
     member = _user(conn, "member@example.com", "Member")
     bot = _user(conn, "bot@example.com", "Bot", is_agent=True)
 
-    ext_space = spaces.create_space(conn, key="EXT", name="External", created_by=owner)
+    ext_space = spaces.create_space(
+        conn, key="EXT", name="External", created_by=owner, commit=True
+    )
     ext_page = pages.create_page(
         conn,
         space_id=ext_space["id"],
         title="Outside Page",
         body="outside",
         created_by=owner,
+        commit=True,
     )
     project = projects.create_project(
         conn,
@@ -67,9 +70,10 @@ def test_project_export_bundle_captures_project_content_without_secrets(tmp_path
         key="PORT",
         description="Export me",
         created_by=owner,
+        commit=True,
     )
-    projects.set_blocked_close_policy(conn, project["id"], enabled=True)
-    access.add_project_member(conn, project["id"], member, owner)
+    projects.set_blocked_close_policy(conn, project["id"], enabled=True, commit=True)
+    access.add_project_member(conn, project["id"], member, owner, commit=True)
     conn.execute(
         "INSERT INTO sprints (project_id, name, goal, state) VALUES (?, ?, ?, ?)",
         (project["id"], "Sprint 1", "ship export", "planned"),
@@ -82,6 +86,7 @@ def test_project_export_bundle_captures_project_content_without_secrets(tmp_path
         body=f"See [[page:{ext_page['id']}]]",
         created_by=owner,
         project_id=project["id"],
+        commit=True,
     )
     issue_b = issues.create_issue(
         conn,
@@ -89,11 +94,12 @@ def test_project_export_bundle_captures_project_content_without_secrets(tmp_path
         body="child body",
         created_by=member,
         project_id=project["id"],
+        commit=True,
     )
-    issues.set_assignee(conn, issue_a["id"], member)
-    issues.set_parent(conn, issue_b["id"], issue_a["id"])
+    issues.set_assignee(conn, issue_a["id"], member, commit=True)
+    issues.set_parent(conn, issue_b["id"], issue_a["id"], commit=True)
     issue_comments.add_comment(
-        conn, issue_id=issue_a["id"], author_id=member, body="comment"
+        conn, issue_id=issue_a["id"], author_id=member, body="comment", commit=True
     )
     conn.execute(
         "INSERT INTO issue_contributors (issue_id, user_id, added_by) VALUES (?, ?, ?)",
@@ -105,8 +111,8 @@ def test_project_export_bundle_captures_project_content_without_secrets(tmp_path
         (issue_a["id"], issue_b["id"], "blocks", owner),
     )
     conn.commit()
-    bug = labels.create_label(conn, name="bug", color="#ff0000")
-    labels.add_label_to_issue(conn, issue_a["id"], bug["id"])
+    bug = labels.create_label(conn, name="bug", color="#ff0000", commit=True)
+    labels.add_label_to_issue(conn, issue_a["id"], bug["id"], commit=True)
     _attachment(
         conn,
         target_kind="issue",
@@ -120,6 +126,7 @@ def test_project_export_bundle_captures_project_content_without_secrets(tmp_path
         verb="created",
         target_kind="project",
         target_id=project["id"],
+        commit=True,
     )
     activity.record(
         conn,
@@ -127,6 +134,7 @@ def test_project_export_bundle_captures_project_content_without_secrets(tmp_path
         verb="triaged",
         target_kind="issue",
         target_id=issue_a["id"],
+        commit=True,
     )
 
     bundle = portability.export_bundle(conn, "project", project["id"])
@@ -171,13 +179,16 @@ def test_space_export_bundle_captures_pages_versions_and_page_metadata(tmp_path)
     owner = _user(conn, "owner@example.com", "Owner", role="admin")
     member = _user(conn, "member@example.com", "Member")
 
-    project = projects.create_project(conn, name="Aegis", key="AEG", created_by=owner)
+    project = projects.create_project(
+        conn, name="Aegis", key="AEG", created_by=owner, commit=True
+    )
     issue = issues.create_issue(
         conn,
         title="Linked issue",
         body="issue",
         created_by=owner,
         project_id=project["id"],
+        commit=True,
     )
     space = spaces.create_space(
         conn,
@@ -185,14 +196,16 @@ def test_space_export_bundle_captures_pages_versions_and_page_metadata(tmp_path)
         name="Docs",
         description="Export docs",
         created_by=owner,
+        commit=True,
     )
-    access.add_space_member(conn, space["id"], member, owner)
+    access.add_space_member(conn, space["id"], member, owner, commit=True)
     parent = pages.create_page(
         conn,
         space_id=space["id"],
         title="Parent",
         body="first body",
         created_by=owner,
+        commit=True,
     )
     child = pages.create_page(
         conn,
@@ -201,6 +214,7 @@ def test_space_export_bundle_captures_pages_versions_and_page_metadata(tmp_path)
         title="Child",
         body=f"See [[issue:{issue['id']}]]",
         created_by=member,
+        commit=True,
     )
     pages.update_page(
         conn,
@@ -208,12 +222,13 @@ def test_space_export_bundle_captures_pages_versions_and_page_metadata(tmp_path)
         editor_id=member,
         title="Parent v2",
         body="second body",
+        commit=True,
     )
     page_comments.add_comment(
-        conn, page_id=child["id"], author_id=owner, body="page comment"
+        conn, page_id=child["id"], author_id=owner, body="page comment", commit=True
     )
-    kb = labels.create_label(conn, name="kb", color="#00ff00")
-    labels.add_label_to_page(conn, child["id"], kb["id"])
+    kb = labels.create_label(conn, name="kb", color="#00ff00", commit=True)
+    labels.add_label_to_page(conn, child["id"], kb["id"], commit=True)
     _attachment(
         conn,
         target_kind="page",
@@ -227,6 +242,7 @@ def test_space_export_bundle_captures_pages_versions_and_page_metadata(tmp_path)
         verb="created",
         target_kind="space",
         target_id=space["id"],
+        commit=True,
     )
     activity.record(
         conn,
@@ -234,6 +250,7 @@ def test_space_export_bundle_captures_pages_versions_and_page_metadata(tmp_path)
         verb="edited",
         target_kind="page",
         target_id=parent["id"],
+        commit=True,
     )
 
     bundle = portability.export_bundle(conn, "space", space["id"])
@@ -268,7 +285,9 @@ def test_export_cli_writes_json_and_refuses_overwrite(tmp_path, capsys):
     db_file = tmp_path / "cli.db"
     conn = _connect(db_file)
     owner = _user(conn, "owner@example.com", "Owner")
-    project = projects.create_project(conn, name="CLI", key="CLI", created_by=owner)
+    project = projects.create_project(
+        conn, name="CLI", key="CLI", created_by=owner, commit=True
+    )
     conn.close()
     bundle_path = tmp_path / "exports" / "project.json"
 
@@ -320,7 +339,7 @@ def test_export_bundle_uses_one_read_snapshot(tmp_path, monkeypatch):
     reader = _connect(db_file)
     owner = _user(reader, "snapshot@example.com", "Snapshot")
     project = projects.create_project(
-        reader, name="Snapshot", key="SNP", created_by=owner
+        reader, name="Snapshot", key="SNP", created_by=owner, commit=True
     )
     before = issues.create_issue(
         reader,
@@ -328,6 +347,7 @@ def test_export_bundle_uses_one_read_snapshot(tmp_path, monkeypatch):
         body="before",
         created_by=owner,
         project_id=project["id"],
+        commit=True,
     )
     writer = db.connect(db_file)
     real_rows = portability._rows
@@ -343,6 +363,7 @@ def test_export_bundle_uses_one_read_snapshot(tmp_path, monkeypatch):
                 body="after",
                 created_by=owner,
                 project_id=project["id"],
+                commit=True,
             )
         return real_rows(conn, sql, params)
 

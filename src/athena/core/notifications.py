@@ -61,7 +61,7 @@ def watch(
     target_kind: str,
     target_id: int,
     *,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Start watching a target (idempotent — watching twice is a no-op).
 
@@ -209,7 +209,7 @@ def process_mentions(
     event_id: int,
     actor_id: int,
     text: str | None,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Notify every real user named by [[user:N]] in `text` (except the actor) about
     this event, and start them watching its target so they follow the thread.

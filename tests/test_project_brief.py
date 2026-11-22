@@ -21,7 +21,9 @@ def board(tmp_path):
             (f"{name.lower()}@example.invalid", name, role),
         )
     conn.commit()
-    project = projects.create_project(conn, name="Brief", key="BRF", created_by=1)
+    project = projects.create_project(
+        conn, name="Brief", key="BRF", created_by=1, commit=True
+    )
     member = dict(conn.execute("SELECT * FROM users WHERE id=2").fetchone())
     yield path, conn, project, member
     conn.close()
@@ -35,6 +37,7 @@ def _issue(conn, project_id, title="Work", **kwargs):
         created_by=1,
         project_id=project_id,
         **kwargs,
+        commit=True,
     )
 
 
@@ -87,7 +90,7 @@ def _actor(conn, actor_id=1):
 def _hold(conn, issue, *, holder=1, expiry="2035-01-02 12:00:01"):
     from athena.aegis import leases
 
-    held = leases.upsert_lease(conn, issue["id"], holder, 3600)
+    held = leases.upsert_lease(conn, issue["id"], holder, 3600, commit=True)
     conn.execute(
         "UPDATE issue_leases SET expires_at=? WHERE issue_id=?", (expiry, issue["id"])
     )
@@ -134,6 +137,7 @@ def _report(conn, issue, report=None, *, malformed=False, imported=False):
         target_id=issue["id"],
         detail=detail,
         imported_at="2030-01-01 00:00:00" if imported else None,
+        commit=True,
     )
 
 
@@ -149,7 +153,12 @@ def _block(conn, work, blocker):
     from athena.aegis import dependencies
 
     reason, inserted = dependencies.add_link(
-        conn, from_id=blocker["id"], to_id=work["id"], relation="blocks", created_by=1
+        conn,
+        from_id=blocker["id"],
+        to_id=work["id"],
+        relation="blocks",
+        created_by=1,
+        commit=True,
     )
     assert reason is None and inserted
 
@@ -161,7 +170,7 @@ def test_populations_keep_assignment_possession_and_reports_distinct(board):
 
     _, conn, project, member = board
     work = _issue(conn, project["id"], "Assigned work")
-    issues.set_assignee(conn, work["id"], 2)
+    issues.set_assignee(conn, work["id"], 2, commit=True)
     _hold(conn, work, holder=3)
     done = _issue(conn, project["id"], "Done but held", status="done")
     _handoff(conn, done)
@@ -177,7 +186,9 @@ def test_populations_keep_assignment_possession_and_reports_distinct(board):
             "UPDATE issues SET archived_at=CURRENT_TIMESTAMP WHERE id=?", (issue["id"],)
         )
     conn.commit()
-    foreign = projects.create_project(conn, name="Other", key="OTH", created_by=1)
+    foreign = projects.create_project(
+        conn, name="Other", key="OTH", created_by=1, commit=True
+    )
     blocker = _issue(conn, foreign["id"], "Archived blocker")
     conn.execute(
         "UPDATE issues SET archived_at=CURRENT_TIMESTAMP WHERE id=?", (blocker["id"],)
@@ -228,8 +239,10 @@ def test_hidden_blockers_and_historical_events_do_not_count_or_consume_limit(boa
     from athena.core import access
 
     _, conn, project, member = board
-    secret = projects.create_project(conn, name="Secret", key="SEC", created_by=1)
-    projects.set_visibility(conn, secret["id"], "private")
+    secret = projects.create_project(
+        conn, name="Secret", key="SEC", created_by=1, commit=True
+    )
+    projects.set_visibility(conn, secret["id"], "private", commit=True)
     hidden = _issue(conn, secret["id"], "SECRET BLOCKER")
     work = _issue(conn, project["id"], "Visible work")
     _block(conn, work, hidden)
@@ -238,7 +251,7 @@ def test_hidden_blockers_and_historical_events_do_not_count_or_consume_limit(boa
     moved = _issue(conn, secret["id"], "Moved work")
     old = _report(conn, moved, {"verdict": "HOLD"})
     _handoff(conn, moved, "SECRET QUESTION")
-    issues.set_project(conn, moved["id"], project["id"])
+    issues.set_project(conn, moved["id"], project["id"], commit=True)
     visible_question = _issue(conn, project["id"], "Visible question")
     _handoff(conn, visible_question)
     visible_report = _report(conn, work, {"verdict": "PASS"})
@@ -251,7 +264,7 @@ def test_hidden_blockers_and_historical_events_do_not_count_or_consume_limit(boa
     assert packet["latest_completions"]["visible_total"] == 1
     assert packet["latest_completions"]["items"][0]["event_id"] == visible_report["id"]
     assert "SECRET" not in str(packet)
-    access.add_project_member(conn, secret["id"], 2, 1)
+    access.add_project_member(conn, secret["id"], 2, 1, commit=True)
     granted = _brief(conn, project, member, limit=20)
     assert granted["blockers"]["visible_total"] == 2
     assert granted["open_handoffs"]["visible_total"] == 2
@@ -315,7 +328,9 @@ def test_status_sql_exactly_matches_owner_for_custom_unknown_and_fallback(board)
     from athena.aegis import statuses
 
     _, conn, project, _ = board
-    empty = projects.create_project(conn, name="No statuses", key="EMP", created_by=1)
+    empty = projects.create_project(
+        conn, name="No statuses", key="EMP", created_by=1, commit=True
+    )
     conn.execute(
         "DELETE FROM project_statuses WHERE project_id IN (?,?)",
         (project["id"], empty["id"]),
@@ -340,7 +355,7 @@ def test_status_sql_exactly_matches_owner_for_custom_unknown_and_fallback(board)
 def test_unicode_excerpts_and_independent_section_clipping(board):
     _, conn, project, member = board
     long = "界🙂" * 250
-    projects.update_project(conn, project["id"], name=long)
+    projects.update_project(conn, project["id"], name=long, commit=True)
     conn.execute("UPDATE users SET name=? WHERE id=1", (long,))
     conn.execute(
         "INSERT INTO project_statuses (project_id,name,category,position) VALUES (?,?,?,4)",
@@ -456,10 +471,10 @@ def test_http_visibility_revocation_read_token_validation_and_domain_immutabilit
     path, conn, project, member = board
     issue = _issue(conn, project["id"])
     _hold(conn, issue, holder=2)
-    projects.set_visibility(conn, project["id"], "private")
-    access.add_project_member(conn, project["id"], 2, 1)
+    projects.set_visibility(conn, project["id"], "private", commit=True)
+    access.add_project_member(conn, project["id"], 2, 1, commit=True)
     token = tokens.create_token(
-        conn, user_id=2, name="synthetic-read", scopes=["read"]
+        conn, user_id=2, name="synthetic-read", scopes=["read"], commit=True
     )["token"]
     before = {
         table: [tuple(r) for r in conn.execute(f"SELECT * FROM {table}")]
@@ -488,7 +503,7 @@ def test_http_visibility_revocation_read_token_validation_and_domain_immutabilit
             )
         for invalid in ("0", "-1", str(2**63)):
             assert client.get(f"/projects/{invalid}/brief").status_code == 422
-        access.remove_project_member(conn, project["id"], 2)
+        access.remove_project_member(conn, project["id"], 2, commit=True)
         hidden = client.get(url, headers={"X-Athena-Actor": "2"})
         missing = client.get("/projects/999999/brief", headers={"X-Athena-Actor": "2"})
         assert hidden.status_code == missing.status_code == 404
@@ -559,7 +574,9 @@ def test_fixed_limit_bounds_statements_materialized_rows_and_report_parses(
 
     small, before = measure()
     add_rows(project["id"], 37)
-    unrelated = projects.create_project(conn, name="Unrelated", key="UNR", created_by=1)
+    unrelated = projects.create_project(
+        conn, name="Unrelated", key="UNR", created_by=1, commit=True
+    )
     add_rows(unrelated["id"], 40)
     large, after = measure()
     assert before == after
@@ -583,9 +600,9 @@ def test_hidden_newer_completion_does_not_replace_latest_visible_event(board):
 
     _, conn, project, member = board
     secret = projects.create_project(
-        conn, name="Former private", key="OLD", created_by=1
+        conn, name="Former private", key="OLD", created_by=1, commit=True
     )
-    projects.set_visibility(conn, secret["id"], "private")
+    projects.set_visibility(conn, secret["id"], "private", commit=True)
     issue = _issue(conn, project["id"])
     visible = _report(conn, issue, {"verdict": "HOLD"})
     hidden = activity.record(
@@ -596,6 +613,7 @@ def test_hidden_newer_completion_does_not_replace_latest_visible_event(board):
         target_id=issue["id"],
         detail="generation " + "b" * 32,
         issue_project_ids=[secret["id"]],
+        commit=True,
     )
     assert hidden["id"] > visible["id"]
     packet = _brief(conn, project, member)

@@ -53,7 +53,7 @@ def _seed(conn):
     conn.commit()
     actor = dict(conn.execute("SELECT * FROM users WHERE id=1").fetchone())
     issue = issues.create_issue(
-        conn, title="expiry boundary", body="work", created_by=1
+        conn, title="expiry boundary", body="work", created_by=1, commit=True
     )
     return actor, issue["id"]
 

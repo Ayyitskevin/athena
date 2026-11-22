@@ -19,7 +19,9 @@ def board(tmp_path):
             (number, f"actor{number}@example.invalid", f"Actor {number}", role),
         )
     conn.commit()
-    project = projects.create_project(conn, name="Review", key="RVW", created_by=1)
+    project = projects.create_project(
+        conn, name="Review", key="RVW", created_by=1, commit=True
+    )
     yield conn, path, project
     conn.close()
 
@@ -36,8 +38,9 @@ def issue(conn, project, *, assignee=2, **fields):
         created_by=1,
         project_id=project["id"] if project is not None else None,
         **fields,
+        commit=True,
     )
-    return issues.set_assignee(conn, row["id"], assignee)
+    return issues.set_assignee(conn, row["id"], assignee, commit=True)
 
 
 def claim(conn, item, actor_id=2):
@@ -265,9 +268,9 @@ def test_submission_authority_refusals_retain_all_state(board, case, kind):
     elif case == "admin_other":
         actor_id = 1
     elif case == "archived":
-        issues.set_archived(conn, build["id"], True)
+        issues.set_archived(conn, build["id"], True, commit=True)
     elif case == "backlog":
-        issues.set_project(conn, build["id"], None)
+        issues.set_project(conn, build["id"], None, commit=True)
     elif case == "wrong_predecessor":
         payload = submission(9999)
     elif case == "nested":
@@ -302,21 +305,23 @@ def test_review_requires_distinct_accounts_and_current_project_pair(board, case)
     actor_id = 3
     if case == "same_account":
         actor_id = 2
-        issues.set_assignee(conn, check["id"], 2)
+        issues.set_assignee(conn, check["id"], 2, commit=True)
     elif case == "same_issue":
         check = build
-        issues.set_assignee(conn, check["id"], 3)
+        issues.set_assignee(conn, check["id"], 3, commit=True)
     held = claim(conn, check, actor_id)
     if case == "cross_project":
-        other = projects.create_project(conn, name="Other", key="OTH", created_by=1)
-        issues.set_project(conn, build["id"], other["id"])
+        other = projects.create_project(
+            conn, name="Other", key="OTH", created_by=1, commit=True
+        )
+        issues.set_project(conn, build["id"], other["id"], commit=True)
     elif case == "source_archived":
-        issues.set_archived(conn, build["id"], True)
+        issues.set_archived(conn, build["id"], True, commit=True)
     elif case == "review_archived":
-        issues.set_archived(conn, check["id"], True)
+        issues.set_archived(conn, check["id"], True, commit=True)
     elif case == "backlog":
-        issues.set_project(conn, check["id"], None)
-        issues.set_project(conn, build["id"], None)
+        issues.set_project(conn, check["id"], None, commit=True)
+        issues.set_project(conn, build["id"], None, commit=True)
     refuse(
         conn,
         "conflict",
@@ -327,7 +332,7 @@ def test_review_requires_distinct_accounts_and_current_project_pair(board, case)
 
 
 def private(conn, project, *members):
-    projects.set_visibility(conn, project["id"], "private")
+    projects.set_visibility(conn, project["id"], "private", commit=True)
     for member in members:
         conn.execute(
             "INSERT OR IGNORE INTO project_members(project_id,user_id) VALUES (?,?)",
@@ -340,11 +345,13 @@ def test_hidden_predecessor_correct_wrong_null_refuse_identically_before_cas(boa
     from athena.aegis.work_context import build_work_context
 
     conn, _, original = board
-    public = projects.create_project(conn, name="Public", key="PUB", created_by=1)
+    public = projects.create_project(
+        conn, name="Public", key="PUB", created_by=1, commit=True
+    )
     build = issue(conn, original)
     first = submit(conn, build)
     private(conn, original)
-    issues.set_project(conn, build["id"], public["id"])
+    issues.set_project(conn, build["id"], public["id"], commit=True)
     held = claim(conn, build)
     details = [
         refuse(
@@ -375,14 +382,16 @@ def test_hidden_newest_candidate_never_promotes_old_visible_one(board):
     from athena.aegis.work_context import build_work_context
 
     conn, _, public = board
-    hidden = projects.create_project(conn, name="Hidden", key="HID", created_by=1)
+    hidden = projects.create_project(
+        conn, name="Hidden", key="HID", created_by=1, commit=True
+    )
     build, check = issue(conn, public), issue(conn, public, assignee=3)
     first = submit(conn, build)
     review(conn, check, first["candidate_id"], verdict="PASS")
-    issues.set_project(conn, build["id"], hidden["id"])
+    issues.set_project(conn, build["id"], hidden["id"], commit=True)
     submit(conn, build, first["candidate_id"], "b" * 40)
     private(conn, hidden)
-    issues.set_project(conn, build["id"], public["id"])
+    issues.set_project(conn, build["id"], public["id"], commit=True)
     assert queue(conn, public)["items"] == []
     assert "review_tracking" not in build_work_context(
         conn, str(build["id"]), actor=actor(conn)
@@ -392,16 +401,18 @@ def test_hidden_newest_candidate_never_promotes_old_visible_one(board):
 
 def test_hidden_latest_review_never_falls_back_to_older_visible_pass(board):
     conn, _, public = board
-    hidden = projects.create_project(conn, name="Hidden", key="HID", created_by=1)
+    hidden = projects.create_project(
+        conn, name="Hidden", key="HID", created_by=1, commit=True
+    )
     build, check = issue(conn, public), issue(conn, public, assignee=3)
     candidate = submit(conn, build)
     review(conn, check, candidate["candidate_id"], verdict="PASS")
     newer_check = issue(conn, public, assignee=3)
-    issues.set_project(conn, build["id"], hidden["id"])
-    issues.set_project(conn, newer_check["id"], hidden["id"])
+    issues.set_project(conn, build["id"], hidden["id"], commit=True)
+    issues.set_project(conn, newer_check["id"], hidden["id"], commit=True)
     review(conn, newer_check, candidate["candidate_id"], verdict="HOLD")
-    issues.set_project(conn, build["id"], public["id"])
-    issues.set_project(conn, newer_check["id"], public["id"])
+    issues.set_project(conn, build["id"], public["id"], commit=True)
+    issues.set_project(conn, newer_check["id"], public["id"], commit=True)
     private(conn, hidden)
     row = queue(conn, public)["items"][0]
     assert (row["review_state"], row["latest_review"]) == ("awaiting_review", None)
@@ -410,10 +421,12 @@ def test_hidden_latest_review_never_falls_back_to_older_visible_pass(board):
 
 def test_candidate_original_scope_and_missing_candidate_have_same_refusal(board):
     conn, _, original = board
-    public = projects.create_project(conn, name="Public", key="PUB", created_by=1)
+    public = projects.create_project(
+        conn, name="Public", key="PUB", created_by=1, commit=True
+    )
     build = issue(conn, original)
     candidate = submit(conn, build)
-    issues.set_project(conn, build["id"], public["id"])
+    issues.set_project(conn, build["id"], public["id"], commit=True)
     private(conn, original)
     check = issue(conn, public, assignee=3)
     held = claim(conn, check, 3)
@@ -521,5 +534,5 @@ def test_done_source_remains_in_queue_but_archived_source_does_not(board):
     row = queue(conn, project)["items"][0]
     assert row["candidate"]["candidate_id"] == candidate["candidate_id"]
     assert row["issue"]["status_category"] == "done"
-    issues.set_archived(conn, build["id"], True)
+    issues.set_archived(conn, build["id"], True, commit=True)
     assert queue(conn, project)["visible_total"] == 0

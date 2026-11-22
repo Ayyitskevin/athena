@@ -103,7 +103,9 @@ def test_0060_preserves_existing_projects_disabled_and_checks_boolean(
     conn = db.connect(tmp_path / "upgrade.db")
     assert db.migrate(conn)[-1].startswith("0059_")
     conn.execute("INSERT INTO users (id, email, name) VALUES (1, 'a@example.com', 'A')")
-    legacy = projects.create_project(conn, name="Legacy", key="LEG", created_by=1)
+    legacy = projects.create_project(
+        conn, name="Legacy", key="LEG", created_by=1, commit=True
+    )
     assert "block_agent_closes_when_blocked" not in legacy
 
     shutil.copy2(
@@ -115,7 +117,9 @@ def test_0060_preserves_existing_projects_disabled_and_checks_boolean(
         projects.get_project(conn, legacy["id"])["block_agent_closes_when_blocked"]
         is False
     )
-    fresh = projects.create_project(conn, name="Fresh", key="FRE", created_by=1)
+    fresh = projects.create_project(
+        conn, name="Fresh", key="FRE", created_by=1, commit=True
+    )
     assert fresh["block_agent_closes_when_blocked"] is False
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
@@ -288,17 +292,17 @@ def test_command_reloads_actor_and_rolls_back_flag_when_audit_fails(
             )
         assert denied.value.kind == "forbidden"
 
-    users.set_agent(conn, 1, True)
+    users.set_agent(conn, 1, True, commit=True)
     assert_denied(actor_snapshot)
 
-    users.set_agent(conn, 1, False)
-    users.set_role(conn, 1, users.VIEWER_ROLE)
+    users.set_agent(conn, 1, False, commit=True)
+    users.set_role(conn, 1, users.VIEWER_ROLE, commit=True)
     assert_denied(actor_snapshot)
-    users.set_role(conn, 1, users.ADMIN_ROLE)
+    users.set_role(conn, 1, users.ADMIN_ROLE, commit=True)
 
-    users.set_paused(conn, 1, True)
+    users.set_paused(conn, 1, True, commit=True)
     assert_denied(actor_snapshot)
-    users.set_paused(conn, 1, False)
+    users.set_paused(conn, 1, False, commit=True)
 
     scoped_actor = {**actor_snapshot, "_token_scopes": (tokens.READ_SCOPE,)}
     assert_denied(scoped_actor)

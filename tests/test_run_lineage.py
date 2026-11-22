@@ -58,7 +58,12 @@ def test_record_stamps_parent_run_id_within_scope(tmp_path):
     pt0 = run_context.set_run_id("parent")
     try:
         activity.record(
-            conn, actor_id=1, verb="created", target_kind="issue", target_id=1
+            conn,
+            actor_id=1,
+            verb="created",
+            target_kind="issue",
+            target_id=1,
+            commit=True,
         )
     finally:
         run_context.reset_run_id(pt0)
@@ -66,7 +71,12 @@ def test_record_stamps_parent_run_id_within_scope(tmp_path):
     pt = run_context.set_parent_run_id("parent")
     try:
         nested = activity.record(
-            conn, actor_id=1, verb="created", target_kind="issue", target_id=1
+            conn,
+            actor_id=1,
+            verb="created",
+            target_kind="issue",
+            target_id=1,
+            commit=True,
         )
     finally:
         run_context.reset_parent_run_id(pt)
@@ -75,7 +85,12 @@ def test_record_stamps_parent_run_id_within_scope(tmp_path):
     assert nested["parent_run_id"] == "parent"
     # Top-level once reset — no parent bleeds through.
     top = activity.record(
-        conn, actor_id=1, verb="commented", target_kind="issue", target_id=1
+        conn,
+        actor_id=1,
+        verb="commented",
+        target_kind="issue",
+        target_id=1,
+        commit=True,
     )
     assert top["parent_run_id"] is None
     conn.close()

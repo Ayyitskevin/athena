@@ -359,7 +359,9 @@ def test_a_revoked_bearer_does_not_open_the_browser_surface(tmp_path, closed):
         minted = token_commands.mint_token(
             conn, actor_id=admin["id"], name="doomed", scopes=[tokens.READ_SCOPE]
         )
-        tokens.revoke_token(conn, user_id=admin["id"], token_id=minted["id"])
+        tokens.revoke_token(
+            conn, user_id=admin["id"], token_id=minted["id"], commit=True
+        )
         conn.commit()
     finally:
         conn.close()
@@ -421,7 +423,7 @@ def test_a_paused_bearer_does_not_open_the_browser_surface(tmp_path, closed):
         minted = token_commands.mint_token(
             conn, actor_id=admin["id"], name="paused", scopes=[tokens.READ_SCOPE]
         )
-        users.set_paused(conn, user_id=admin["id"], paused=True)
+        users.set_paused(conn, user_id=admin["id"], paused=True, commit=True)
         conn.commit()
     finally:
         conn.close()
@@ -613,11 +615,15 @@ def test_default_visibility_private_makes_new_containers_born_private(
     conn = db.connect(tmp_path / "born.db")
     db.migrate(conn)
     try:
-        owner = users.create_user(conn, email="o@e.com", name="O", role="admin")
-        project = projects.create_project(
-            conn, name="P", key="P", created_by=owner["id"]
+        owner = users.create_user(
+            conn, email="o@e.com", name="O", role="admin", commit=True
         )
-        space = spaces.create_space(conn, key="S", name="S", created_by=owner["id"])
+        project = projects.create_project(
+            conn, name="P", key="P", created_by=owner["id"], commit=True
+        )
+        space = spaces.create_space(
+            conn, key="S", name="S", created_by=owner["id"], commit=True
+        )
         assert project["visibility"] == "private"
         assert (
             conn.execute(
@@ -635,9 +641,11 @@ def test_containers_are_born_public_by_default(tmp_path):
     conn = db.connect(tmp_path / "public.db")
     db.migrate(conn)
     try:
-        owner = users.create_user(conn, email="o@e.com", name="O", role="admin")
+        owner = users.create_user(
+            conn, email="o@e.com", name="O", role="admin", commit=True
+        )
         project = projects.create_project(
-            conn, name="P", key="P", created_by=owner["id"]
+            conn, name="P", key="P", created_by=owner["id"], commit=True
         )
         assert project["visibility"] == "public"
     finally:

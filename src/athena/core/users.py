@@ -55,7 +55,7 @@ def create_user(
     password: str | None = None,
     role: str | None = None,
     is_agent: bool = False,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Insert a user and return it. An optional password enables browser login;
     without one the user exists as an actor but can only act via API tokens.
@@ -100,7 +100,7 @@ def _with_password_state(user: dict) -> dict:
 
 
 def set_password(
-    conn: sqlite3.Connection, user_id: int, password: str, *, commit: bool = True
+    conn: sqlite3.Connection, user_id: int, password: str, *, commit: bool
 ) -> dict | None:
     """Set or replace a user's login password and return the updated row.
     ``commit=False`` lets ``user_commands`` fold the hash write, the session
@@ -175,7 +175,7 @@ def get_user_by_email(conn: sqlite3.Connection, email: str) -> dict | None:
 
 
 def set_role(
-    conn: sqlite3.Connection, user_id: int, role: str, *, commit: bool = True
+    conn: sqlite3.Connection, user_id: int, role: str, *, commit: bool
 ) -> dict | None:
     """Change a user's role and return the updated row, or None if missing.
     `commit=False` lets a compound command (e.g. offboarding) fold the role change
@@ -190,7 +190,7 @@ def set_role(
 
 
 def set_agent(
-    conn: sqlite3.Connection, user_id: int, is_agent: bool, *, commit: bool = True
+    conn: sqlite3.Connection, user_id: int, is_agent: bool, *, commit: bool
 ) -> dict | None:
     """Mark (or unmark) a user as an agent and return the updated row, or None if
     the user doesn't exist. A display/audit distinction only — it changes nothing
@@ -228,7 +228,7 @@ def count_active_admins(conn: sqlite3.Connection) -> int:
 
 
 def set_paused(
-    conn: sqlite3.Connection, user_id: int, paused: bool, *, commit: bool = True
+    conn: sqlite3.Connection, user_id: int, paused: bool, *, commit: bool
 ) -> dict | None:
     """Pause (or resume) a user and return the updated row, or None if the user
     doesn't exist. Pausing freezes the account at identity resolution without
@@ -246,7 +246,7 @@ def set_paused(
 
 
 def set_removed(
-    conn: sqlite3.Connection, user_id: int, removed: bool, *, commit: bool = True
+    conn: sqlite3.Connection, user_id: int, removed: bool, *, commit: bool
 ) -> dict | None:
     """Stamp (or clear) the removal tombstone and return the updated row, or
     None if the user doesn't exist. Removal hides the account from every list

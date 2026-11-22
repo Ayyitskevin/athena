@@ -19,6 +19,7 @@ def conn():
                 name=name,
                 email=f"{name}@example.test",
                 role="admin" if name == "admin" else "member",
+                commit=True,
             )
         yield conn
 
@@ -42,10 +43,18 @@ def assert_backlinks(conn, kind, target_id, expected, **reader):
 @pytest.mark.parametrize("size", [10, 100])
 @pytest.mark.parametrize("kind", ["page", "issue"])
 def test_backlinks_read_all_sources_in_one_statement(conn, kind, size):
-    space = spaces.create_space(conn, key="DOC", name="Docs", created_by=1)["id"]
-    project = projects.create_project(conn, key="WRK", name="Work", created_by=1)["id"]
-    issue = issues.create_issue(conn, title="Subject", body="", created_by=1)
-    page = pages.create_page(conn, space_id=space, title="Subject", created_by=1)
+    space = spaces.create_space(
+        conn, key="DOC", name="Docs", created_by=1, commit=True
+    )["id"]
+    project = projects.create_project(
+        conn, key="WRK", name="Work", created_by=1, commit=True
+    )["id"]
+    issue = issues.create_issue(
+        conn, title="Subject", body="", created_by=1, commit=True
+    )
+    page = pages.create_page(
+        conn, space_id=space, title="Subject", created_by=1, commit=True
+    )
     target_id = issue["id"]
     assert page["id"] == target_id
     other_kind = "page" if kind == "issue" else "issue"
@@ -55,21 +64,32 @@ def test_backlinks_read_all_sources_in_one_statement(conn, kind, size):
         title="Decoy",
         created_by=1,
         body=f"[[{other_kind}:{target_id}]] [[{kind}:9999]]",
+        commit=True,
     )
     # Both subjects reference the decoy, which only cites the other subject.
     outbound = f"[[issue:{decoy['id']}]]"
-    issues.update_issue(conn, target_id, body=outbound)
-    pages.update_page(conn, target_id, body=outbound, editor_id=1)
+    issues.update_issue(conn, target_id, body=outbound, commit=True)
+    pages.update_page(conn, target_id, body=outbound, editor_id=1, commit=True)
     reader = {"id": 4, "role": "member"}
     assert_backlinks(conn, kind, target_id, [], actor=reader)
     issue_refs, page_refs = [], []
     for n in range(size // 2, 0, -1):
         body = f"[[{kind}:{target_id}]]"
         page = pages.create_page(
-            conn, space_id=space, title=f"Page {n}", body=body, created_by=1
+            conn,
+            space_id=space,
+            title=f"Page {n}",
+            body=body,
+            created_by=1,
+            commit=True,
         )
         issue = issues.create_issue(
-            conn, project_id=project, title=f"Issue {n}", body=body, created_by=1
+            conn,
+            project_id=project,
+            title=f"Issue {n}",
+            body=body,
+            created_by=1,
+            commit=True,
         )
         page_refs.append(record("page", page["id"], page["title"]))
         issue_refs.append(record("issue", issue["id"], issue["title"]))
@@ -85,42 +105,54 @@ def test_backlinks_read_all_sources_in_one_statement(conn, kind, size):
 
 
 def test_backlinks_follow_current_source_visibility_and_titles(conn):
-    space = spaces.create_space(conn, key="PUB", name="Public", created_by=1)["id"]
-    private_space = spaces.create_space(conn, key="PVT", name="Private", created_by=1)[
-        "id"
-    ]
-    project = projects.create_project(conn, key="WRK", name="Private", created_by=1)[
-        "id"
-    ]
-    spaces.set_visibility(conn, private_space, "private")
-    projects.set_visibility(conn, project, "private")
-    access.add_project_member(conn, project, user_id=2, added_by=1)
-    access.add_space_member(conn, private_space, user_id=3, added_by=1)
+    space = spaces.create_space(
+        conn, key="PUB", name="Public", created_by=1, commit=True
+    )["id"]
+    private_space = spaces.create_space(
+        conn, key="PVT", name="Private", created_by=1, commit=True
+    )["id"]
+    project = projects.create_project(
+        conn, key="WRK", name="Private", created_by=1, commit=True
+    )["id"]
+    spaces.set_visibility(conn, private_space, "private", commit=True)
+    projects.set_visibility(conn, project, "private", commit=True)
+    access.add_project_member(conn, project, user_id=2, added_by=1, commit=True)
+    access.add_space_member(conn, private_space, user_id=3, added_by=1, commit=True)
 
-    target_issue = issues.create_issue(conn, title="Target", body="", created_by=1)[
-        "id"
-    ]
-    target_page = pages.create_page(conn, space_id=space, title="Target", created_by=1)[
-        "id"
-    ]
+    target_issue = issues.create_issue(
+        conn, title="Target", body="", created_by=1, commit=True
+    )["id"]
+    target_page = pages.create_page(
+        conn, space_id=space, title="Target", created_by=1, commit=True
+    )["id"]
     body = f"[[issue:{target_issue}]] [[page:{target_page}]]"
-    backlog = issues.create_issue(conn, title="Draft task", body=body, created_by=4)[
-        "id"
-    ]
+    backlog = issues.create_issue(
+        conn, title="Draft task", body=body, created_by=4, commit=True
+    )["id"]
     restricted = issues.create_issue(
-        conn, project_id=project, title="Private task", body=body, created_by=4
+        conn,
+        project_id=project,
+        title="Private task",
+        body=body,
+        created_by=4,
+        commit=True,
     )["id"]
     public = pages.create_page(
-        conn, space_id=space, title="Draft doc", body=body, created_by=4
+        conn, space_id=space, title="Draft doc", body=body, created_by=4, commit=True
     )["id"]
     draft = pages.create_page(
-        conn, space_id=private_space, title="Private doc", body=body, created_by=4
+        conn,
+        space_id=private_space,
+        title="Private doc",
+        body=body,
+        created_by=4,
+        commit=True,
     )["id"]
     assert (backlog, restricted) == (public, draft)
-    issues.update_issue(conn, backlog, title="Archived task")
-    pages.update_page(conn, public, title="Archived doc", editor_id=1)
-    issues.set_archived(conn, backlog, True)
-    pages.set_archived(conn, public, True)
+    issues.update_issue(conn, backlog, title="Archived task", commit=True)
+    pages.update_page(conn, public, title="Archived doc", editor_id=1, commit=True)
+    issues.set_archived(conn, backlog, True, commit=True)
+    pages.set_archived(conn, public, True, commit=True)
     targets = [("issue", target_issue), ("page", target_page)]
     conn.executemany(
         "INSERT INTO links (source_kind, source_id, target_kind, target_id) VALUES ('issue', 999, ?, ?)",
@@ -152,15 +184,15 @@ def test_backlinks_follow_current_source_visibility_and_titles(conn):
             [task, private_task, record("issue", 999, None), doc, private_doc],
         )
 
-    access.remove_project_member(conn, project, user_id=2)
-    access.remove_space_member(conn, private_space, user_id=3)
+    access.remove_project_member(conn, project, user_id=2, commit=True)
+    access.remove_space_member(conn, private_space, user_id=3, commit=True)
     for kind, target_id in targets:
         for reader in (project_member, space_member):
             assert_backlinks(conn, kind, target_id, public_only, actor=reader)
 
-    issues.set_project(conn, backlog, project)
-    issues.set_project(conn, restricted, None)
-    access.add_project_member(conn, project, user_id=2, added_by=1)
+    issues.set_project(conn, backlog, project, commit=True)
+    issues.set_project(conn, restricted, None, commit=True)
+    access.add_project_member(conn, project, user_id=2, added_by=1, commit=True)
     for kind, target_id in targets:
         assert_backlinks(conn, kind, target_id, [private_task, doc], actor=None)
         assert_backlinks(

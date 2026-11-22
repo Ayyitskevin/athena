@@ -21,9 +21,14 @@ def conn(tmp_path):
 
 
 def test_imported_issue_keeps_history_without_watcher_mail(conn):
-    notifications.watch(conn, 2, "issue", 5)
+    notifications.watch(conn, 2, "issue", 5, commit=True)
     native = activity.record(
-        conn, actor_id=1, verb="commented", target_kind="issue", target_id=5
+        conn,
+        actor_id=1,
+        verb="commented",
+        target_kind="issue",
+        target_id=5,
+        commit=True,
     )
     before = notifications.list_notifications(conn, 2)
     assert [row["event_id"] for row in before] == [native["id"]]
@@ -34,6 +39,7 @@ def test_imported_issue_keeps_history_without_watcher_mail(conn):
         target_kind="issue",
         target_id=5,
         imported_at="2026-10-21 00:00:00",
+        commit=True,
     )
     assert activity.get_activity(conn, imported["id"]) == imported
     assert notifications.list_notifications(conn, 2) == before
@@ -44,8 +50,8 @@ def test_imported_issue_keeps_history_without_watcher_mail(conn):
 @pytest.mark.parametrize("imported_at", [None, "2026-10-21 00:00:00", ""])
 def test_import_marker_not_verb_controls_watcher_fanout(conn, verb, imported_at):
     # Even an empty non-null marker is imported; native forge-looking verbs are not.
-    notifications.watch(conn, 1, "issue", 5)
-    notifications.watch(conn, 2, "issue", 5)
+    notifications.watch(conn, 1, "issue", 5, commit=True)
+    notifications.watch(conn, 2, "issue", 5, commit=True)
     event = activity.record(
         conn,
         actor_id=1,
@@ -53,6 +59,7 @@ def test_import_marker_not_verb_controls_watcher_fanout(conn, verb, imported_at)
         target_kind="issue",
         target_id=5,
         imported_at=imported_at,
+        commit=True,
     )
     assert activity.get_activity(conn, event["id"])["imported_at"] == imported_at
     assert notifications.unread_count(conn, 1) == 0
@@ -61,13 +68,15 @@ def test_import_marker_not_verb_controls_watcher_fanout(conn, verb, imported_at)
 
 @pytest.mark.parametrize("kind", ["issue", "page", "space"])
 def test_imported_targets_suppress_direct_and_inherited_watches(conn, kind):
-    space = spaces.create_space(conn, key="TEST", name="Test", created_by=1)
+    space = spaces.create_space(
+        conn, key="TEST", name="Test", created_by=1, commit=True
+    )
     page = pages.create_page(
-        conn, space_id=space["id"], title="Test", body="", created_by=1
+        conn, space_id=space["id"], title="Test", body="", created_by=1, commit=True
     )
     target_id = {"issue": 5, "page": page["id"], "space": space["id"]}[kind]
-    notifications.watch(conn, 2, kind, target_id)
-    notifications.watch(conn, 3, "space", space["id"])
+    notifications.watch(conn, 2, kind, target_id, commit=True)
+    notifications.watch(conn, 3, "space", space["id"], commit=True)
     imported = activity.record(
         conn,
         actor_id=1,
@@ -75,12 +84,18 @@ def test_imported_targets_suppress_direct_and_inherited_watches(conn, kind):
         target_kind=kind,
         target_id=target_id,
         imported_at="2026-10-21 00:00:00",
+        commit=True,
     )
     assert activity.get_activity(conn, imported["id"]) == imported
     assert notifications.unread_count(conn, 2) == 0
     assert notifications.unread_count(conn, 3) == 0
     native = activity.record(
-        conn, actor_id=1, verb="changed", target_kind=kind, target_id=target_id
+        conn,
+        actor_id=1,
+        verb="changed",
+        target_kind=kind,
+        target_id=target_id,
+        commit=True,
     )
     assert [row["event_id"] for row in notifications.list_notifications(conn, 2)] == [
         native["id"]
@@ -93,7 +108,7 @@ def test_mentions_survive_and_deduplicate_independently_of_watcher_fanout(
     conn, imported_at
 ):
     for uid in (1, 2, 4):
-        notifications.watch(conn, uid, "issue", 5)
+        notifications.watch(conn, uid, "issue", 5, commit=True)
     event = activity.record(
         conn,
         actor_id=1,
@@ -101,6 +116,7 @@ def test_mentions_survive_and_deduplicate_independently_of_watcher_fanout(
         target_kind="issue",
         target_id=5,
         imported_at=imported_at,
+        commit=True,
     )
     for _ in range(2):
         notifications.process_mentions(
@@ -108,6 +124,7 @@ def test_mentions_survive_and_deduplicate_independently_of_watcher_fanout(
             event_id=event["id"],
             actor_id=1,
             text="[[user:1]] [[user:2]] [[user:2]] [[user:3]] [[user:999]]",
+            commit=True,
         )
         notifications.notify_watchers(
             conn, event_id=event["id"], actor_id=1, target_kind="issue", target_id=5
@@ -122,10 +139,15 @@ def test_mentions_survive_and_deduplicate_independently_of_watcher_fanout(
 
 
 def test_import_does_not_acknowledge_or_rewrite_existing_inbox_rows(conn):
-    notifications.watch(conn, 2, "issue", 5)
+    notifications.watch(conn, 2, "issue", 5, commit=True)
     for _ in range(2):
         activity.record(
-            conn, actor_id=1, verb="commented", target_kind="issue", target_id=5
+            conn,
+            actor_id=1,
+            verb="commented",
+            target_kind="issue",
+            target_id=5,
+            commit=True,
         )
     inbox = notifications.list_notifications(conn, 2)
     assert notifications.mark_read(conn, 2, inbox[0]["id"])
@@ -138,13 +160,14 @@ def test_import_does_not_acknowledge_or_rewrite_existing_inbox_rows(conn):
         target_kind="issue",
         target_id=5,
         imported_at="2026-10-21 00:00:00",
+        commit=True,
     )
     assert notifications.list_notifications(conn, 2) == before
 
 
 @pytest.mark.parametrize("imported_at", [None, "2026-10-21 00:00:00"])
 def test_event_and_notifications_still_rollback_together(conn, imported_at):
-    notifications.watch(conn, 2, "issue", 5)
+    notifications.watch(conn, 2, "issue", 5, commit=True)
     with pytest.raises(RuntimeError, match="deliberate rollback"):
         with db.transaction(conn, immediate=True):
             event = activity.record(

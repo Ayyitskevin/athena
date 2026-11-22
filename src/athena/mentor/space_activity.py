@@ -26,7 +26,7 @@ def record_space_created(
     actor_id: int,
     space_id: int,
     name: str,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A space was created — the first audit fact in its history. ``commit=False``
     composes this inside the audited create command's transaction."""
@@ -47,7 +47,7 @@ def record_space_edited(
     actor_id: int,
     before: dict,
     after: dict,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A space's key, name, or description changed. No-op if none of the three
     actually moved — the web edit form always resubmits all fields, so an unchanged
@@ -77,7 +77,7 @@ def record_space_deleted(
     actor_id: int,
     space_id: int,
     name: str,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A space was removed — who took the container down, with its name preserved in
     the detail since the space row itself is gone. ``commit=False`` composes this
@@ -100,7 +100,7 @@ def record_space_visibility_changed(
     space_id: int,
     name: str,
     visibility: str,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A space was made private or public — the Mentor twin of the project event. The
     verb encodes the direction, the detail names the space. Recorded only on a real
@@ -124,7 +124,7 @@ def record_space_member_added(
     actor_id: int,
     space_id: int,
     member_name: str,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A user was granted access to a private space. The detail is the member's name;
     recorded only on a real change (re-adding an existing member records nothing).
@@ -147,7 +147,7 @@ def record_space_member_removed(
     actor_id: int,
     space_id: int,
     member_name: str,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A user's access to a private space was revoked. The detail is the member's name,
     preserved here even though the membership row is gone; recorded only when a row was

@@ -55,13 +55,16 @@ def _project_bundle(tmp_path):
     conn = _connect(tmp_path / "source-project.db")
     owner = _user(conn, "owner@example.com", "Owner", role="admin")
     member = _user(conn, "member@example.com", "Member")
-    ext_space = spaces.create_space(conn, key="EXT", name="External", created_by=owner)
+    ext_space = spaces.create_space(
+        conn, key="EXT", name="External", created_by=owner, commit=True
+    )
     ext_page = pages.create_page(
         conn,
         space_id=ext_space["id"],
         title="External Page",
         body="outside",
         created_by=owner,
+        commit=True,
     )
     project = projects.create_project(
         conn,
@@ -69,21 +72,27 @@ def _project_bundle(tmp_path):
         key="PORT",
         created_by=owner,
         description="selective export",
+        commit=True,
     )
-    access.add_project_member(conn, project["id"], member, owner)
+    access.add_project_member(conn, project["id"], member, owner, commit=True)
     issue = issues.create_issue(
         conn,
         title="Import me",
         body=f"See [[page:{ext_page['id']}]]",
         created_by=owner,
         project_id=project["id"],
+        commit=True,
     )
-    issues.set_assignee(conn, issue["id"], member)
+    issues.set_assignee(conn, issue["id"], member, commit=True)
     issue_comments.add_comment(
-        conn, issue_id=issue["id"], author_id=member, body="portable comment"
+        conn,
+        issue_id=issue["id"],
+        author_id=member,
+        body="portable comment",
+        commit=True,
     )
-    bug = labels.create_label(conn, name="bug", color="#ff0000")
-    labels.add_label_to_issue(conn, issue["id"], bug["id"])
+    bug = labels.create_label(conn, name="bug", color="#ff0000", commit=True)
+    labels.add_label_to_issue(conn, issue["id"], bug["id"], commit=True)
     _attachment(
         conn,
         target_kind="issue",
@@ -97,6 +106,7 @@ def _project_bundle(tmp_path):
         verb="created",
         target_kind="project",
         target_id=project["id"],
+        commit=True,
     )
     bundle = portability.export_bundle(conn, "project", project["id"])
     conn.close()
@@ -108,7 +118,7 @@ def test_project_import_dry_run_ready_reuses_users_and_labels_without_writes(tmp
     target = _connect(tmp_path / "target-ready.db")
     _user(target, "owner@example.com", "Owner", role="admin")
     _user(target, "member@example.com", "Member")
-    labels.create_label(target, name="bug", color="#ff0000")
+    labels.create_label(target, name="bug", color="#ff0000", commit=True)
 
     before = _count(target, "projects")
     report = portability.dry_run_import_bundle(target, bundle)
@@ -138,6 +148,7 @@ def test_project_import_dry_run_blocks_conflicts_and_missing_users(tmp_path):
         name=bundle["project"]["name"],
         key=bundle["project"]["key"],
         created_by=owner,
+        commit=True,
     )
 
     report = portability.dry_run_import_bundle(target, bundle)
@@ -177,22 +188,28 @@ def test_space_import_dry_run_reports_counts_and_key_conflict(tmp_path):
     source = _connect(tmp_path / "source-space.db")
     owner = _user(source, "owner@example.com", "Owner", role="admin")
     member = _user(source, "member@example.com", "Member")
-    project = projects.create_project(source, name="Aegis", key="AEG", created_by=owner)
+    project = projects.create_project(
+        source, name="Aegis", key="AEG", created_by=owner, commit=True
+    )
     issue = issues.create_issue(
         source,
         title="Linked issue",
         body="outside",
         created_by=owner,
         project_id=project["id"],
+        commit=True,
     )
-    space = spaces.create_space(source, key="DOC", name="Docs", created_by=owner)
-    access.add_space_member(source, space["id"], member, owner)
+    space = spaces.create_space(
+        source, key="DOC", name="Docs", created_by=owner, commit=True
+    )
+    access.add_space_member(source, space["id"], member, owner, commit=True)
     page = pages.create_page(
         source,
         space_id=space["id"],
         title="Home",
         body=f"See [[issue:{issue['id']}]]",
         created_by=owner,
+        commit=True,
     )
     _attachment(
         source,
@@ -208,7 +225,7 @@ def test_space_import_dry_run_reports_counts_and_key_conflict(tmp_path):
     target_owner = _user(target, "owner@example.com", "Owner", role="admin")
     _user(target, "member@example.com", "Member")
     spaces.create_space(
-        target, key="DOC", name="Existing Docs", created_by=target_owner
+        target, key="DOC", name="Existing Docs", created_by=target_owner, commit=True
     )
 
     report = portability.dry_run_import_bundle(target, bundle)

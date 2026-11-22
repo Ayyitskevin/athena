@@ -310,7 +310,7 @@ def test_list_issues_rejects_invalid_direct_filter_ids_without_sqlite_coercion(
     db.migrate(conn)
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'Alice')")
     conn.commit()
-    issues.create_issue(conn, title="must not leak", body="", created_by=1)
+    issues.create_issue(conn, title="must not leak", body="", created_by=1, commit=True)
     try:
         assert len(issues.list_issues(conn)) == 1
         invalid_values = (

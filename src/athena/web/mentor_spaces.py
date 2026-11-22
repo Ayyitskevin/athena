@@ -647,7 +647,7 @@ def watch_space(request: Request, space_id: int, conn=Depends(get_conn)):
     # the create route uses. The value is identical; the provenance is not, and a
     # redirect target that came out of the database cannot carry anything a request
     # put into it.
-    notifications.watch(conn, user["id"], "space", space["id"])
+    notifications.watch(conn, user["id"], "space", space["id"], commit=True)
     return RedirectResponse(f"/mentor/spaces/{space['id']}", status_code=303)
 
 

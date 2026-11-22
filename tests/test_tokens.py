@@ -39,7 +39,9 @@ def test_token_facts_are_complete_and_side_effect_free(tmp_path):
     conn = db.connect(tmp_path / "facts.db")
     db.migrate(conn)
     try:
-        actor = users.create_user(conn, email="facts@e.com", name="Facts", role="admin")
+        actor = users.create_user(
+            conn, email="facts@e.com", name="Facts", role="admin", commit=True
+        )
         active = token_commands.mint_token(
             conn, actor_id=actor["id"], name="active", scopes=[tokens.READ_SCOPE]
         )
@@ -53,8 +55,10 @@ def test_token_facts_are_complete_and_side_effect_free(tmp_path):
             "UPDATE api_tokens SET scopes = ? WHERE id = ?",
             ("not-a-scope", broken["id"]),
         )
-        tokens.revoke_token(conn, user_id=actor["id"], token_id=revoked["id"])
-        users.set_paused(conn, user_id=actor["id"], paused=True)
+        tokens.revoke_token(
+            conn, user_id=actor["id"], token_id=revoked["id"], commit=True
+        )
+        users.set_paused(conn, user_id=actor["id"], paused=True, commit=True)
         conn.commit()
 
         active_facts = tokens.inspect_token(conn, active["token"])

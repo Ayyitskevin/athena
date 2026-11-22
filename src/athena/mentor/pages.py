@@ -24,7 +24,7 @@ def create_page(
     created_by: int,
     body: str = "",
     parent_id: int | None = None,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Insert a page and return it. The foreign keys refuse an orphan: space_id
     must be a real space, parent_id (when given) a real page, created_by a real
@@ -130,7 +130,7 @@ def find_pages_by_title(
 
 
 def set_archived(
-    conn: sqlite3.Connection, page_id: int, archived: bool, *, commit: bool = True
+    conn: sqlite3.Connection, page_id: int, archived: bool, *, commit: bool
 ) -> dict | None:
     """Archive (soft-delete) a page or restore it. Returns the updated page, or None
     if no page has that id. The row — and its versions and comments — is never
@@ -158,7 +158,7 @@ def update_page(
     editor_id: int,
     title: str | None = None,
     body: str | None = None,
-    commit: bool = True,
+    commit: bool,
 ) -> dict | None:
     """Edit a page's title and/or body, snapshotting the prior content into its
     history first. Partial: only the fields passed as non-None change. Returns the
@@ -431,7 +431,7 @@ def move(
     page: dict,
     new_parent_id: int | None,
     *,
-    commit: bool = True,
+    commit: bool,
 ) -> tuple[dict | None, str | None]:
     """Re-parent a page ATOMICALLY: run validate_move and the UPDATE while holding
     SQLite's write lock. validate_move alone can't stop a check-then-write race — two
@@ -496,7 +496,7 @@ def restore_version(
     version: int,
     *,
     editor_id: int,
-    commit: bool = True,
+    commit: bool,
 ) -> dict | None:
     """Restore a page's content to a prior revision. Returns the updated page, or
     None if no such page/version exists (so the boundary can 404).

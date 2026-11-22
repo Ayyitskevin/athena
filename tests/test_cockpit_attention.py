@@ -259,6 +259,7 @@ def test_imported_rows_plant_no_fake_refusals_or_exhaustions(tmp_path):
             target_id=1,
             detail="planted by an import bundle",
             imported_at="2026-01-01 00:00:00",
+            commit=True,
         )
     # The planted rows ARE on the trail — the exclusion governs the counters,
     # not the append-only log itself.
@@ -282,6 +283,7 @@ def test_imported_rows_plant_no_fake_refusals_or_exhaustions(tmp_path):
         verb=security_events.VERB_LOGIN_FAILED,
         target_kind="user",
         target_id=1,
+        commit=True,
     )
     activity.record(
         conn,
@@ -289,6 +291,7 @@ def test_imported_rows_plant_no_fake_refusals_or_exhaustions(tmp_path):
         verb=budgets.VERB_BUDGET_EXHAUSTED,
         target_kind="user",
         target_id=1,
+        commit=True,
     )
     assert security_events.failure_counts(conn)[security_events.VERB_LOGIN_FAILED] == 1
     assert len(security_events.list_failures(conn)) == 1

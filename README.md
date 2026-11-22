@@ -163,6 +163,7 @@ python3.12 -I -m venv .venv
 .venv/bin/python -m mypy src/athena
 .venv/bin/python scripts/check_import_contracts.py
 .venv/bin/python scripts/check_write_ownership.py
+.venv/bin/python scripts/check_transaction_commits.py
 .venv/bin/python scripts/check_imported_at_guards.py
 scripts/coverage.sh
 ```

@@ -36,7 +36,7 @@ def test_seed_validate_and_done_category(tmp_path):
     db.migrate(conn)
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    proj = projects.create_project(conn, name="P", key="P", created_by=1)
+    proj = projects.create_project(conn, name="P", key="P", created_by=1, commit=True)
     # Seeded defaults.
     assert statuses.status_names(conn, proj["id"]) == ["open", "in_progress", "done"]
     # Backlog uses the default set too.
@@ -53,13 +53,15 @@ def test_open_blockers_uses_done_category(tmp_path):
     db.migrate(conn)
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    proj = projects.create_project(conn, name="P", key="P", created_by=1)
-    statuses.add_status(conn, proj["id"], "shipped", "done")  # a custom CLOSED status
+    proj = projects.create_project(conn, name="P", key="P", created_by=1, commit=True)
+    statuses.add_status(
+        conn, proj["id"], "shipped", "done", commit=True
+    )  # a custom CLOSED status
     blocker = issues.create_issue(
-        conn, title="b", body="", created_by=1, project_id=proj["id"]
+        conn, title="b", body="", created_by=1, project_id=proj["id"], commit=True
     )
     blocked = issues.create_issue(
-        conn, title="a", body="", created_by=1, project_id=proj["id"]
+        conn, title="a", body="", created_by=1, project_id=proj["id"], commit=True
     )
     dependencies.add_link(
         conn,
@@ -67,6 +69,7 @@ def test_open_blockers_uses_done_category(tmp_path):
         to_id=blocked["id"],
         relation="blocks",
         created_by=1,
+        commit=True,
     )
     # 'open' blocker is open.
     assert len(dependencies.open_blockers(conn, blocked["id"])) == 1

@@ -60,18 +60,20 @@ def _project_bundle(tmp_path):
         key="RPL",
         created_by=owner,
         description="manifest source",
+        commit=True,
     )
-    access.add_project_member(conn, project["id"], member, owner)
+    access.add_project_member(conn, project["id"], member, owner, commit=True)
     issue = issues.create_issue(
         conn,
         title="Replay me",
         body="body",
         created_by=owner,
         project_id=project["id"],
+        commit=True,
     )
-    issues.set_assignee(conn, issue["id"], member)
-    bug = labels.create_label(conn, name="bug", color="#ff0000")
-    labels.add_label_to_issue(conn, issue["id"], bug["id"])
+    issues.set_assignee(conn, issue["id"], member, commit=True)
+    bug = labels.create_label(conn, name="bug", color="#ff0000", commit=True)
+    labels.add_label_to_issue(conn, issue["id"], bug["id"], commit=True)
     _attachment(
         conn,
         target_kind="issue",
@@ -85,6 +87,7 @@ def _project_bundle(tmp_path):
         verb="created",
         target_kind="project",
         target_id=project["id"],
+        commit=True,
     )
     bundle = portability.export_bundle(conn, "project", project["id"])
     conn.close()
@@ -96,7 +99,7 @@ def test_project_import_manifest_maps_reused_ids_and_create_refs(tmp_path):
     target = _connect(tmp_path / "target-project.db")
     owner = _user(target, "owner@example.com", "Owner", role="admin")
     member = _user(target, "member@example.com", "Member")
-    bug = labels.create_label(target, name="bug", color="#ff0000")
+    bug = labels.create_label(target, name="bug", color="#ff0000", commit=True)
 
     before = _count(target, "projects")
     manifest = portability.build_import_manifest(target, bundle)
@@ -200,14 +203,17 @@ def test_space_import_manifest_carries_page_refs_and_space_operation(tmp_path):
     source = _connect(tmp_path / "source-space.db")
     owner = _user(source, "owner@example.com", "Owner", role="admin")
     member = _user(source, "member@example.com", "Member")
-    space = spaces.create_space(source, key="DOC", name="Docs", created_by=owner)
-    access.add_space_member(source, space["id"], member, owner)
+    space = spaces.create_space(
+        source, key="DOC", name="Docs", created_by=owner, commit=True
+    )
+    access.add_space_member(source, space["id"], member, owner, commit=True)
     page = pages.create_page(
         source,
         space_id=space["id"],
         title="Home",
         body="body",
         created_by=owner,
+        commit=True,
     )
     bundle = portability.export_bundle(source, "space", space["id"])
     source.close()

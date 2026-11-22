@@ -315,6 +315,7 @@ def test_own_automation_and_imported_events_do_not_answer(setup):
             target_kind="issue",
             target_id=work["id"],
             imported_at="2035-01-01 00:00:00",
+            commit=True,
         )
         verbs = [
             row["verb"]
@@ -351,6 +352,7 @@ def test_an_imported_completion_holds_nothing_back(setup):
             target_id=work["id"],
             detail="generation " + "a" * 32,
             imported_at="2035-01-01 00:00:00",
+            commit=True,
         )
     finally:
         conn.close()

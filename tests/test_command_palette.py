@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from athena.aegis import lease_commands
-from athena.core import approvals, approvals_api, db
+from athena.core import approval_commands, approvals, approvals_api, db
 from athena.main import create_app
 
 
@@ -475,7 +475,7 @@ def test_palette_approve_records_decision_activity(tmp_path):
         )
         # Seed a pending approval request directly through the core owner.
         conn = db.connect(db_file)
-        req = approvals.open_request(
+        req = approval_commands.open_request(
             conn,
             actor_id=member["id"],
             action_kind=approvals.ACTION_ISSUE_CLOSE,

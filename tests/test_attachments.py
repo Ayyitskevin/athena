@@ -491,9 +491,9 @@ def test_cross_actor_run_binding_delete_rolls_back_row_blob_and_audit(tmp_path):
 
 def test_command_commit_failure_rolls_back_row_and_published_blob(tmp_path):
     conn = _storage_conn(tmp_path)
-    space = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    space = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
     page = pages.create_page(
-        conn, space_id=space["id"], title="Doc", body="", created_by=1
+        conn, space_id=space["id"], title="Doc", body="", created_by=1, commit=True
     )
     attach_dir = tmp_path / "command-commit-failure"
     conn.fail_commit = True

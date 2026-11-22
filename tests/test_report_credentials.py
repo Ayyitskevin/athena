@@ -117,7 +117,9 @@ def possession(tmp_path):
     )
     conn.commit()
     actor = dict(conn.execute("SELECT * FROM users WHERE id=1").fetchone())
-    issue = issues.create_issue(conn, title="Evidence", body="", created_by=actor["id"])
+    issue = issues.create_issue(
+        conn, title="Evidence", body="", created_by=actor["id"], commit=True
+    )
     claim = lease_commands.claim_issue(
         conn,
         actor=actor,
@@ -293,6 +295,7 @@ def test_legacy_credential_shaped_history_still_reads_and_renders(tmp_path):
                 issue_id=issue["id"],
                 generation="a" * 32,
                 reported=report,
+                commit=True,
             )
             event = dict(
                 conn.execute(

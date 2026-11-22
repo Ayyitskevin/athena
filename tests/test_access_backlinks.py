@@ -97,7 +97,7 @@ def test_page_backlinks_hide_a_private_issue_source(tmp_path):
         assert "Public ref" in text and "Hidden ref" not in text
 
         # Membership reveals it.
-        access.add_project_member(conn, pp, 3, added_by=2)
+        access.add_project_member(conn, pp, 3, added_by=2, commit=True)
         assert ("issue", hi) in sources(H_OUTSIDER)
 
 
@@ -142,5 +142,5 @@ def test_issue_backlinks_hide_a_private_page_source(tmp_path):
             assert ("page", pp_) in s and ("page", hp) not in s
         assert ("page", hp) in sources(H_ADMIN)
 
-        access.add_space_member(conn, ps, 3, added_by=2)
+        access.add_space_member(conn, ps, 3, added_by=2, commit=True)
         assert ("page", hp) in sources(H_OUTSIDER)

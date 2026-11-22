@@ -80,7 +80,7 @@ def test_issue_attachment_download_gated(tmp_path):
         assert r.status_code == 200 and r.content == b"top secret bytes"
         assert client.get(url, headers=H_ADMIN).status_code == 200
         # Membership opens it.
-        access.add_project_member(conn, pp, 3, added_by=2)
+        access.add_project_member(conn, pp, 3, added_by=2, commit=True)
         assert client.get(url, headers=H_OUTSIDER).status_code == 200
 
 
@@ -191,7 +191,7 @@ def test_issue_detail_hides_private_parent(tmp_path):
             "/issues", json={"title": "Child"}, headers=H_CREATOR
         ).json()["id"]  # backlog, public
         conn = db.connect(db_file)
-        issues.set_parent(conn, child, parent)
+        issues.set_parent(conn, child, parent, commit=True)
         conn.execute("UPDATE projects SET visibility='private' WHERE id=?", (pp,))
         conn.commit()
 

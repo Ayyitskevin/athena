@@ -52,15 +52,18 @@ from athena.core import (
     activity,
     agent_runs_api,
     activity_api,
+    approval_commands,
     approvals,
     approvals_api,
     answerability_api,
     attachments_api,
+    budget_commands,
     budgets,
     db,
     deployment,
     deps,
     identity,
+    security_event_commands,
     security_events,
     events_api,
     notifications,
@@ -467,7 +470,7 @@ def create_app(
             try:
                 conn = db.connect(request.app.state.db_path)
                 try:
-                    security_events.record_failure(
+                    security_event_commands.record_failure(
                         conn,
                         actor_id=exc.actor_id,
                         verb=security_events.VERB_SCOPE_DENIED,
@@ -499,7 +502,7 @@ def create_app(
         try:
             conn = db.connect(request.app.state.db_path)
             try:
-                budgets.record_exhaustion(
+                budget_commands.record_exhaustion(
                     conn,
                     actor_id=exc.budget.user_id,
                     detail=f"{request.method} {request.url.path}",
@@ -537,7 +540,7 @@ def create_app(
         try:
             conn = db.connect(request.app.state.db_path)
             try:
-                recorded = approvals.open_request(
+                recorded = approval_commands.open_request(
                     conn,
                     actor_id=exc.actor_id,
                     action_kind=exc.action_kind,

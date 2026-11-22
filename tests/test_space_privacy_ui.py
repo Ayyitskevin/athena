@@ -161,7 +161,7 @@ def test_space_access_page_authz(tmp_path):
         # A plain member can see the space but not manage its access → 403.
         from athena.core import access
 
-        access.add_space_member(conn, sid, 3, added_by=2)
+        access.add_space_member(conn, sid, 3, added_by=2, commit=True)
         _logout(client)
         _login(client, "o@e.com")
         assert client.get(url).status_code == 403

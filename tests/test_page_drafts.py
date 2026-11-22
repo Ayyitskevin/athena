@@ -366,6 +366,7 @@ def test_the_data_layer_refuses_oversized_drafts(tmp_path):
                 title="t",
                 body="x" * (page_drafts.MAX_BODY_CHARS + 1),
                 based_on="",
+                commit=True,
             )
         with pytest.raises(page_drafts.DraftTooLarge):
             page_drafts.save_draft(
@@ -375,6 +376,7 @@ def test_the_data_layer_refuses_oversized_drafts(tmp_path):
                 title="x" * (page_drafts.MAX_TITLE_CHARS + 1),
                 body="b",
                 based_on="",
+                commit=True,
             )
     finally:
         conn.close()

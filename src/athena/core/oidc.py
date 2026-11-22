@@ -23,7 +23,7 @@ def link_identity(
     issuer: str,
     subject: str,
     user_id: int,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Bind an external IdP identity (issuer + subject) to an Athena user and return
     the link. Raises sqlite3.IntegrityError if this (issuer, subject) is already
@@ -71,7 +71,7 @@ def list_identities(conn: sqlite3.Connection, user_id: int) -> list[dict]:
 
 
 def unlink_identity(
-    conn: sqlite3.Connection, *, issuer: str, subject: str, commit: bool = True
+    conn: sqlite3.Connection, *, issuer: str, subject: str, commit: bool
 ) -> bool:
     """Remove a link. Returns True if one was removed, False if it wasn't linked (so
     the caller can 404). The user row itself is untouched. ``commit=False`` lets an

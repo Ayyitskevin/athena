@@ -50,7 +50,12 @@ def test_create_and_get_space_round_trip(tmp_path):
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
     made = spaces.create_space(
-        conn, key="ENG", name="Engineering", description="the eng docs", created_by=1
+        conn,
+        key="ENG",
+        name="Engineering",
+        description="the eng docs",
+        created_by=1,
+        commit=True,
     )
     got = spaces.get_space(conn, made["id"])
     assert got["key"] == "ENG"
@@ -63,7 +68,7 @@ def test_get_space_by_key_is_case_insensitive(tmp_path):
     conn = _migrated_conn(tmp_path / "sk.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    spaces.create_space(conn, key="OPS", name="Operations", created_by=1)
+    spaces.create_space(conn, key="OPS", name="Operations", created_by=1, commit=True)
     assert spaces.get_space_by_key(conn, "ops")["key"] == "OPS"
 
 
@@ -71,8 +76,8 @@ def test_list_spaces_is_alphabetical_by_name(tmp_path):
     conn = _migrated_conn(tmp_path / "sl.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    spaces.create_space(conn, key="Z", name="Zebra", created_by=1)
-    spaces.create_space(conn, key="A", name="apple", created_by=1)
+    spaces.create_space(conn, key="Z", name="Zebra", created_by=1, commit=True)
+    spaces.create_space(conn, key="A", name="apple", created_by=1, commit=True)
     assert [s["name"] for s in spaces.list_spaces(conn)] == ["apple", "Zebra"]
 
 

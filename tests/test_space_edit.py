@@ -44,9 +44,9 @@ def test_update_space_changes_only_the_fields_passed(tmp_path):
     conn = _migrated_conn(tmp_path / "u.db")
     _seed_user(conn)
     sp = spaces.create_space(
-        conn, key="ENG", name="Eng", description="docs", created_by=1
+        conn, key="ENG", name="Eng", description="docs", created_by=1, commit=True
     )
-    updated = spaces.update_space(conn, sp["id"], name="Engineering")
+    updated = spaces.update_space(conn, sp["id"], name="Engineering", commit=True)
     assert updated["name"] == "Engineering"
     assert updated["key"] == "ENG"  # untouched
     assert updated["description"] == "docs"  # untouched
@@ -57,13 +57,13 @@ def test_update_space_uppercases_the_key(tmp_path):
     # "eng" and "ENG" can never split into two spaces.
     conn = _migrated_conn(tmp_path / "uk.db")
     _seed_user(conn)
-    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
-    assert spaces.update_space(conn, sp["id"], key="ops")["key"] == "OPS"
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
+    assert spaces.update_space(conn, sp["id"], key="ops", commit=True)["key"] == "OPS"
 
 
 def test_update_missing_space_returns_none(tmp_path):
     conn = _migrated_conn(tmp_path / "um.db")
-    assert spaces.update_space(conn, 999, name="x") is None
+    assert spaces.update_space(conn, 999, name="x", commit=True) is None
 
 
 def test_update_space_no_fields_is_a_noop(tmp_path):
@@ -71,8 +71,8 @@ def test_update_space_no_fields_is_a_noop(tmp_path):
     # update_project / update_page) — no needless write.
     conn = _migrated_conn(tmp_path / "un.db")
     _seed_user(conn)
-    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
-    assert spaces.update_space(conn, sp["id"])["name"] == "Eng"
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
+    assert spaces.update_space(conn, sp["id"], commit=True)["name"] == "Eng"
 
 
 def test_update_space_to_a_taken_key_raises(tmp_path):
@@ -81,10 +81,10 @@ def test_update_space_to_a_taken_key_raises(tmp_path):
     # creating two spaces that share an identity.
     conn = _migrated_conn(tmp_path / "ud.db")
     _seed_user(conn)
-    spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
-    ops = spaces.create_space(conn, key="OPS", name="Ops", created_by=1)
+    spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
+    ops = spaces.create_space(conn, key="OPS", name="Ops", created_by=1, commit=True)
     with pytest.raises(sqlite3.IntegrityError):
-        spaces.update_space(conn, ops["id"], key="ENG")
+        spaces.update_space(conn, ops["id"], key="ENG", commit=True)
 
 
 # --- API --------------------------------------------------------------------

@@ -85,6 +85,7 @@ def _seed_claim(
         body="SECRET_SHOULD_NOT_BE_IN_THE_FLEET_PROJECTION",
         created_by=1,
         project_id=project_id,
+        commit=True,
     )
     issue_commands.add_contributor(
         conn,
@@ -98,6 +99,7 @@ def _seed_claim(
         user_id=agent_id,
         name=f"{agent_name} token",
         scopes=[tokens.ISSUE_WRITE_SCOPE],
+        commit=True,
     )
     context_token = run_context.set_run_id(run_id)
     try:
@@ -167,7 +169,7 @@ def test_projection_joins_exact_run_checkin_blockers_and_replay(tmp_path):
     _set_claim_window(conn, seeded)
     _check_in(conn, seeded, last_seen_at="2026-07-21 11:59:30")
     blocker = issues.create_issue(
-        conn, title="Operator decision", body="", created_by=1
+        conn, title="Operator decision", body="", created_by=1, commit=True
     )
     reason, inserted = dependencies.add_link(
         conn,
@@ -175,6 +177,7 @@ def test_projection_joins_exact_run_checkin_blockers_and_replay(tmp_path):
         to_id=seeded["issue_id"],
         relation="blocks",
         created_by=1,
+        commit=True,
     )
     assert (reason, inserted) == (None, True)
 
@@ -308,7 +311,10 @@ def test_unavailable_holder_states_are_explicit(tmp_path):
     tokenless = prepared("Tokenless", "run-tokenless")
     assert (
         tokens.revoke_token(
-            conn, user_id=tokenless["agent_id"], token_id=tokenless["token_id"]
+            conn,
+            user_id=tokenless["agent_id"],
+            token_id=tokenless["token_id"],
+            commit=True,
         )
         is True
     )
@@ -327,6 +333,7 @@ def test_project_visibility_drift_changes_current_holder_eligibility(tmp_path):
         name="Private work",
         key="PRV",
         created_by=1,
+        commit=True,
     )
     conn.execute(
         "UPDATE issues SET project_id = ? WHERE id = ?",
@@ -336,7 +343,7 @@ def test_project_visibility_drift_changes_current_holder_eligibility(tmp_path):
     _set_claim_window(conn, seeded)
     _check_in(conn, seeded, last_seen_at="2026-07-21 11:59:30")
 
-    projects.set_visibility(conn, project["id"], "private")
+    projects.set_visibility(conn, project["id"], "private", commit=True)
     holder = _user(conn, seeded["agent_id"])
     assert access.can_see_issue(conn, holder, seeded["issue_id"]) is False
     hidden = fleet_work.build_active_work(conn, now=NOW)["items"][0]
@@ -344,7 +351,9 @@ def test_project_visibility_drift_changes_current_holder_eligibility(tmp_path):
     assert hidden["attention_reasons"] == ["holder_ineligible"]
 
     assert (
-        access.add_project_member(conn, project["id"], seeded["agent_id"], added_by=1)
+        access.add_project_member(
+            conn, project["id"], seeded["agent_id"], added_by=1, commit=True
+        )
         is True
     )
     assert access.can_see_issue(conn, holder, seeded["issue_id"]) is True
@@ -422,6 +431,7 @@ def test_projection_is_read_only_and_one_wal_snapshot(tmp_path, monkeypatch):
         name="Snapshot project",
         key="SNP",
         created_by=1,
+        commit=True,
     )
     seed_conn.execute(
         "UPDATE issues SET project_id = ? WHERE id = ?",
@@ -622,6 +632,7 @@ def test_rest_and_web_are_admin_only_and_share_projection(tmp_path):
                 title=f"Visible blocker {number}",
                 body="",
                 created_by=1,
+                commit=True,
             )
             reason, inserted = dependencies.add_link(
                 conn,
@@ -629,9 +640,10 @@ def test_rest_and_web_are_admin_only_and_share_projection(tmp_path):
                 to_id=seeded["issue_id"],
                 relation="blocks",
                 created_by=1,
+                commit=True,
             )
             assert (reason, inserted) == (None, True)
-        users.set_password(conn, 1, "secret")
+        users.set_password(conn, 1, "secret", commit=True)
         unsafe = _seed_claim(
             conn,
             agent_email="unsafe@example.com",
@@ -644,12 +656,14 @@ def test_rest_and_web_are_admin_only_and_share_projection(tmp_path):
             user_id=1,
             name="read-only admin",
             scopes=[tokens.READ_SCOPE],
+            commit=True,
         )
         scoped_admin = tokens.create_token(
             conn,
             user_id=1,
             name="scoped admin",
             scopes=[tokens.ADMIN_SCOPE],
+            commit=True,
         )
         conn.close()
 
@@ -761,6 +775,7 @@ def test_mcp_admin_tool_calls_the_real_rest_projection(tmp_path):
             user_id=1,
             name="MCP admin",
             scopes=[tokens.ADMIN_SCOPE],
+            commit=True,
         )
         conn.close()
         client.headers["Authorization"] = f"Bearer {admin_token['token']}"

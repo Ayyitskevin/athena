@@ -37,12 +37,14 @@ def _actor(
         email=email,
         name=name,
         is_agent=is_agent,
+        commit=True,
     )
     created = tokens.create_token(
         conn,
         user_id=user["id"],
         name=f"{name} token",
         scopes=scopes,
+        commit=True,
     )
     actor = tokens.resolve_token(conn, created["token"])
     assert actor is not None
@@ -219,7 +221,9 @@ def test_heartbeat_rechecks_database_authority_inside_transaction(tmp_path):
             (tokens.ISSUE_WRITE_SCOPE, token["id"]),
         )
         conn.commit()
-        assert tokens.revoke_token(conn, user_id=agent["id"], token_id=token["id"])
+        assert tokens.revoke_token(
+            conn, user_id=agent["id"], token_id=token["id"], commit=True
+        )
         _assert_command_error(
             "forbidden",
             lambda: agent_run_commands.heartbeat(conn, actor=actor, run_id="revoked"),
@@ -230,7 +234,7 @@ def test_heartbeat_rechecks_database_authority_inside_transaction(tmp_path):
             email="unmarked@example.com",
             name="Unmarked",
         )
-        assert users.set_agent(conn, current_actor["id"], False)
+        assert users.set_agent(conn, current_actor["id"], False, commit=True)
         _assert_command_error(
             "forbidden",
             lambda: agent_run_commands.heartbeat(
@@ -273,6 +277,7 @@ def test_heartbeat_upsert_is_safe_and_keeps_first_seen(tmp_path):
             user_id=agent["id"],
             name="rotated",
             scopes=(tokens.DOCS_WRITE_SCOPE,),
+            commit=True,
         )
         second_actor = tokens.resolve_token(conn, second_token["token"])
         assert second_actor is not None
@@ -336,6 +341,7 @@ def test_checkin_capacity_serializes_last_slot_across_tokens(tmp_path, monkeypat
             user_id=agent["id"],
             name="second worker",
             scopes=(tokens.ISSUE_WRITE_SCOPE,),
+            commit=True,
         )
         actor_two = tokens.resolve_token(setup, token_two["token"])
         assert actor_two is not None

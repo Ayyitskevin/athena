@@ -105,7 +105,9 @@ def test_javascript_link_scheme_is_not_live(tmp_path):
 
 def test_crosslink_inside_markdown_emphasis_resolves(tmp_path):
     conn = _conn(tmp_path / "x1.db")
-    target = issues.create_issue(conn, title="Target", body="", created_by=1)
+    target = issues.create_issue(
+        conn, title="Target", body="", created_by=1, commit=True
+    )
     # The token sits inside bold markup — it must still become a live xref.
     html = str(render_body(conn, f"**see [[issue:{target['id']}]]**"))
     assert f'href="/aegis/issues/{target["id"]}"' in html
@@ -126,11 +128,16 @@ def test_page_body_renders_markdown(tmp_path):
     # WHY: render_body is the shared path for issue AND page bodies — exercise it
     # against a page body too so Mentor is covered, not just Aegis.
     conn = _conn(tmp_path / "pg.db")
-    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
     from athena.mentor import pages
 
     pg = pages.create_page(
-        conn, space_id=sp["id"], title="Doc", body="# Heading\n\ntext", created_by=1
+        conn,
+        space_id=sp["id"],
+        title="Doc",
+        body="# Heading\n\ntext",
+        created_by=1,
+        commit=True,
     )
     html = str(render_body(conn, pg["body"]))
     assert "<h1>Heading</h1>" in html
@@ -170,12 +177,15 @@ def test_buzz_permalink_never_lands_in_the_links_index(tmp_path):
     # fail: the indexer demonstrably runs and records the local ref, and still
     # records nothing for the buzz URI.
     conn = _conn(tmp_path / "b3.db")
-    target = issues.create_issue(conn, title="target", body="", created_by=1)
+    target = issues.create_issue(
+        conn, title="target", body="", created_by=1, commit=True
+    )
     issue = issues.create_issue(
         conn,
         title="radio receipt",
         body=f"see buzz://message?channel=ab&id=cd and [[issue:{target['id']}]]",
         created_by=1,
+        commit=True,
     )
     rows = conn.execute(
         "SELECT target_kind, target_id FROM links WHERE source_kind='issue' "

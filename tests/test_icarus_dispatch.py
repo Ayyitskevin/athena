@@ -1175,7 +1175,9 @@ def test_dispatch_visibility_and_record_share_one_write_transaction(
         revoker = db.connect(db_file)
         revoker.execute("PRAGMA busy_timeout = 0")
         try:
-            access.remove_project_member(revoker, project["id"], member["id"])
+            access.remove_project_member(
+                revoker, project["id"], member["id"], commit=True
+            )
         except sqlite3.OperationalError as exc:
             assert "locked" in str(exc).lower()
             revoker.rollback()
@@ -1203,7 +1205,9 @@ def test_dispatch_visibility_and_record_share_one_write_transaction(
     # not a stale authorization applied after revocation.
     monkeypatch.setattr(access, "can_see_issue", original_can_see)
     revoker = db.connect(db_file)
-    assert access.remove_project_member(revoker, project["id"], member["id"])
+    assert access.remove_project_member(
+        revoker, project["id"], member["id"], commit=True
+    )
     assert not access.can_see_issue(revoker, actor, issue["id"])
     revoker.close()
 

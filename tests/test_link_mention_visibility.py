@@ -63,8 +63,8 @@ def _world(client, db_file):
         conn.execute("UPDATE spaces SET visibility = 'private' WHERE id = ?", (vault,))
         conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (vlp,))
         conn.commit()
-        access.add_space_member(conn, vault, carol, added_by=1)
-        access.add_project_member(conn, vlp, carol, added_by=1)
+        access.add_space_member(conn, vault, carol, added_by=1, commit=True)
+        access.add_project_member(conn, vlp, carol, added_by=1, commit=True)
     finally:
         conn.close()
 

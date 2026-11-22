@@ -38,9 +38,9 @@ def _make_user2(client):
 
 
 def _space_with_page(conn):
-    space = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    space = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
     page = pages.create_page(
-        conn, space_id=space["id"], title="Runbook", body="", created_by=1
+        conn, space_id=space["id"], title="Runbook", body="", created_by=1, commit=True
     )
     return space, page
 
@@ -67,7 +67,7 @@ def test_preferences_belong_to_live_watches(tmp_path):
 
 def test_priority_preference_wins_over_issue_priority(tmp_path):
     conn = _conn(tmp_path / "p.db")
-    notifications.watch(conn, 1, "issue", 5)
+    notifications.watch(conn, 1, "issue", 5, commit=True)
     # No preference yet -> falls back to issue priority.
     conn.execute(
         "INSERT INTO issues (id, title, body, status, priority, created_by) "
@@ -81,7 +81,12 @@ def test_priority_preference_wins_over_issue_priority(tmp_path):
     # User overrides down to 'low'.
     notifications.set_preference(conn, 1, "issue", 5, priority="low")
     activity.record(
-        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+        conn,
+        actor_id=2,
+        verb="changed_status",
+        target_kind="issue",
+        target_id=5,
+        commit=True,
     )
     proj = notification_priority.list_priority_notifications(conn, 1)
     assert proj["items"][0]["priority"] == "low"
@@ -90,14 +95,19 @@ def test_priority_preference_wins_over_issue_priority(tmp_path):
 
 def test_priority_defaults_to_issue_priority_then_normal(tmp_path):
     conn = _conn(tmp_path / "p.db")
-    notifications.watch(conn, 1, "issue", 5)
+    notifications.watch(conn, 1, "issue", 5, commit=True)
     conn.execute(
         "INSERT INTO issues (id, title, body, status, priority, created_by) "
         "VALUES (5, 't', 'b', 'open', 'high', 1)"
     )
     conn.commit()
     activity.record(
-        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+        conn,
+        actor_id=2,
+        verb="changed_status",
+        target_kind="issue",
+        target_id=5,
+        commit=True,
     )
 
     proj = notification_priority.list_priority_notifications(conn, 1)
@@ -106,7 +116,7 @@ def test_priority_defaults_to_issue_priority_then_normal(tmp_path):
 
 def test_priority_unknown_value_surfaces_as_urgent(tmp_path):
     conn = _conn(tmp_path / "p.db")
-    notifications.watch(conn, 1, "issue", 5)
+    notifications.watch(conn, 1, "issue", 5, commit=True)
     conn.execute(
         "INSERT INTO issues (id, title, body, status, priority, created_by) "
         "VALUES (5, 't', 'b', 'open', 'high', 1)"
@@ -124,7 +134,12 @@ def test_priority_unknown_value_surfaces_as_urgent(tmp_path):
     conn.execute("PRAGMA ignore_check_constraints = OFF")
     conn.commit()
     activity.record(
-        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+        conn,
+        actor_id=2,
+        verb="changed_status",
+        target_kind="issue",
+        target_id=5,
+        commit=True,
     )
 
     proj = notification_priority.list_priority_notifications(conn, 1)
@@ -135,7 +150,7 @@ def test_priority_unknown_value_surfaces_as_urgent(tmp_path):
 def test_priority_filter_does_not_hide_matches_beyond_an_overfetch_window(tmp_path):
     conn = _conn(tmp_path / "complete-filter.db")
     for issue_id, priority in ((5, "urgent"), (6, "low")):
-        notifications.watch(conn, 1, "issue", issue_id)
+        notifications.watch(conn, 1, "issue", issue_id, commit=True)
         conn.execute(
             "INSERT INTO issues (id, title, body, status, priority, created_by) "
             "VALUES (?, 't', 'b', 'open', ?, 1)",
@@ -146,11 +161,21 @@ def test_priority_filter_does_not_hide_matches_beyond_an_overfetch_window(tmp_pa
     # The urgent event is older than four low-priority events. A bounded
     # overfetch followed by filtering would return no result for limit=1.
     activity.record(
-        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+        conn,
+        actor_id=2,
+        verb="changed_status",
+        target_kind="issue",
+        target_id=5,
+        commit=True,
     )
     for _ in range(4):
         activity.record(
-            conn, actor_id=2, verb="commented", target_kind="issue", target_id=6
+            conn,
+            actor_id=2,
+            verb="commented",
+            target_kind="issue",
+            target_id=6,
+            commit=True,
         )
 
     projection = notification_priority.list_priority_notifications(
@@ -161,7 +186,7 @@ def test_priority_filter_does_not_hide_matches_beyond_an_overfetch_window(tmp_pa
 
 def test_priority_summary_counts_the_complete_visible_inbox(tmp_path):
     conn = _conn(tmp_path / "complete-summary.db")
-    notifications.watch(conn, 1, "issue", 5)
+    notifications.watch(conn, 1, "issue", 5, commit=True)
     conn.execute(
         "INSERT INTO issues (id, title, body, status, priority, created_by) "
         "VALUES (5, 't', 'b', 'open', 'urgent', 1)"
@@ -186,7 +211,7 @@ def test_priority_summary_counts_the_complete_visible_inbox(tmp_path):
 def test_space_watch_preference_shapes_page_events_inside_the_space(tmp_path):
     conn = _conn(tmp_path / "space-preference.db")
     space, page = _space_with_page(conn)
-    notifications.watch(conn, 2, "space", space["id"])
+    notifications.watch(conn, 2, "space", space["id"], commit=True)
     notifications.set_preference(
         conn,
         2,
@@ -201,6 +226,7 @@ def test_space_watch_preference_shapes_page_events_inside_the_space(tmp_path):
         verb="page_edited",
         target_kind="page",
         target_id=page["id"],
+        commit=True,
     )
 
     item = notification_priority.list_priority_notifications(conn, 2, digest=True)[
@@ -217,8 +243,8 @@ def test_space_watch_preference_shapes_page_events_inside_the_space(tmp_path):
 def test_direct_page_preference_wins_when_page_and_space_are_watched(tmp_path):
     conn = _conn(tmp_path / "overlap-preference.db")
     space, page = _space_with_page(conn)
-    notifications.watch(conn, 2, "space", space["id"])
-    notifications.watch(conn, 2, "page", page["id"])
+    notifications.watch(conn, 2, "space", space["id"], commit=True)
+    notifications.watch(conn, 2, "page", page["id"], commit=True)
     notifications.set_preference(conn, 2, "space", space["id"], priority="low")
     notifications.set_preference(conn, 2, "page", page["id"], priority="urgent")
     activity.record(
@@ -227,6 +253,7 @@ def test_direct_page_preference_wins_when_page_and_space_are_watched(tmp_path):
         verb="page_edited",
         target_kind="page",
         target_id=page["id"],
+        commit=True,
     )
 
     item = notification_priority.list_priority_notifications(conn, 2)["items"][0]
@@ -238,7 +265,7 @@ def test_direct_page_preference_wins_when_page_and_space_are_watched(tmp_path):
 def test_deleted_page_does_not_reuse_an_unprovable_space_preference(tmp_path):
     conn = _conn(tmp_path / "deleted-page-preference.db")
     space, page = _space_with_page(conn)
-    notifications.watch(conn, 2, "space", space["id"])
+    notifications.watch(conn, 2, "space", space["id"], commit=True)
     notifications.set_preference(conn, 2, "space", space["id"], priority="urgent")
 
     page_commands.delete_page(conn, actor={"id": 1}, page_id=page["id"])
@@ -260,7 +287,7 @@ def test_deleted_page_does_not_reuse_an_unprovable_space_preference(tmp_path):
 
 def test_mute_suppresses_notifications(tmp_path):
     conn = _conn(tmp_path / "m.db")
-    notifications.watch(conn, 1, "issue", 5)
+    notifications.watch(conn, 1, "issue", 5, commit=True)
     conn.execute(
         "INSERT INTO issues (id, title, body, status, priority, created_by) "
         "VALUES (5, 't', 'b', 'open', 'medium', 1)"
@@ -269,7 +296,12 @@ def test_mute_suppresses_notifications(tmp_path):
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     notifications.set_preference(conn, 1, "issue", 5, mute_until=future)
     activity.record(
-        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+        conn,
+        actor_id=2,
+        verb="changed_status",
+        target_kind="issue",
+        target_id=5,
+        commit=True,
     )
 
     proj = notification_priority.list_priority_notifications(conn, 1)
@@ -286,7 +318,7 @@ def test_mute_suppresses_notifications(tmp_path):
 
 def test_mute_fail_closed_on_malformed_timestamp(tmp_path):
     conn = _conn(tmp_path / "m.db")
-    notifications.watch(conn, 1, "issue", 5)
+    notifications.watch(conn, 1, "issue", 5, commit=True)
     conn.execute(
         "INSERT INTO issues (id, title, body, status, priority, created_by) "
         "VALUES (5, 't', 'b', 'open', 'medium', 1)"
@@ -299,7 +331,12 @@ def test_mute_fail_closed_on_malformed_timestamp(tmp_path):
     )
     conn.commit()
     activity.record(
-        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+        conn,
+        actor_id=2,
+        verb="changed_status",
+        target_kind="issue",
+        target_id=5,
+        commit=True,
     )
 
     # Malformed mute_until fails closed: notification is NOT suppressed.
@@ -310,7 +347,7 @@ def test_mute_fail_closed_on_malformed_timestamp(tmp_path):
 
 def test_digest_buckets_group_by_window(tmp_path):
     conn = _conn(tmp_path / "d.db")
-    notifications.watch(conn, 1, "issue", 5)
+    notifications.watch(conn, 1, "issue", 5, commit=True)
     conn.execute(
         "INSERT INTO issues (id, title, body, status, priority, created_by) "
         "VALUES (5, 't', 'b', 'open', 'medium', 1)"
@@ -348,7 +385,7 @@ def test_digest_buckets_group_by_window(tmp_path):
 
 def test_invalid_digest_window_surfaces_as_immediate_with_warning(tmp_path):
     conn = _conn(tmp_path / "invalid-digest.db")
-    notifications.watch(conn, 1, "issue", 5)
+    notifications.watch(conn, 1, "issue", 5, commit=True)
     conn.execute(
         "INSERT INTO issues (id, title, body, status, priority, created_by) "
         "VALUES (5, 't', 'b', 'open', 'high', 1)"
@@ -362,7 +399,12 @@ def test_invalid_digest_window_surfaces_as_immediate_with_warning(tmp_path):
     conn.execute("PRAGMA ignore_check_constraints = OFF")
     conn.commit()
     activity.record(
-        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+        conn,
+        actor_id=2,
+        verb="changed_status",
+        target_kind="issue",
+        target_id=5,
+        commit=True,
     )
 
     item = notification_priority.list_priority_notifications(conn, 1, digest=True)[
@@ -375,7 +417,7 @@ def test_invalid_digest_window_surfaces_as_immediate_with_warning(tmp_path):
 
 def test_mute_overrides_digest(tmp_path):
     conn = _conn(tmp_path / "md.db")
-    notifications.watch(conn, 1, "issue", 5)
+    notifications.watch(conn, 1, "issue", 5, commit=True)
     conn.execute(
         "INSERT INTO issues (id, title, body, status, priority, created_by) "
         "VALUES (5, 't', 'b', 'open', 'medium', 1)"
@@ -386,7 +428,12 @@ def test_mute_overrides_digest(tmp_path):
         conn, 1, "issue", 5, mute_until=future, digest_window_minutes=60
     )
     activity.record(
-        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+        conn,
+        actor_id=2,
+        verb="changed_status",
+        target_kind="issue",
+        target_id=5,
+        commit=True,
     )
 
     # Muted items are excluded from the digest projection by default.
@@ -399,8 +446,8 @@ def test_mute_overrides_digest(tmp_path):
 
 def test_preferences_are_scoped_to_owner(tmp_path):
     conn = _conn(tmp_path / "o.db")
-    notifications.watch(conn, 1, "issue", 5)
-    notifications.watch(conn, 2, "issue", 5)
+    notifications.watch(conn, 1, "issue", 5, commit=True)
+    notifications.watch(conn, 2, "issue", 5, commit=True)
     notifications.set_preference(conn, 1, "issue", 5, priority="urgent")
 
     pref1 = notifications.get_preference(conn, 1, "issue", 5)
@@ -411,7 +458,7 @@ def test_preferences_are_scoped_to_owner(tmp_path):
 
 def test_observed_at_is_stable_within_request(tmp_path):
     conn = _conn(tmp_path / "obs.db")
-    notifications.watch(conn, 1, "issue", 5)
+    notifications.watch(conn, 1, "issue", 5, commit=True)
     conn.execute(
         "INSERT INTO issues (id, title, body, status, priority, created_by) "
         "VALUES (5, 't', 'b', 'open', 'medium', 1)"
@@ -419,7 +466,12 @@ def test_observed_at_is_stable_within_request(tmp_path):
     conn.commit()
     for _ in range(3):
         activity.record(
-            conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+            conn,
+            actor_id=2,
+            verb="changed_status",
+            target_kind="issue",
+            target_id=5,
+            commit=True,
         )
 
     proj = notification_priority.list_priority_notifications(conn, 1)

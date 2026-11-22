@@ -26,11 +26,17 @@ from athena.main import create_app
 def _fixture(tmp_path, *, count=60):
     conn = db.connect(tmp_path / "issues.db")
     db.migrate(conn)
-    admin = users.create_user(conn, email="a@e.com", name="Admin", role="admin")
-    owner = users.create_user(conn, email="o@e.com", name="Owner")
-    outsider = users.create_user(conn, email="x@e.com", name="Outsider")
-    pub = projects.create_project(conn, name="Pub", key="PUB", created_by=owner["id"])
-    priv = projects.create_project(conn, name="Priv", key="PRV", created_by=owner["id"])
+    admin = users.create_user(
+        conn, email="a@e.com", name="Admin", role="admin", commit=True
+    )
+    owner = users.create_user(conn, email="o@e.com", name="Owner", commit=True)
+    outsider = users.create_user(conn, email="x@e.com", name="Outsider", commit=True)
+    pub = projects.create_project(
+        conn, name="Pub", key="PUB", created_by=owner["id"], commit=True
+    )
+    priv = projects.create_project(
+        conn, name="Priv", key="PRV", created_by=owner["id"], commit=True
+    )
     conn.execute("UPDATE projects SET visibility='private' WHERE id=?", (priv["id"],))
     conn.commit()
     priorities = ("low", "medium", "high", "urgent")
@@ -45,6 +51,7 @@ def _fixture(tmp_path, *, count=60):
             project_id=(pub, priv, None)[n % 3]["id"]
             if (pub, priv, None)[n % 3]
             else None,
+            commit=True,
         )
     return conn, {
         "admin": admin,

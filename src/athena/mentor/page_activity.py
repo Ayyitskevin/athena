@@ -31,7 +31,7 @@ def record_page_created(
     page_id: int,
     title: str,
     body: str = "",
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A page was created — the first audit fact in its history. The creator starts
     watching it (Mentor is a shared wiki, but you follow what you start); anyone
@@ -60,7 +60,7 @@ def record_page_edited(
     actor_id: int,
     before: dict,
     after: dict,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A page's content changed. No-op if neither title nor body actually moved —
     a save with no edits is not a lifecycle moment (mirrors the issue no-op rule,
@@ -94,7 +94,7 @@ def record_page_deleted(
     actor_id: int,
     page_id: int,
     title: str,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A page was removed — who took the document down, with its title preserved in
     the detail since the page row itself is gone. ``commit=False`` composes inside the
@@ -118,7 +118,7 @@ def record_page_moved(
     page_id: int,
     before_parent_id: int | None,
     after_parent_id: int | None,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A page was re-parented. No-op if the parent didn't actually change (set_parent
     matches the row even when the value is unchanged, so the no-op guard lives here,
@@ -149,7 +149,7 @@ def record_page_commented(
     actor_id: int,
     page_id: int,
     body: str = "",
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record that someone commented on the page — the page twin of the issue
     `commented` event. Targets the page (so it lands on the page's Activity and the
@@ -174,7 +174,7 @@ def record_page_commented(
 
 
 def record_page_comment_edited(
-    conn: sqlite3.Connection, *, actor_id: int, page_id: int, commit: bool = True
+    conn: sqlite3.Connection, *, actor_id: int, page_id: int, commit: bool
 ) -> None:
     """Record that a page comment's body was edited — the previously-silent half of the
     comment lifecycle (who rewrote content). No detail: the current body lives on the
@@ -191,7 +191,7 @@ def record_page_comment_edited(
 
 
 def record_page_comment_deleted(
-    conn: sqlite3.Connection, *, actor_id: int, page_id: int, commit: bool = True
+    conn: sqlite3.Connection, *, actor_id: int, page_id: int, commit: bool
 ) -> None:
     """Record that a comment was removed from the page — the audit-worthy half of the
     comment lifecycle (who took content down). No detail: the comment is gone.
@@ -212,7 +212,7 @@ def record_page_label_added(
     actor_id: int,
     page_id: int,
     label_id: int,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record that a label was attached to the page, stamped with the label's name.
     Caller records only when the attach created a new pairing. ``commit=False``
@@ -235,7 +235,7 @@ def record_page_label_removed(
     actor_id: int,
     page_id: int,
     label_id: int,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record that a label was detached from the page. Caller records only when a
     pairing was actually removed. ``commit=False`` lets the command owner fold the
@@ -259,7 +259,7 @@ def record_page_archive_change(
     page_id: int,
     before: str | None,
     after: str | None,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record a page archive (soft-delete) or restore — the Mentor twin of the issue
     archive event. before/after are the page's archived_at values (None means active,
@@ -287,7 +287,7 @@ def record_page_restored(
     version: int,
     before: dict,
     after: dict,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A page's content was rolled back to a prior revision. Recorded as its own verb
     (not page_edited) so the trail says "restored v3", not just "edited". No-op if the

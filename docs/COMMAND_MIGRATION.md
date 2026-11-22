@@ -8,10 +8,20 @@ input/output; MCP uses REST.
 This is a migration rule, not a completed-system claim. The inventory below is
 the review-facing source of truth for the `0.1.0a1` line. The transport side of
 the rule is mechanically enforced: `scripts/check_write_ownership.py` fails the
-build if a transport (`web/*`, `mcp/*`, `*_api.py`) executes write SQL or calls
-a data-module mutating helper that is neither a `*_commands.py` module nor one
-of the designated writers it names (personal state, the login/session flow,
-and the inbound forge delivery path).
+build if a transport executes write SQL or calls a data-module mutating helper
+that is neither a `*_commands.py` module nor one of the designated writers it
+names (personal state, the login/session flow, the inbound forge delivery path,
+and the development startup's schema migration in `main.py`). A transport is
+any module that defines an `APIRouter` or registers routes, middleware or
+exception handlers on the app, which includes `aegis/api.py`, `mentor/api.py`
+and `main.py`, plus everything under `web/` and `mcp/` and every `*_api.py`.
+The app's refusal handlers in `main.py` record through commands: the pending
+approval ask (`approval_commands.open_request`), budget exhaustion
+(`budget_commands.record_exhaustion`) and scope denial
+(`security_event_commands.record_failure`). The atomic side is enforced too:
+`scripts/check_transaction_commits.py` fails on a call inside a
+`db.transaction` block that commits, and `db.transaction` raises at exit if
+anything inside it committed.
 
 ## Current inventory
 

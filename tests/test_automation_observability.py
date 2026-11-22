@@ -40,6 +40,7 @@ def test_failing_action_records_failure_and_still_advances_cursor(tmp_path, capl
             action_type="comment",
             action_params={"body": "x"},
             created_by=1,
+            commit=True,
         )
         assert rule["failure_count"] == 0 and rule["last_error"] is None
 
@@ -76,6 +77,7 @@ def test_repeated_failures_accumulate_the_count(tmp_path):
             action_type="comment",
             action_params={"body": "x"},
             created_by=1,
+            commit=True,
         )
         # Two matching events, each failing, bump the count to 2 (it is cumulative, like
         # a webhook's failure_count — not reset each pass).
@@ -151,6 +153,7 @@ def test_admin_page_shows_rule_failure_badge(tmp_path):
             action_type="comment",
             action_params={"body": "x"},
             created_by=1,
+            commit=True,
         )
         # Clean rule: the page shows no failure badge.
         automation.create_rule(
@@ -160,6 +163,7 @@ def test_admin_page_shows_rule_failure_badge(tmp_path):
             action_type="comment",
             action_params={"body": "x"},
             created_by=1,
+            commit=True,
         )
 
         assert "⚠" not in client.get("/admin/automation").text

@@ -37,7 +37,12 @@ def _rec(conn, *, run_id=None, parent=None, target_id=1, verb="created"):
     t2 = run_context.set_parent_run_id(parent)
     try:
         return activity.record(
-            conn, actor_id=1, verb=verb, target_kind="issue", target_id=target_id
+            conn,
+            actor_id=1,
+            verb=verb,
+            target_kind="issue",
+            target_id=target_id,
+            commit=True,
         )
     finally:
         run_context.reset_parent_run_id(t2)

@@ -77,7 +77,7 @@ def test_deleting_a_project_that_owns_a_sprint_is_a_typed_refusal(tmp_path):
     db_file, pid = _seeded(tmp_path, "sprint.db")
     conn = db.connect(db_file)
     try:
-        sprints.create_sprint(conn, project_id=pid, name="Launch")
+        sprints.create_sprint(conn, project_id=pid, name="Launch", commit=True)
         before = _trail(conn)
         with pytest.raises(Exception) as refused:
             project_commands.delete_project(conn, actor_id=1, project_id=pid)

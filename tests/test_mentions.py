@@ -47,10 +47,10 @@ def test_process_mentions_notifies_and_watches(tmp_path):
     from athena.core import activity
 
     ev = activity.record(
-        conn, actor_id=1, verb="created", target_kind="issue", target_id=7
+        conn, actor_id=1, verb="created", target_kind="issue", target_id=7, commit=True
     )
     notifications.process_mentions(
-        conn, event_id=ev["id"], actor_id=1, text="hi [[user:2]]"
+        conn, event_id=ev["id"], actor_id=1, text="hi [[user:2]]", commit=True
     )
     assert notifications.unread_count(conn, 2) == 1
     assert notifications.is_watching(conn, 2, "issue", 7)  # now follows the thread
@@ -61,10 +61,14 @@ def test_process_mentions_skips_self_and_unknown(tmp_path):
     from athena.core import activity
 
     ev = activity.record(
-        conn, actor_id=1, verb="created", target_kind="issue", target_id=7
+        conn, actor_id=1, verb="created", target_kind="issue", target_id=7, commit=True
     )
     notifications.process_mentions(
-        conn, event_id=ev["id"], actor_id=1, text="[[user:1]] and [[user:999]]"
+        conn,
+        event_id=ev["id"],
+        actor_id=1,
+        text="[[user:1]] and [[user:999]]",
+        commit=True,
     )
     assert notifications.unread_count(conn, 1) == 0  # no self-notify
     assert notifications.unread_count(conn, 999) == 0  # unknown user, no row

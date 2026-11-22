@@ -140,7 +140,9 @@ fit — flag the friction instead. If two agents must change the same file (e.g.
 
 1. Run `scripts/gate.sh` (default `product` profile): it executes the local product
    inventory in `scripts/gate.py`, including dependency validation, lint, formatting,
-   type checks, architectural checks and full-suite coverage. Explicit `--profile quick`
+   type checks, architectural checks (import contracts, write ownership, transaction
+   commits, `imported_at` guards, template styles and routes) and full-suite
+   coverage. Explicit `--profile quick`
    is partial and cannot replace product evidence. The product profile does not run CI's container
    or release-candidate audit jobs; obtain those separately. If the gate changes, change
    AGENTS.md, CONTRIBUTING.md and the script together.

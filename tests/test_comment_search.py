@@ -49,7 +49,9 @@ def _seed_user(conn, email="a@e.com", name="A", role="member"):
 def test_issue_comment_is_findable_and_borrows_parent(tmp_path):
     conn = _migrated_conn(tmp_path / "ic.db")
     _seed_user(conn)
-    iss = issues.create_issue(conn, title="Deploy runbook", body="", created_by=1)
+    iss = issues.create_issue(
+        conn, title="Deploy runbook", body="", created_by=1, commit=True
+    )
     comment_commands.create_comment(
         conn, actor=ACTOR, issue_id=iss["id"], body="rotate the zephyr token first"
     )
@@ -64,8 +66,10 @@ def test_issue_comment_is_findable_and_borrows_parent(tmp_path):
 def test_page_comment_is_findable_and_borrows_parent(tmp_path):
     conn = _migrated_conn(tmp_path / "pc.db")
     _seed_user(conn)
-    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
-    pg = pages.create_page(conn, space_id=sp["id"], title="Onboarding", created_by=1)
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
+    pg = pages.create_page(
+        conn, space_id=sp["id"], title="Onboarding", created_by=1, commit=True
+    )
     page_comment_commands.create_page_comment(
         conn, actor={"id": 1}, page_id=pg["id"], body="the zephyr checklist lives here"
     )
@@ -80,7 +84,7 @@ def test_page_comment_is_findable_and_borrows_parent(tmp_path):
 def test_editing_a_comment_reindexes(tmp_path):
     conn = _migrated_conn(tmp_path / "edit.db")
     _seed_user(conn)
-    iss = issues.create_issue(conn, title="I", body="", created_by=1)
+    iss = issues.create_issue(conn, title="I", body="", created_by=1, commit=True)
     c = comment_commands.create_comment(
         conn, actor=ACTOR, issue_id=iss["id"], body="the zephyr note"
     )
@@ -98,7 +102,7 @@ def test_editing_a_comment_reindexes(tmp_path):
 def test_deleting_a_comment_removes_it_from_search(tmp_path):
     conn = _migrated_conn(tmp_path / "del.db")
     _seed_user(conn)
-    iss = issues.create_issue(conn, title="I", body="", created_by=1)
+    iss = issues.create_issue(conn, title="I", body="", created_by=1, commit=True)
     c = comment_commands.create_comment(
         conn, actor=ACTOR, issue_id=iss["id"], body="the zephyr note"
     )
@@ -112,8 +116,10 @@ def test_page_hard_delete_clears_its_comment_index(tmp_path):
     # A hard-deleted page takes its comments with it — their FTS entries must not dangle.
     conn = _migrated_conn(tmp_path / "purge.db")
     _seed_user(conn)
-    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
-    pg = pages.create_page(conn, space_id=sp["id"], title="Doc", created_by=1)
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
+    pg = pages.create_page(
+        conn, space_id=sp["id"], title="Doc", created_by=1, commit=True
+    )
     page_comment_commands.create_page_comment(
         conn, actor={"id": 1}, page_id=pg["id"], body="the zephyr checklist"
     )
@@ -132,8 +138,10 @@ def test_page_comment_hidden_from_non_member_of_private_space(tmp_path):
     conn = _migrated_conn(tmp_path / "vis.db")
     _seed_user(conn, email="own@e.com", name="Own")  # id 1 (creator/member)
     _seed_user(conn, email="out@e.com", name="Out")  # id 2 (outsider)
-    sp = spaces.create_space(conn, key="SEC", name="Sec", created_by=1)
-    pg = pages.create_page(conn, space_id=sp["id"], title="Secret", created_by=1)
+    sp = spaces.create_space(conn, key="SEC", name="Sec", created_by=1, commit=True)
+    pg = pages.create_page(
+        conn, space_id=sp["id"], title="Secret", created_by=1, commit=True
+    )
     page_comment_commands.create_page_comment(
         conn, actor={"id": 1}, page_id=pg["id"], body="zephyr rotation steps"
     )
@@ -151,7 +159,7 @@ def test_page_comment_hidden_from_non_member_of_private_space(tmp_path):
 def test_comment_on_archived_parent_drops_out(tmp_path):
     conn = _migrated_conn(tmp_path / "arch.db")
     _seed_user(conn, role="admin")
-    iss = issues.create_issue(conn, title="I", body="", created_by=1)
+    iss = issues.create_issue(conn, title="I", body="", created_by=1, commit=True)
     comment_commands.create_comment(
         conn, actor=ACTOR, issue_id=iss["id"], body="the zephyr note"
     )
@@ -159,7 +167,7 @@ def test_comment_on_archived_parent_drops_out(tmp_path):
     assert [h["kind"] for h in search.search(conn, "zephyr", actor=admin)] == [
         "issue_comment"
     ]
-    issues.set_archived(conn, iss["id"], True)
+    issues.set_archived(conn, iss["id"], True, commit=True)
     assert search.search(conn, "zephyr", actor=admin) == []  # archived parent hides it
 
 
@@ -168,7 +176,9 @@ def test_kind_filter_excludes_comments(tmp_path):
     # per-id restriction) must not sweep in comment hits.
     conn = _migrated_conn(tmp_path / "kind.db")
     _seed_user(conn)
-    iss = issues.create_issue(conn, title="zephyr build", body="", created_by=1)
+    iss = issues.create_issue(
+        conn, title="zephyr build", body="", created_by=1, commit=True
+    )
     comment_commands.create_comment(
         conn, actor=ACTOR, issue_id=iss["id"], body="another zephyr mention"
     )
@@ -184,7 +194,7 @@ def test_backfill_indexes_preexisting_comments(tmp_path):
     # Simulate a legacy comment (a row with no FTS entry) and run the backfill SQL.
     conn = _migrated_conn(tmp_path / "backfill.db")
     _seed_user(conn)
-    iss = issues.create_issue(conn, title="I", body="", created_by=1)
+    iss = issues.create_issue(conn, title="I", body="", created_by=1, commit=True)
     # Insert a comment DIRECTLY, bypassing the command — so it has no search entry.
     conn.execute(
         "INSERT INTO comments (issue_id, author_id, body) VALUES (?, 1, ?)",

@@ -489,7 +489,9 @@ def edit_issue(
     # The text IS the issue now, so the author's draft of it is a stale copy of
     # something that finally has a real home on the trail. Dropping it is what
     # makes "you have unsaved work" mean it the next time it appears.
-    issue_drafts.discard_draft(conn, issue_id=issue_id, owner_id=user["id"])
+    issue_drafts.discard_draft(
+        conn, issue_id=issue_id, owner_id=user["id"], commit=True
+    )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -531,6 +533,7 @@ def _issue_conflict_response(
         title=title,
         body=body,
         based_on=based_on,
+        commit=True,
     )
     # The fields show what won; `conflict` carries what the author typed.
     return get_templates().TemplateResponse(
@@ -587,6 +590,7 @@ def autosave_issue_draft(
             # cached pre-upgrade form; falling back to the current etag there
             # restores the old (weaker) behavior instead of refusing the save.
             based_on=based_on.strip() or issue_etags.current_etag(conn, issue),
+            commit=True,
         )
     except issue_drafts.DraftTooLarge:
         # Fixed literals from the module's own bounds, not the exception's text:
@@ -620,7 +624,9 @@ def discard_issue_draft(
     _, err = authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
-    issue_drafts.discard_draft(conn, issue_id=issue_id, owner_id=user["id"])
+    issue_drafts.discard_draft(
+        conn, issue_id=issue_id, owner_id=user["id"], commit=True
+    )
     # int() is redundant to FastAPI's own path coercion, but that coercion is
     # invisible to the URL-redirection taint analysis; making it explicit proves
     # the Location header cannot carry anything but digits.

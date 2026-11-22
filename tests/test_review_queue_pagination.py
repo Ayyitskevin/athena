@@ -50,13 +50,15 @@ def test_exclusive_cursor_traverses_exact_size_final_page_and_oldest_hold(board)
 
 def test_resume_rechecks_canonical_submission_and_original_event_visibility(board):
     conn, _, project = board
-    other = projects.create_project(conn, name="Past work", key="PAST", created_by=1)
+    other = projects.create_project(
+        conn, name="Past work", key="PAST", created_by=1, commit=True
+    )
     visible = submit(conn, issue(conn, project))
     moved = issue(conn, project)
     original = submit(conn, moved)
-    issues.set_project(conn, moved["id"], other["id"])
+    issues.set_project(conn, moved["id"], other["id"], commit=True)
     latest = submit(conn, moved, original["candidate_id"])
-    issues.set_project(conn, moved["id"], project["id"])
+    issues.set_project(conn, moved["id"], project["id"], commit=True)
     replaced = issue(conn, project)
     stale = submit(conn, replaced)
     anchor = issue(conn, project)
@@ -65,7 +67,7 @@ def test_resume_rechecks_canonical_submission_and_original_event_visibility(boar
     first = queue(conn, project, limit=1)
     assert first["visible_total"] == 4 and first["next_cursor"] == boundary
     # The cursor remains a numeric boundary even after its issue leaves this project.
-    issues.set_project(conn, anchor["id"], other["id"])
+    issues.set_project(conn, anchor["id"], other["id"], commit=True)
     new = submit(conn, replaced, stale["candidate_id"])
     private(conn, other)
 

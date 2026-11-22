@@ -38,7 +38,7 @@ def _conn(db_file):
 
 def test_blank_query_returns_nothing(tmp_path):
     conn = _conn(tmp_path / "b.db")
-    issues.create_issue(conn, title="deploy thing", body="", created_by=1)
+    issues.create_issue(conn, title="deploy thing", body="", created_by=1, commit=True)
     assert issue_search.search_issues(conn, "") == []
     assert issue_search.search_issues(conn, "   ", status="open") == []
 
@@ -47,10 +47,17 @@ def test_unfiltered_is_a_plain_issue_search(tmp_path):
     # WHY: with no filter set it must behave exactly like an issue-scoped search —
     # ranked, and excluding pages.
     conn = _conn(tmp_path / "u.db")
-    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
-    iss = issues.create_issue(conn, title="deploy pipeline", body="", created_by=1)
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
+    iss = issues.create_issue(
+        conn, title="deploy pipeline", body="", created_by=1, commit=True
+    )
     pages.create_page(
-        conn, space_id=sp["id"], title="deploy runbook", body="", created_by=1
+        conn,
+        space_id=sp["id"],
+        title="deploy runbook",
+        body="",
+        created_by=1,
+        commit=True,
     )
     hits = issue_search.search_issues(conn, "deploy")
     assert [(h["kind"], h["source_id"]) for h in hits] == [("issue", iss["id"])]
@@ -61,9 +68,11 @@ def test_status_filter_narrows_and_keeps_rank(tmp_path):
     # status filter keeps only the one that also matches, and it stays an issue hit
     # with its enriched status.
     conn = _conn(tmp_path / "s.db")
-    a = issues.create_issue(conn, title="deploy alpha", body="", created_by=1)
-    issues.create_issue(conn, title="deploy beta", body="", created_by=1)
-    issues.update_issue(conn, a["id"], status="done")
+    a = issues.create_issue(
+        conn, title="deploy alpha", body="", created_by=1, commit=True
+    )
+    issues.create_issue(conn, title="deploy beta", body="", created_by=1, commit=True)
+    issues.update_issue(conn, a["id"], status="done", commit=True)
     hits = issue_search.search_issues(conn, "deploy", status="done")
     assert [h["source_id"] for h in hits] == [a["id"]]
     assert hits[0]["status"] == "done"
@@ -71,21 +80,32 @@ def test_status_filter_narrows_and_keeps_rank(tmp_path):
 
 def test_label_filter_intersects(tmp_path):
     conn = _conn(tmp_path / "l.db")
-    a = issues.create_issue(conn, title="deploy alpha", body="", created_by=1)
-    issues.create_issue(conn, title="deploy beta", body="", created_by=1)
-    lab = labels.create_label(conn, name="infra")
-    labels.add_label_to_issue(conn, a["id"], lab["id"])
+    a = issues.create_issue(
+        conn, title="deploy alpha", body="", created_by=1, commit=True
+    )
+    issues.create_issue(conn, title="deploy beta", body="", created_by=1, commit=True)
+    lab = labels.create_label(conn, name="infra", commit=True)
+    labels.add_label_to_issue(conn, a["id"], lab["id"], commit=True)
     hits = issue_search.search_issues(conn, "deploy", label="infra")
     assert [h["source_id"] for h in hits] == [a["id"]]
 
 
 def test_project_filter_intersects(tmp_path):
     conn = _conn(tmp_path / "p.db")
-    proj = projects.create_project(conn, name="Web", key="WEB", created_by=1)
-    inproj = issues.create_issue(
-        conn, title="deploy alpha", body="", created_by=1, project_id=proj["id"]
+    proj = projects.create_project(
+        conn, name="Web", key="WEB", created_by=1, commit=True
     )
-    backlog = issues.create_issue(conn, title="deploy beta", body="", created_by=1)
+    inproj = issues.create_issue(
+        conn,
+        title="deploy alpha",
+        body="",
+        created_by=1,
+        project_id=proj["id"],
+        commit=True,
+    )
+    backlog = issues.create_issue(
+        conn, title="deploy beta", body="", created_by=1, commit=True
+    )
     assert [
         h["source_id"]
         for h in issue_search.search_issues(conn, "deploy", project=str(proj["id"]))
@@ -101,7 +121,7 @@ def test_filter_matching_nothing_returns_empty(tmp_path):
     # the unfiltered results.
     conn = _conn(tmp_path / "n.db")
     issues.create_issue(
-        conn, title="deploy alpha", body="", created_by=1, priority="low"
+        conn, title="deploy alpha", body="", created_by=1, priority="low", commit=True
     )
     assert issue_search.search_issues(conn, "deploy", priority="urgent") == []
 

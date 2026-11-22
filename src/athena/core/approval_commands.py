@@ -1,9 +1,10 @@
 """Audited approval decisions and policy writes.
 
-Split out of ``core/approvals.py``, which still owns the gate, the request
-rows, and the reads. These three functions are the durable writes: each one
-commits the row change and its activity event in one transaction, and refuses
-with a transport-neutral kind rather than an HTTP status.
+Split out of ``core/approvals.py``, which still owns the gate and the reads.
+These four functions are the durable writes: each one commits the row change
+and its activity event in one transaction. The three operator writes refuse
+with a transport-neutral kind rather than an HTTP status; ``open_request``
+records a refused agent's ask and does not refuse.
 """
 
 from __future__ import annotations
@@ -17,9 +18,11 @@ from athena.core.approvals import (
     VERB_POLICY_CLEARED,
     VERB_POLICY_SET,
     VERB_REJECTED,
+    VERB_REQUESTED,
     ApprovalRequest,
     get_request,
     is_gated,
+    live_request,
 )
 
 
@@ -157,3 +160,52 @@ def clear_policy(
             commit=False,
         )
         return True
+
+
+def open_request(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    action_kind: str,
+    target_kind: str,
+    target_id: int,
+    run_id: str | None,
+) -> ApprovalRequest:
+    """Record (or return) the pending ask for a refused gated action.
+
+    The app's ``ApprovalRequired`` handler calls this for every transport.
+    Called AFTER the refused command's transaction unwound, on the freed
+    connection — a row written inside it would roll back with the refusal.
+    Idempotent by the live partial unique index: an agent retrying while it waits
+    re-reads its existing ask instead of flooding the operator's queue.
+    """
+    with db.transaction(conn, immediate=True):
+        existing = live_request(
+            conn,
+            user_id=actor_id,
+            action_kind=action_kind,
+            target_kind=target_kind,
+            target_id=target_id,
+        )
+        if existing is not None:
+            return existing
+        cursor = conn.execute(
+            "INSERT INTO approval_requests "
+            "(action_kind, target_kind, target_id, requested_by, run_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (action_kind, target_kind, target_id, actor_id, run_id),
+        )
+        request_id = cursor.lastrowid
+        assert request_id is not None
+        activity.record(
+            conn,
+            actor_id=actor_id,
+            verb=VERB_REQUESTED,
+            target_kind=target_kind,
+            target_id=target_id,
+            detail=f"{action_kind} (approval #{request_id})",
+            commit=False,
+        )
+        created = get_request(conn, request_id)
+        assert created is not None
+        return created

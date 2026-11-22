@@ -47,7 +47,7 @@ def create_project(
     key: str,
     created_by: int,
     description: str = "",
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Insert a project and return it. Raises sqlite3.IntegrityError if a project
     with this name OR key already exists (both are UNIQUE, case-insensitive) or if
@@ -132,7 +132,7 @@ def set_blocked_close_policy(
     project_id: int,
     *,
     enabled: bool,
-    commit: bool = True,
+    commit: bool,
 ) -> dict | None:
     """Set the optional agent blocked-close policy and return the project.
 
@@ -158,7 +158,7 @@ def update_project(
     name: str | None = None,
     key: str | None = None,
     description: str | None = None,
-    commit: bool = True,
+    commit: bool,
 ) -> dict | None:
     """Partial edit: only the fields passed as non-None are written, the rest are
     left as-is (mirrors issues.update_issue). Returns the updated project, or None
@@ -193,7 +193,7 @@ def update_project(
 
 
 def set_visibility(
-    conn: sqlite3.Connection, project_id: int, visibility: str, *, commit: bool = True
+    conn: sqlite3.Connection, project_id: int, visibility: str, *, commit: bool
 ) -> dict | None:
     """Flip a project public ↔ private. Returns the updated project, or None if no
     project has that id (so the boundary can 404). The boundary validates the value
@@ -214,9 +214,7 @@ def set_visibility(
     return get_project(conn, project_id)
 
 
-def delete_project(
-    conn: sqlite3.Connection, project_id: int, *, commit: bool = True
-) -> bool:
+def delete_project(conn: sqlite3.Connection, project_id: int, *, commit: bool) -> bool:
     """Delete a project. Returns True if a project was deleted, False if no
     project had that id (so the boundary can 404).
 

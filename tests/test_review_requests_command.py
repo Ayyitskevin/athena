@@ -114,7 +114,7 @@ def test_request_dedup_and_fulfillment_do_not_assign_claim_or_close(board):
 def test_no_retargeting_during_possession_even_for_same_digest_or_wrong_worker(board):
     conn, _, project = board
     build, check, first = setup_request(conn, project)
-    contributors.add_contributor(conn, check["id"], 4, 1)
+    contributors.add_contributor(conn, check["id"], 4, 1, commit=True)
     request(conn, check, first)
     other = claim(conn, check, 4)
     refused(
@@ -164,9 +164,9 @@ def test_only_existing_issue_actor_can_request_eligible_named_worker(board):
             "conflict",
             lambda: request(conn, check, target, reviewer_id=unassigned),
         )
-    contributors.add_contributor(conn, check["id"], 2, 1)
+    contributors.add_contributor(conn, check["id"], 2, 1, commit=True)
     refused(conn, "conflict", lambda: request(conn, check, target, reviewer_id=2))
-    contributors.add_contributor(conn, check["id"], 4, 1)
+    contributors.add_contributor(conn, check["id"], 4, 1, commit=True)
     request(conn, check, target, who=4)
     refused(
         conn, "conflict", lambda: request(conn, check, target, reviewer_id=4, who=4)
@@ -200,7 +200,9 @@ def test_direct_ids_refuse_coercion_before_write(board, field, invalid):
 def test_request_rechecks_live_authority_and_refuses_open_transactions(board):
     conn, _, project = board
     _, check, target = setup_request(conn, project)
-    raw = tokens.create_token(conn, user_id=1, name="conductor", scopes=["issue:write"])
+    raw = tokens.create_token(
+        conn, user_id=1, name="conductor", scopes=["issue:write"], commit=True
+    )
     bearer = tokens.resolve_token(conn, raw["token"])
 
     def call():
@@ -220,7 +222,7 @@ def test_request_rechecks_live_authority_and_refuses_open_transactions(board):
         conn.execute("UPDATE api_tokens SET scopes=? WHERE id=?", (scopes, raw["id"]))
         conn.commit()
         refused(conn, "forbidden", call)
-    tokens.revoke_token(conn, user_id=1, token_id=raw["id"])
+    tokens.revoke_token(conn, user_id=1, token_id=raw["id"], commit=True)
     refused(conn, "unauthorized", call)
     conn.execute("UPDATE users SET paused_at='now' WHERE id=1")
     conn.commit()
@@ -259,17 +261,19 @@ def test_unseen_original_scope_never_allows_prior_binding_comparisons(
     board, private_event
 ):
     conn, _, public = board
-    secret = projects.create_project(conn, name="Secret", key="SEC", created_by=1)
+    secret = projects.create_project(
+        conn, name="Secret", key="SEC", created_by=1, commit=True
+    )
     private(conn, secret, 2, 3)
     origin = secret if private_event == "candidate" else public
     build, check, first = setup_request(conn, origin)
     if private_event == "request":
         for item in (build, check):
-            issues.set_project(conn, item["id"], secret["id"])
+            issues.set_project(conn, item["id"], secret["id"], commit=True)
     request(conn, check, first)
     for item in (build, check):
-        issues.set_project(conn, item["id"], public["id"])
-    contributors.add_contributor(conn, check["id"], 4, 1)
+        issues.set_project(conn, item["id"], public["id"], commit=True)
+    contributors.add_contributor(conn, check["id"], 4, 1, commit=True)
     second = submit(conn, build, first)["candidate_id"]
     other = submit(conn, issue(conn, public))["candidate_id"]
     refusals = {
@@ -284,11 +288,13 @@ def test_unseen_original_scope_never_allows_prior_binding_comparisons(
 
 def test_target_visibility_for_both_requester_and_named_reviewer(board):
     conn, _, public = board
-    hidden = projects.create_project(conn, name="Secret", key="SEC", created_by=1)
+    hidden = projects.create_project(
+        conn, name="Secret", key="SEC", created_by=1, commit=True
+    )
     private(conn, hidden, 2)
     build, check, target = setup_request(conn, hidden)
     for item in (build, check):
-        issues.set_project(conn, item["id"], public["id"])
+        issues.set_project(conn, item["id"], public["id"], commit=True)
     missing = refused(conn, "not_found", lambda: request(conn, check, 99999))
     assert (
         refused(conn, "not_found", lambda: request(conn, check, target)) == missing
@@ -337,9 +343,11 @@ def test_http_replay_exact_historical_receipt_validation_and_scope(board):
     conn, path, project = board
     build, check, target = setup_request(conn, project)
     writer = tokens.create_token(
-        conn, user_id=1, name="conductor", scopes=["issue:write"]
+        conn, user_id=1, name="conductor", scopes=["issue:write"], commit=True
     )
-    reader = tokens.create_token(conn, user_id=1, name="reader", scopes=["read"])
+    reader = tokens.create_token(
+        conn, user_id=1, name="reader", scopes=["read"], commit=True
+    )
     url = f"/issues/{check['id']}/review-requests"
     payload = {"candidate_id": target, "reviewer_id": 3}
     auth = {"Authorization": f"Bearer {writer['token']}", "X-Athena-Run": "ask-once"}

@@ -295,7 +295,12 @@ def test_existing_account_auto_link_requires_a_domain_allow_list(tmp_path):
     # silent link is REFUSED — the pre-existing admin is not seized.
     conn = _conn(tmp_path)
     boss = users.create_user(
-        conn, email="boss@acme.com", name="Boss", password="pw", role=users.ADMIN_ROLE
+        conn,
+        email="boss@acme.com",
+        name="Boss",
+        password="pw",
+        role=users.ADMIN_ROLE,
+        commit=True,
     )
     with pytest.raises(oidc_flow.OidcError):
         oidc_flow.provision_or_link(
