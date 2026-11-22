@@ -115,6 +115,12 @@ DELETE /users/{id}/budget     # admin: back to unlimited (idempotent)
 GET    /users/me              # carries your own "budget" (null when unbudgeted)
 ```
 
+Setting and clearing are admin-only, and no account may change its **own**
+budget: `budget_commands` refuses with a 403 when the target is the actor,
+whatever the actor's role or token scope, and writes no event. An agent the
+operator has made an admin still cannot raise or remove the ceiling that bounds
+it; the browser cockpit shares the same command, so the rule holds there too.
+
 MCP: `get_agent_budget`, `set_agent_budget`, `clear_agent_budget`, and the
 `budget` field already present in `whoami`. The browser cockpit shows each
 agent's consumption on **Admin → Agents**, with set/clear controls.
@@ -131,8 +137,8 @@ refused — the same principle as `scopes`.
 - A fixed window permits the boundary burst described above.
 - Budgets are per-user, not per-token: an agent holding several tokens shares one
   ceiling. That is deliberate — the budget bounds the *actor*, not the credential.
-- Nothing here restores a spent budget early except an admin raising the limit or
-  clearing the budget.
+- Nothing here restores a spent budget early except another admin raising the
+  limit or clearing the budget.
 
 ## Reported usage (not metered, not a budget)
 

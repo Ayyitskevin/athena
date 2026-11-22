@@ -497,6 +497,8 @@ def set_approval_policy(
                 target_user_id=user_id,
                 action_kind=action_kind.strip(),
             )
+    except approval_commands.ApprovalDecisionError as exc:
+        return _agents_redirect(error=exc.detail)
     except ValueError as exc:
         return _agents_redirect(error=str(exc))
     return RedirectResponse("/admin/agents?gate_changed=1", status_code=303)
@@ -534,6 +536,8 @@ def set_agent_budget(
             window=window,
             action_limit=int(raw),
         )
+    except budget_commands.BudgetCommandError as exc:
+        return _agents_redirect(error=exc.detail)
     except ValueError as exc:
         return _agents_redirect(error=str(exc))
     return RedirectResponse("/admin/agents?budget_set=1", status_code=303)
@@ -552,7 +556,10 @@ def clear_agent_budget(
     if err is not None:
         return err
     assert user is not None, "admin_required accepted a missing user"
-    budget_commands.clear_budget(conn, actor_id=user["id"], target_user_id=user_id)
+    try:
+        budget_commands.clear_budget(conn, actor_id=user["id"], target_user_id=user_id)
+    except budget_commands.BudgetCommandError as exc:
+        return _agents_redirect(error=exc.detail)
     return RedirectResponse("/admin/agents?budget_cleared=1", status_code=303)
 
 

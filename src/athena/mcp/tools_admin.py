@@ -535,7 +535,8 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         retry by the original requester against the same target, and that retry
         re-validates everything. Deciding an already-settled request is refused
         rather than silently flipping an answer the agent may have acted on.
-        Requires an admin token."""
+        Requires a human administrator's token: an agent account is refused
+        whatever its role, and nobody decides a request they made."""
         return client.decide_approval(
             request_id,
             decision=decision,

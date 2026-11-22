@@ -69,7 +69,8 @@ def decide_for_actor(
 
     Browser and REST transports share both the admin gate and the legacy
     command-error translation here. The domain owner still performs the one
-    atomic decision plus audit event; callers cannot reproduce either policy.
+    atomic decision plus audit event and owns the human-only rule (no agent
+    account, and never the requester, decides); callers cannot reproduce either.
     """
     if actor is None:
         raise HTTPException(status_code=401, detail="authentication required")
@@ -177,6 +178,10 @@ def set_policy(
             target_user_id=user_id,
             action_kind=payload.action_kind,
         )
+    except approval_commands.ApprovalDecisionError as exc:
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=exc.detail
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return approvals.gated_kinds(conn, user_id)
@@ -189,13 +194,19 @@ def clear_policy(
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[str]:
-    """Ungate an action kind for a user. Idempotent."""
+    """Ungate an action kind for a user. Idempotent. An account cannot ungate
+    itself: that is a 403 from the command, whatever the caller's role."""
     if users.get_user(conn, user_id) is None:
         raise HTTPException(status_code=404, detail="no such user")
-    approval_commands.clear_policy(
-        conn,
-        actor_id=actor["id"],
-        target_user_id=user_id,
-        action_kind=action_kind,
-    )
+    try:
+        approval_commands.clear_policy(
+            conn,
+            actor_id=actor["id"],
+            target_user_id=user_id,
+            action_kind=action_kind,
+        )
+    except approval_commands.ApprovalDecisionError as exc:
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=exc.detail
+        ) from exc
     return approvals.gated_kinds(conn, user_id)

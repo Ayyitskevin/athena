@@ -21,6 +21,23 @@ from athena.core.budgets import (
 )
 
 
+class BudgetCommandError(Exception):
+    """A budget write was refused. ``kind`` is the closed vocabulary adapters map
+    to a status (today only ``forbidden``); the command knows no transport."""
+
+    def __init__(self, kind: str, detail: str) -> None:
+        super().__init__(detail)
+        self.kind = kind
+        self.detail = detail
+
+
+def _refuse_own_budget(actor_id: int, target_user_id: int) -> None:
+    # D13: a budget bounds the account that holds it, so that account cannot move
+    # it. Checked before the no-op paths, so even an idempotent self-write refuses.
+    if actor_id == target_user_id:
+        raise BudgetCommandError("forbidden", "you cannot change your own budget")
+
+
 def set_budget(
     conn: sqlite3.Connection,
     *,
@@ -36,9 +53,9 @@ def set_budget(
     window, and lowering it can leave the agent already over (``remaining`` clamps
     to 0). Re-setting the identical ceiling is a no-op that records nothing.
 
-    Authorization is the caller's job (the command/route enforces admin), matching
-    how the neighbouring core commands split it. Raises ValueError for an unknown
-    window or a negative limit — the boundary turns that into a 422.
+    The caller enforces admin; this command refuses with ``forbidden`` when the
+    target is the actor, whatever the actor's role (D13). Raises ValueError for an
+    unknown window or a negative limit — the boundary turns that into a 422.
     """
     if window not in WINDOWS:
         raise ValueError(f"window must be one of: {', '.join(sorted(WINDOWS))}")
@@ -46,6 +63,7 @@ def set_budget(
         raise ValueError("action_limit must be an integer")
     if action_limit < 0:
         raise ValueError("action_limit must not be negative")
+    _refuse_own_budget(actor_id, target_user_id)
     with db.transaction(conn, immediate=True):
         before = get_budget(conn, target_user_id)
         if (
@@ -93,7 +111,9 @@ def clear_budget(
     conn: sqlite3.Connection, *, actor_id: int, target_user_id: int
 ) -> bool:
     """Remove a user's budget (back to unlimited) atomically with its audit event.
-    Returns False when there was nothing to clear — no event for a no-op."""
+    Returns False when there was nothing to clear — no event for a no-op. Refuses
+    with ``forbidden`` when the target is the actor (D13)."""
+    _refuse_own_budget(actor_id, target_user_id)
     with db.transaction(conn, immediate=True):
         if get_budget(conn, target_user_id) is None:
             return False

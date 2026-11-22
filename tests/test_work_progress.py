@@ -236,15 +236,19 @@ def test_a_recorded_answer_clears_only_its_own_request(tmp_path):
     with TestClient(app) as c:
         _bootstrap(c)
         conn = db.connect(db_file)
+        # The asker is an agent, not the operator: nobody decides their own ask.
+        asker = users.create_user(
+            conn, email="asker@agents.local", name="Asker", is_agent=True
+        )["id"]
         conn.execute(
             "INSERT INTO approval_requests (action_kind, target_kind, target_id, "
-            "requested_by, created_at) VALUES ('issue.close', 'issue', 1, 1, ?)",
-            (_ago(days=3),),
+            "requested_by, created_at) VALUES ('issue.close', 'issue', 1, ?, ?)",
+            (asker, _ago(days=3)),
         )
         conn.execute(
             "INSERT INTO approval_requests (action_kind, target_kind, target_id, "
-            "requested_by, created_at) VALUES ('issue.close', 'issue', 2, 1, ?)",
-            (_ago(days=1),),
+            "requested_by, created_at) VALUES ('issue.close', 'issue', 2, ?, ?)",
+            (asker, _ago(days=1)),
         )
         conn.commit()
         older, newer = [

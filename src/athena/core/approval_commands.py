@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.core import activity, db
+from athena.core import activity, db, users
 from athena.core.approvals import (
     ACTION_KINDS,
     VERB_APPROVED,
@@ -36,6 +36,13 @@ class ApprovalDecisionError(Exception):
         self.detail = detail
 
 
+def _refuse_own_gate(actor_id: int, target_user_id: int) -> None:
+    if actor_id == target_user_id:
+        raise ApprovalDecisionError(
+            "forbidden", "you cannot change your own approval policy"
+        )
+
+
 def decide(
     conn: sqlite3.Connection,
     *,
@@ -48,15 +55,27 @@ def decide(
 
     Only a *pending* request can be decided: re-deciding a settled one raises
     rather than silently flipping an answer the agent may already have acted on.
-    Authorization (admin, and human-only) is the caller's job — the route enforces
-    it, mirroring the other core commands.
+
+    Deciding is human-only, and this command enforces it (D13): a decider that is
+    an agent account is refused whatever its role, and so is a decider who is the
+    requester. The caller still owns the admin gate; the human-only rule is here
+    so no transport can skip it. A refusal writes nothing, not even an event.
     """
     if decision not in ("approve", "reject"):
         raise ApprovalDecisionError("invalid", "decision must be 'approve' or 'reject'")
     with db.transaction(conn, immediate=True):
+        decider = users.get_user(conn, actor_id)
+        if decider is None or decider["is_agent"]:
+            raise ApprovalDecisionError(
+                "forbidden", "approvals are decided by a human; agent accounts cannot"
+            )
         request = get_request(conn, request_id)
         if request is None:
             raise ApprovalDecisionError("not_found", "no such approval request")
+        if request.requested_by == actor_id:
+            raise ApprovalDecisionError(
+                "forbidden", "you cannot decide your own approval request"
+            )
         if request.state != "pending":
             raise ApprovalDecisionError(
                 "conflict", f"approval request is already {request.state}"
@@ -86,11 +105,13 @@ def set_policy(
 ) -> bool:
     """Gate an action kind for a user, atomically with its audit event. Returns
     False when already gated (idempotent, records nothing). Raises ValueError for
-    an unknown action kind — the vocabulary is closed on purpose."""
+    an unknown action kind — the vocabulary is closed on purpose. Refuses with
+    ``forbidden`` when the target is the actor: no account sets its own gate."""
     if action_kind not in ACTION_KINDS:
         raise ValueError(
             f"action_kind must be one of: {', '.join(sorted(ACTION_KINDS))}"
         )
+    _refuse_own_gate(actor_id, target_user_id)
     with db.transaction(conn, immediate=True):
         if is_gated(conn, target_user_id, action_kind):
             return False
@@ -115,7 +136,10 @@ def clear_policy(
     conn: sqlite3.Connection, *, actor_id: int, target_user_id: int, action_kind: str
 ) -> bool:
     """Ungate an action kind for a user, atomically with its audit event. Returns
-    False when it was not gated (idempotent, records nothing)."""
+    False when it was not gated (idempotent, records nothing). Refuses with
+    ``forbidden`` when the target is the actor: a gated account cannot ungate
+    itself."""
+    _refuse_own_gate(actor_id, target_user_id)
     with db.transaction(conn, immediate=True):
         if not is_gated(conn, target_user_id, action_kind):
             return False
