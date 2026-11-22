@@ -97,7 +97,7 @@ directory listed below with its rule — and every link resolves;
 | Path | One line |
 |---|---|
 | [decisions/](decisions/) | Dated decision records with their accepting sources; [its README](decisions/README.md) indexes every record. |
-| [plans/](plans/) | Long-form working guides for major pushes (expansion, remediation, performance/adoption, agentic use) and their reports; listed as a directory, not file by file. |
+| [plans/](plans/) | Long-form working guides for major pushes (expansion, remediation, performance/adoption, agentic use, Athena in use) and their reports; listed as a directory, not file by file. |
 | [research/](research/) | Roadmap research notes feeding future work; listed as a directory, not file by file. |
 | [evidence-convention/](evidence-convention/) | The inert evidence-manifest schema and its fictional examples and samples, read by EVIDENCE_MANIFEST.md and DOCUMENTARY_READER.md; listed as a directory, not file by file. |
 | [assets/](assets/) | Images used by the docs (the operator-loop diagram); listed as a directory, not file by file. |

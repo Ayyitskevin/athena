@@ -7,6 +7,7 @@ This index creates no runtime authority or automatic consumer.
 
 | Date | Decision | Status |
 |---|---|---|
+| 2026-11-22 | [Athena in use: thirteen decisions accepted by standing instruction](2026-11-22-athena-in-use-decisions.md) | Accepted, owner's standing instruction |
 | 2026-11-22 | [Work awaiting an answer is not ready](2026-11-22-ready-rule-awaiting-decision.md) | Accepted, owner instruction (D3) |
 | 2026-11-22 | [Agentic-use specification: fifteen decisions accepted as recommended](2026-11-22-agentic-use-decisions.md) | Accepted, owner instruction |
 | 2026-11-17 | [Saved title links retain page identity](2026-11-17-saved-title-links.md) | Accepted after independent spec review |

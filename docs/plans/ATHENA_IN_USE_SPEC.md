@@ -1,0 +1,390 @@
+# Athena in use: review findings and improvement specification
+
+Date: 2026-11-22. Review baseline: `0b42d40` (`main` after Waves 0, 0b, 1 and 2
+of [the agentic-use specification](AGENTIC_USE_SPEC_ATHENA.md)).
+Status: **decisions accepted by standing instruction; nothing built yet.**
+Evidence: [reports/repo-review-2026-11-22-round2.md](reports/repo-review-2026-11-22-round2.md).
+Finding IDs such as `FLEET-4`, `OPS-5`, `PERF-1` and `COCKPIT-2` refer to that
+report. Requirement IDs that begin A, B or C are carried from the first
+specification and keep their numbers.
+
+## State of the project
+
+This page is the continuity document. Read it first in a new session; update
+it in the commit that records each wave's results. It holds pointers and
+current facts only. One fact, one place: the detail lives where the pointer
+goes.
+
+**Objective.** Athena is a workspace several agents and one operator can run
+real work through for months: the written loop always has a next move, a
+failure is told to whoever is accountable, the operator can steer from the
+browser, and none of it slows down as history grows.
+
+**Where it stands.** `main` is `0b42d40`. Grades at that commit: 7.5 as a
+repository, 7.5 for agentic use (about 8 for one seat, about 6 for a fleet).
+The first specification's Waves 0, 0b, 1 and 2 are merged (PRs #466 to #469);
+its Waves 3 and 4 are carried into this document and are no longer scheduled
+there.
+
+**Decisions in force.**
+
+- D1 to D15: [accepted 2026-11-22](../decisions/2026-11-22-agentic-use-decisions.md).
+- The ready rule after a settlement:
+  [its own record](../decisions/2026-11-22-ready-rule-awaiting-decision.md).
+- D16 to D28, below:
+  [accepted by standing instruction](../decisions/2026-11-22-athena-in-use-decisions.md).
+  Each can be reversed by the owner; reversing one reopens the requirements
+  that name it.
+
+**Known issues, most serious first.**
+
+1. Path fences do not work on a default instance: one lease in the whole
+   instance may declare paths (C6).
+2. A lapsed lease tells nobody (C4).
+3. An account nobody asked can turn a requested HOLD into `reported_pass` (C5).
+4. Four statements written by the earlier waves are false by execution (F2
+   to F5), and two older ones (H11, U1).
+5. One outcome with three slices costs 142 tool calls and 382 KB (Wave 4).
+
+**Already fixed; do not redo.** Self-approval, the audit event for a failed
+project delete, the link-mention leak, the three loop defects, refusal codes,
+the response budget, the seat profiles, executed entry documents, the inner
+loop, the committed bootstrap. The "Wave 0 results", "Wave 1 results" and
+"Wave 2 results" sections of the first specification say what each changed and
+what each found and left.
+
+**Next step.** Wave 3, in the order its row gives. F1 goes first because it
+is the instrument the other fleet requirements are measured with.
+
+**How work is done here.** One requirement, one commit, with the test that
+fails without it. Delegated build work is briefed with
+[BUILD_BRIEF_TEMPLATE.md](BUILD_BRIEF_TEMPLATE.md). A wave leaves draft when
+`scripts/gate.sh --profile product` passes on its head and hosted CI is green.
+
+**Never done on the owner's behalf.** Cutting or pushing a tag, pushing a
+container image, setting a prune verdict, answering an item in
+`docs/DECISIONS_PENDING.md`, pushing `main`, lowering a coverage floor,
+widening `ALLOWED_PRAGMAS`.
+
+## Purpose
+
+The first specification made the contract for one agent true and executed.
+This one is about Athena being used: by a fleet, by the person supervising
+it, by whoever keeps the instance running, and for long enough that history
+accumulates.
+
+It has five tracks:
+
+- **F, the fleet.** Several agents on one outcome: fences, lapses, reviews,
+  and what an outcome costs in calls and bytes.
+- **W, the work order.** Three ideas taken from a prompt-writing course the
+  owner supplied, applied to how work is briefed and how a mistake becomes a
+  rule.
+- **H, operate and scale.** Running an instance, and the statements that grow
+  with history.
+- **U, the operator's cockpit.** What the supervisor can and cannot do in the
+  browser.
+- **G, debts.** What the first three waves listed and did not pay.
+
+Like the first, this is a specification of required behaviour and its
+acceptance tests. It adds no queue, scheduler, orchestrator or second process.
+The single-process SQLite architecture, the ownership model and the visibility
+rules stay as they are.
+
+## Principles
+
+Principles 1 to 9 of the first specification stand. Four are added, each a
+property a test can hold.
+
+10. **The surfaces agree.** The desk never asks for work that pickup will not
+    serve or name. The cockpit shows who holds a lease wherever it shows who
+    is assigned.
+11. **Cost is measured per outcome.** The calls and bytes one outcome takes
+    are a number with a ceiling, held by a test, not a count somebody made
+    once.
+12. **A hot statement does not read history.** The desk, pickup, the inbox
+    and every write take time that depends on open work, not on everything
+    that ever happened. Tests assert query plans, not timings.
+13. **The operator can act where the operator looks.** Every step of the
+    operator's loop can be done in the browser, or is on a declared list with
+    its reason.
+
+## Scorecard
+
+Baselines are measured at `0b42d40`. A target that is arithmetic and not yet a
+measurement says so; it is re-set once, after the first measurement, and never
+loosened without a line in the wave's results.
+
+| Measure | Baseline | Target | Wave |
+|---|---|---|---|
+| Written statements false by execution | 6 | 0 | 3 |
+| Leases that may declare paths on an instance with no root catalog | 1 in the whole instance | Any number whose paths do not overlap | 3 |
+| A lapsed lease reaches the assignee and the delegating account | Never, unless they poll | Within one `wait_for_events` period (25 s at most) | 3 |
+| An unrequested PASS can replace what the requested reviewer said | Yes | No: the request row carries the requested reviewer's own verdict | 3 |
+| Largest `my_desk` answer on a seat profile | 23,546 characters | 16,000 | 3 |
+| Agent write bodies that accept unknown fields | 25 of 67 | 0 | 3 |
+| A keyed retry after an unrelated assignment | 409 `idempotency_authorization_changed`; the marker is kept forever | Replays; a marker expires with its receipt | 3 |
+| Tool calls and bytes for one outcome with three slices, full variant | 142 calls, 382,369 bytes | 90 calls (arithmetic: 142 less 35 acknowledgements, 15 setup calls and 4 ETag reads) and 270,000 bytes (arithmetic: 30% less) | 4 |
+| Calls that acknowledge one notification each | 39 of 142 | At most 4 | 4 |
+| `GET /desk` as a seat, median at 10,000 and 50,000 issues | 259 ms and 1,285 ms | 80 ms and 200 ms (arithmetic: less the trail scan and three of four ready passes) | 6 |
+| A comment write, median at 50,000 issues | 75 ms, against 18 ms at 1,000 | Within twice the 1,000-issue figure | 6 |
+| The operator's priority inbox, median at 50,000 issues | 1,875 ms | 100 ms | 6 |
+| Webhook deliveries after three duplicate starts over 30 events | 47 | 30 | 7 |
+| Routes that answer without a credential on a default instance | 74 of 156, reported nowhere | Counted and printed by `athena-doctor`; tailnet mode refuses to start without an explicit setting | 7 |
+| Operator steps that cannot be done in the browser | 4 | 0, or each on a declared list | 8 |
+| Issues an agent holds by lease that the board files under "Unassigned" | 16 of 18 | 0 | 8 |
+| Capabilities on one surface only | 5 groups cockpit-only, 6 API-only | 0, or each on a declared list a gate check reads | 8 |
+| Commands that take a bare actor id; writes outside a command | 42; 23 | Lower each wave, held by a ratchet | 9 |
+
+## Priorities
+
+- **P0.** A written statement is false, or a fleet following the recipe is
+  blocked. Fix before anything else.
+- **P1.** What every session or every outcome pays.
+- **P2.** Friction, hardening and growth.
+
+Each baseline cell ends with how it was established: *(lead)* re-run by the
+lead, *(reviewer)* executed by one reviewer and not re-run, *(read)* confirmed
+by reading the code or the document.
+
+## Track F: the fleet
+
+| ID | Pri | Baseline | Required behaviour |
+|---|---|---|---|
+| F1 | P0 | The fleet trial is a script in a scratch directory. Its counts are in the report and nothing holds them. *(reviewer)* | `tests/test_fleet_trial.py` plays the trial in process: one conductor on `conductor`, three seats on `seat`, an operator on REST, following `CONDUCTOR_RECIPE.md`. It asserts every issue ends done and holds calls and bytes per role under ceilings in a tracked file, as the contract agent does. It has a scenario for each of C4, C5 and C6 that fails until that requirement lands. |
+| F2 | P0 | With the recipe's own links the desk shows one review request while `claim_next_ready` answers `nothing_ready`. After the reviewer's own HOLD and a second request, the review issue sits under `not_offered: completed_by_you`. A direct `claim_issue` works. FLEET-4. *(lead)* | A review request naming the caller, made by another account, is an answer under the ready rule. When the desk holds a review request for the caller, every `claim_next_ready` answer that claims nothing names it, with the call that claims its review issue. Needs D16. |
+| F3 | P0 | `my_desk` returned 23,546 characters with 23 ready issues against a 16,000 budget. The Wave 1 results say every seat tool fits. PERF-2. *(lead)* | `my_desk` fits its budget at the ready lane's maximum, at the notification preview's maximum and with both, held by a test that fills each lane. The budget test for every seat tool builds its fixture from the declared lane maxima, not from one large issue. |
+| F4 | P0 | `scripts/seed_benchmark.py` raises `TypeError`: Wave 2 made `commit` a required keyword. A document and a code comment call its numbers reproducible. PERF-3. *(lead)* | The script runs. A test runs it at its smallest size, and a test imports every file under `scripts/` that a document names as runnable and calls it with `--help`. |
+| F5 | P0 | `POST /projects` with `visibility: private` answers 201 and creates a public project. 25 of the 67 JSON write bodies in the agent OpenAPI document accept unknown fields; `AGENT_GUIDE.md` says write bodies refuse them. FLEET-16. *(lead)* | Every JSON write body in `/openapi-agent.json` refuses an unknown field with 422 `validation_error`, as the closed bodies do today. A test walks the document and fails on a body that does not. `POST /projects` accepts `visibility`, or refuses it. |
+| F6 | P1 | Any change to any issue's assignee, project or creator moves one workspace-wide authorization revision. Every stored receipt is then purged; its key answers 409 `idempotency_authorization_changed` and its marker never expires. 30% of receipts ended that way in a sustained run. The breadth is documented as deliberate in `OPERATIONS.md`; a fleet assigns work all day. PERF-1. *(lead)* | An issue's assignment or creator changing fences receipts for that issue only. Role, membership, visibility, pause and placement changes still fence everything. A fenced marker expires when its receipt would have. The refusal names how to reconcile in `next`. Needs D17. |
+| C6 | P0 | On an instance with no root catalog, which is the default, a second lease declaring any path is refused 409 `conflict`, whatever the path, across projects, and for a holder the caller cannot see. `claim_next_ready` takes no paths. With a catalog, the selector needs a `catalog_sha256` no API returns. FLEET-1. *(lead)* | Without a catalog, paths are compared lexically under one implicit root and the basis is reported as "lexical, root unknown" (D5). A refusal is `fence_overlap` and names the overlapping path, and the holder's issue when the caller can see it. `claim_next_ready` accepts `paths`. The catalog digest is readable. `OFFICE.md` states all of it. |
+| C4 | P0 | A 60-second lease lapses. No event, no notification, no attention row for the assignee or the conductor who delegated: four wait timeouts over 100 seconds showed nothing. FLEET-2. *(reviewer)* | As specified under "C4: failure is an event" in the first specification, with D11: one `lease_lapsed` event per generation, written by the first request that observes it, a notification to the assignee and the delegating account, and an attention row for both. |
+| C5 | P0 | The requested reviewer reports HOLD. An unrequested account completes an unrelated issue naming the candidate with PASS; the queue reads `reported_pass`. FLEET-3. *(lead)* | As specified under C5 in the first specification, with D4: the request row carries what the requested reviewer reported, in a field no other account can move. The conductor recipe gates on that field. |
+| C9 | P1 | Setting up one outcome with three slices takes 21 conductor requests, four of them reading a 5.9 KB packet only for an ETag. `create_issue` takes no parent, assignee, delegate or blocker; `set_issue_parent` changes the ETag and does not return it. FLEET-6. *(reviewer)* | `create_issue` accepts `parent_id`, `assignee_id`, `delegate_ids` and `blocked_by`, applied in one transaction. Every write that changes an issue's ETag returns the new one. The recipe's setup is at most 6 requests. |
+| F7 | P1 | 39 of 142 calls acknowledge one notification each. A conductor had 23 unread after one outcome. Each lease renewal notifies the assignee. No seat profile can acknowledge a set. FLEET-5. *(reviewer)* | `mark_notification_read` accepts a list of ids or `through_id`. A lease renewal is an event and not a notification. Needs D18. |
+| F8 | P1 | `wait_for_events` reads an instance-wide feed with no filter: a conductor was woken by 19 events from two unrelated projects. An event carries the verdict, the lease generation and the handoff token only inside a prose `detail`. FLEET-7. *(reviewer)* | The feed and the wait take `project_id`, and `mine=true` for issues the caller is assigned, delegated or created. An event carries its verdict, generation and handoff token as fields. |
+| F9 | P1 | A conductor cannot resolve an account id: its tool text names `list_users`, which its profile lacks and a member is refused. The answers of `delegate_issue` let a member enumerate accounts through a write. Onboarding prints the `seat` profile for an account meant to conduct. FLEET-8. *(reviewer)* | A read on the `conductor` profile lists the accounts that may be assigned or delegated on a given issue: id, name and whether it is an agent. `delegate_issue` answers the same for an account that does not exist and one that is not eligible. Onboarding takes the profile to print. Needs D19. |
+| F10 | P1 | Any eligible account can replace an issue's title and body with no precondition. The old text is in no event, history or undo. A seat that has lost its lease can still edit. The recipe keeps the contract and acceptance criteria in issue bodies. FLEET-10. *(lead)* | A change to an issue's title or body stores the prior text, readable through the issue history and restorable by undo. A bearer-token caller must send `If-Match` to change either. `update_issue` stops being marked destructive. Needs D20. |
+| F11 | P1 | Refusals carry their facts in prose: `claim_held` names the holder and expiry only in `detail`, and its `next` answers `nothing_ready` for a seat with one delegation. FLEET-15. *(reviewer)* | A refusal that names a holder, an expiry, a generation or a limit carries each as a field. A test follows every registered `next` from the state that produces its refusal and fails on one that cannot make progress. |
+| F12 | P1 | Tool results are sent as indented JSON; about 30% of each budget is whitespace. *(build agent's measurement in Wave 1, not re-run)* | Tool results are compact JSON. The budget is unchanged, so each answer carries more. |
+| C8 | P1 | Pause, token revocation and offboarding leave the account's lease and fence active and say nothing about them. An admin's `complete` on a dead agent's expired lease is refused `claim_required`; the admin has to claim it first. FLEET-9. *(reviewer)* | As specified under C8 in the first specification, with D12: the three acts return the account's active leases and may release them as an explicit option, recorded per lease. An admin can settle an expired lease without claiming it. |
+| A12 | P1 | Carried unchanged. Renewing a lease needs a fresh ETag as well as the generation. *(reviewer)* | As in the first specification. |
+| A13 | P1 | Carried, and wider than recorded: an agent packet uses three timestamp shapes and the agent OpenAPI document has six paging styles. *(reviewer)* | As in the first specification, with the count of shapes and styles held at one each by a test over `/openapi-agent.json`. |
+| C7 | P2 | Renewing and heartbeating without progress is derived as `pinging` and never raised. FLEET-12. *(reviewer)* | As in the first specification, with D6. |
+| F13 | P2 | A budget exhausted mid-task gives the seat no `next`, the accountable conductor is not told, and the operator gets one row per refused request. FLEET-13. *(reviewer)* | The refusal's `next` is a yield with reason `capacity`. The assignee and the delegating account are notified once per window. The operator's attention list has one row per account and window. |
+| F14 | P2 | A restarted MCP session cannot replay its own key: `athena-mcp` mints a run id per session unless `ATHENA_RUN_ID` is set, and the key answers 409 `idempotency_mismatch`. FLEET-14. *(reviewer)* | The run id is not part of what a key is matched on, or the printed configuration sets a stable one. The guide says which. |
+| F15 | P2 | A seat that is refused or finds nothing ready leaves no trace the operator can read. The attention vocabulary has no signal for a HOLD or BLOCKED verdict. FLEET-11. *(reviewer)* | A HOLD or BLOCKED report raises an attention row for the assignee and the delegating account. The operator can read, per agent, its last refusal code and when it last found nothing ready. |
+| A11, A14 | P2 | Carried unchanged. *(reviewer)* | As in the first specification. A11's read of a key's state is also what H14 gives the operator. |
+
+### F1: the trial is the instrument
+
+The contract agent holds one seat to the documented loop. The fleet trial does
+the same for the recipe. It is a test and not a benchmark: it counts calls and
+bytes, which are deterministic, and never time. Its ceilings file starts at
+the measured 142 calls and 382,369 bytes and is lowered by each requirement in
+Wave 4 that removes calls, in the same commit, so the scorecard row moves in
+the diff.
+
+Agents in the trial are scripted. A real model will spend more, and the
+ceiling says only what the recipe costs when followed exactly.
+
+### F2: what the desk asks, pickup names
+
+The recipe links a review issue as `blocked_by` the build issue, and the build
+issue stays open while it is under review, so the review issue is never ready
+under the ready rule. The recipe's reviewer claims it directly. That is
+coherent, and it leaves two gaps: `claim_next_ready` says `nothing_ready`
+without saying a review is waiting, and a reviewer who completed a HOLD is
+held back from the same issue by the completed-by-you clause when the
+conductor asks again.
+
+The requirement leaves the `blocked_by` semantics alone. It adds one verb to
+the answers the ready rule recognises, and one field to an answer that claims
+nothing.
+
+### F6: narrow the fence, keep its direction
+
+The fence fails closed and should go on doing so. What changes is which acts
+move it. An assignment is the most frequent act a conductor makes, and it
+cannot change what any account may read on a different issue. Role,
+membership, visibility, pause and placement changes can, and stay global.
+
+Read the reasoning in `OPERATIONS.md` under idempotency before building. If
+per-issue scoping cannot be shown to preserve the guarantee that a replay
+never returns a response its caller could no longer obtain, build only the
+expiry and the `next`, and record that outcome.
+
+## Track W: the work order
+
+The owner supplied a prompt-writing course and asked whether its ideas apply.
+Three do. The rest is advice for people typing into a chat window and has no
+place in a product specification.
+
+| ID | Pri | Baseline | Required behaviour |
+|---|---|---|---|
+| W1 | P1 | Build agents were briefed in free prose, different each time. *(lead)* | A committed brief template in six parts: goal, context, inputs, action, format, success criteria. **Done in the change that adds this document**: [BUILD_BRIEF_TEMPLATE.md](BUILD_BRIEF_TEMPLATE.md). |
+| W2 | P1 | The state of the work was spread over three results sections, two decision records and a session summary. *(lead)* | One page states the objective, the decisions in force, the known issues, what is already fixed and the next step. **Done**: "State of the project" above. It is updated in each wave's results commit. |
+| W3 | P1 | An issue is a title and a free-text body. The recipe keeps the contract and the acceptance criteria in the body, and nothing tells a seat that an issue has no success criteria before it claims. *(read)* | An issue template with the six parts as headings. The work-context packet reports which parts the body has and which it lacks. Nothing is refused for a missing part. Needs D21. |
+| W4 | P2 | A HOLD review says what is wrong with one candidate. Nothing asks what rule would have prevented it. `RUN_LEARNINGS.md` requires promotion to be explicit. *(read)* | The answer to a HOLD or BLOCKED report names, in `next`, the call that records a learning. The conductor recipe asks for one rule per HOLD. Nothing is promoted automatically. |
+| W5 | P2 | A learning is bound to one issue's runbook and reaches the next agent only through that issue's backlinks. A rule learned on one slice does not reach its sibling. *(read)* | The work-context packet lists learnings recorded on the issue, its parent and its siblings under the same parent: newest first, inside the packet's budget, each with `authored_by` and marked as data. Needs D22. |
+
+A learning stays what `RUN_LEARNINGS.md` says it is: quoted, attributed,
+verified, never executed and never read as an instruction.
+
+## Track H: operate and scale
+
+| ID | Pri | Baseline | Required behaviour |
+|---|---|---|---|
+| H1 | P1 | `GET /desk` for a seat scans the whole trail: one statement, the latest visible event id, takes 15, 171 and 840 ms at 1,000, 10,000 and 50,000 issues. Asked one visibility arm at a time it takes 0.02 ms and returns the same id. `/desk/since` without a cursor has the same shape. PERF-4. *(lead, at 10,000)* | Both ask per arm. A test asserts the plan of each hot statement names no scan of `activity`. |
+| H2 | P1 | Every issue create and comment scans the full-text index inside the write transaction (0.7, 9.1 and 48.9 ms), because the columns it deletes by are not indexed. PERF-5. *(reviewer)* | The delete finds its rows by an indexed key. Needs a forward-only migration. |
+| H3 | P1 | The ready rule reads every issue that is not archived, closed ones included; `claim-next` does so holding the writer lock (4.5, 35 and 156 ms); the desk runs the rule four times. PERF-6. *(reviewer)* | The rule reads open candidate issues only, and the desk evaluates it once per request. |
+| H4 | P1 | Notifications are never deleted and every inbox read walks all of a user's rows: the operator's priority inbox takes 33, 357 and 1,875 ms. PERF-7. *(reviewer)* | Inbox reads and the unread count use an index over unread rows. Read notifications older than a set age are removed by the maintenance command (H20). |
+| H5 | P2 | The project brief, a search for a common word and the idle sort are linear in history. PERF-8. *(reviewer)* | Each is bounded by an index or a limit; the brief reads the latest completion per issue without walking every event. |
+| H6 | P1 | Three REST lists return everything: the page list was 2.65 MB for 1,250 pages and `list_pages` fetches it again per continuation (31 calls, 82 MB); the comment list has no limit; no route reads one comment. PERF-9. *(reviewer)* | The three lists page with D2's `cursor`, `next_cursor` and `has_more`. The page list omits bodies. A route and a tool read one comment whole. |
+| H7 | P2 | Every bearer-authenticated read takes the writer lock to stamp the token's last use. A lock wait beyond five seconds is a 500. PERF-10. *(reviewer)* | The stamp is written at most once a minute per token. A lock timeout answers 503 `busy` with `Retry-After`. |
+| H8 | P1 | The numbers in the report came from scripts in a scratch directory. *(lead)* | A committed seeder and benchmark at three sizes, with the 10,000-issue medians in a tracked file. The gate does not time anything; H1's plan tests are what it holds. |
+| H9 | P2 | A connection per request sets the journal mode each time (2 to 3 ms), and the write-ahead log reached 59.8 MB with no size limit. PERF-13. *(reviewer)* | The journal mode is set once per database. A journal size limit is set and documented. |
+| C11 | P1 | With defaults, 74 of 156 GET routes answer without a credential: comments, attachment bytes, lease generations, the work-context packet, the activity CSV. The anonymous rate limit defaults to off. `athena-doctor` says nothing about it. OPS-1. *(reviewer)* | As in the first specification, with D7. In addition `athena-doctor` prints the setting, the count of anonymous routes and the public containers, and the first start logs one line saying so. Needs D23 for the default. |
+| H10 | P1 | The documented bootstrap leaves the data directory 755 and the database 644. The database holds webhook secrets, CSRF tokens and password hashes. OPS-2. *(reviewer)* | Bootstrap creates the directory 700 and the database 600. `athena-doctor` warns on a wider mode. |
+| H11 | P0 | `docs/DOCKER.md` gives `athena-backup` one argument where it needs two. `compose.yaml` does not forward the bootstrap token its own comment says to pass. The first-admin step points at a host `curl` with no published port. OPS-3. *(lead: the backup command run, the compose file read; nobody ran a container)* | The three are corrected. A test parses every CLI invocation shown in `DOCKER.md` and `OPERATIONS.md` against the command's own argument parser. |
+| H12 | P1 | A database whose schema differs refuses to start and names no object. The migration-state refusals state the condition and not the remedy, and no document mentions them. OPS-4. *(reviewer)* | Each refusal names the object or file and the command that resolves it. `OPERATIONS.md` has a section listing them. |
+| H13 | P1 | A duplicate `athena-serve` start runs the background loops before it fails to bind: 30 events gave 47 webhook deliveries. A second process on another port starts with no warning. OPS-5. *(lead)* | The loops start after the bind succeeds, and only in the process that holds an exclusive lock beside the database. A process without it serves requests, logs one line saying so, and `/readyz` reports which. Needs D24. |
+| H14 | P1 | After a hard kill, an in-flight keyed write answers `idempotency_in_progress` for about a minute with no owner, then `idempotency_indeterminate` for ever. No route or tool lists or resolves such keys. OPS-6. *(reviewer; the no-expiry rule read by the lead)* | At start, keys left executing by a process that no longer exists become indeterminate at once. An admin route and tool list indeterminate keys with the request each belongs to, and resolve one as applied or not applied, recorded in the trail. |
+| H15 | P1 | The log cannot answer what an agent did and what failed: no timestamp, request id, actor or duration on an access line; no correlation id on a 500, whose traceback prints twice; a failed webhook delivery is not logged. OPS-7. *(reviewer)* | One structured line per request: time, request id, actor id, method, route, status, refusal code, duration. Every response carries `X-Request-Id`. A 500 logs once. A failed delivery logs once. Needs D25. |
+| H16 | P2 | `/readyz` fails with no reason logged. A missing database file is silently recreated empty. OPS-8. *(reviewer)* | The reason is logged. `athena-serve` refuses to start on a missing database unless `--bootstrap` is given. |
+| H17 | P2 | The first token can be minted only through the browser form. OPS-9. *(reviewer)* | A command on the host mints a token for a named account and prints it once. |
+| H18 | P2 | Every start logs "set `ATHENA_COOKIE_SECURE=1` for HTTPS", and `athena-serve` refuses that setting. A misspelled `ATHENA_` variable is ignored. OPS-10. *(reviewer)* | The line is corrected. An `ATHENA_` variable that the settings registry does not declare is named in one warning at start. |
+| H19 | P2 | `OPERATIONS.md` uses bare command names, covers restore in place only, and has no upgrade or logs section. `RELEASE_READINESS.md` says the schema is at migration 0074; the code has 85. OPS-11. *(reviewer)* | The four are added. The migration count is generated or removed. |
+| H20 | P2 | Nothing documents growth or retention. Notifications, run bindings and approval requests are never pruned; expired sessions go only on logout. OPS-12. *(reviewer)* | `athena-maintain` removes read notifications, expired sessions and expired idempotency markers past a documented age, and prints what it removed. Nothing in a request path deletes. The activity trail and its chain are never pruned. Needs D26. |
+
+Recorded and not required: one process saturates at about four concurrent
+seats (PERF-11), and the automation engine drains ten events a second
+(PERF-12). At the shipped rate limit of 120 requests a minute per token, a
+fleet of ten reaches the limiter first. Both are limits of the single-process
+design, which this specification keeps.
+
+## Track U: the operator's cockpit
+
+Read [`docs/DESIGN_SYSTEM.md`](../DESIGN_SYSTEM.md) before any of these.
+
+| ID | Pri | Baseline | Required behaviour |
+|---|---|---|---|
+| U1 | P0 | The issue page's "Claim" card shows the assignee: it read "unclaimed" while an agent held a live lease. `DESIGN_SYSTEM.md` says "Claim, not assignment". COCKPIT-5. *(read by the lead; observed by the reviewer)* | The card shows the lease: holder, generation age and expiry, or that there is none. The assignee is shown as the assignee. |
+| U2 | P1 | Boards and the issue list filed 16 of 18 agent-worked issues under "Unassigned". COCKPIT-5. *(reviewer)* | Wherever a view groups or labels by assignee, a held lease is shown too, and a view can group by holder. |
+| U3 | P1 | The operator cannot release another agent's live lease in the browser, so reassigning claimed work does not move it. The same admin can over REST. COCKPIT-1. *(reviewer)* | The issue page offers the release to an admin, with the confirmation the design system prescribes, through the same command as REST. |
+| U4 | P1 | The Fleet roster and "Assign to a seat" work only for eight seats written into `core/fleet_roster.py`. An empty instance opens with a "Roster drift" alert, and agents onboarded through the cockpit are listed as drift. COCKPIT-2. *(read by the lead)* | Declared seats are data, managed from the cockpit and over REST. An instance with none shows no alert. Needs D27 and a forward-only migration. |
+| U5 | P2 | A playbook cannot be started from the browser. A removed agent cannot be restored there. An existing agent cannot be given a new token on either surface. COCKPIT-3, COCKPIT-4. *(reviewer)* | Each can be done in the browser. A token can be minted for an existing agent on both surfaces. |
+| U6 | P1 | Login lands on a page with no attention on it. The navigation badge and the dashboard show different "needs you" totals. COCKPIT-6. *(reviewer)* | Login lands where the attention queue is. One read model gives both numbers. |
+| U7 | P1 | 54 of 54 fresh claims read "needs attention"; a claim with no heartbeat is "high" at once; the one pending approval sat at row five; rows are labelled in internal codes and name "issue #12". An answered question stays "critical" until the agent resumes. COCKPIT-7, COCKPIT-9. *(reviewer)* | A claim is not attention until a heartbeat is overdue. A pending decision outranks a missed check-in. Rows use words, the issue key and its title. A question with an answer newer than it reads "answered, waiting on the agent". |
+| U8 | P2 | The inbox held 34 unread rows after about 15 agent actions, as raw verbs, hashes and whole reports as JSON, with no filter or grouping. COCKPIT-8. *(reviewer)* | Rows group by issue, filter by kind, and render a report through the shared partial of U9. |
+| U9 | P1 | An approval row does not say what is being approved. A completion report is raw JSON on five surfaces. Undo lives on the activity page only. COCKPIT-11, COCKPIT-12. *(reviewer)* | An approval row carries the issue key, its title and the verdict. One partial renders a report everywhere. The issue page offers undo for its own latest undoable event. |
+| U10 | P2 | The agents page is 7,500 px tall; every action reloads to the top with a message that names no agent. COCKPIT-10. *(reviewer)* | One agent, one page or one anchored section. An action returns to where it was made and names the agent. |
+| U11 | P2 | Errors from plain form posts are bare unstyled pages. A comment submitted after the session expired is lost. COCKPIT-13. *(reviewer)* | A form error renders in the page that posted it. A comment draft survives a login. |
+| U12 | P2 | Only three panels update live. COCKPIT-14. *(reviewer)* | The navigation badge and the issue page update with the same mechanism. |
+| U13 | P2 | With 226 issues the board was 41,477 px tall with no paging. COCKPIT-15. *(reviewer)* | Each column pages. |
+| U14 | P1 | Mission Control's "Copy command" does nothing: its inline script is blocked by the page's own content security policy. Every page load logs one blocked inline style. COCKPIT-16. *(reviewer)* | No template carries an inline script, style or handler. A test renders every page and fails on one. |
+| U15 | P2 | Layout breaks on long titles and at 390 px; the default button uses the accent reserved for "an agent is waiting on the human"; developer notes ship in the interface; there is no skip link; empty pages give no next step. COCKPIT-17 to 20. *(reviewer)* | Each is corrected against the design system's own contract. |
+| C10 | P2 | Five capability groups exist only in the cockpit and six only in the API. *(reviewer)* | As in the first specification: each gains its twin or a row on a declared list, and a gate check fails on an undeclared one. |
+
+## Track G: debts
+
+Each was listed by an earlier wave under "found and not fixed".
+
+| ID | Pri | Debt | Required behaviour |
+|---|---|---|---|
+| G1 | P2 | 42 commands take a bare actor id and 23 writes sit outside a command. | A ratchet on both counts in `COMMAND_MIGRATION.md`. Every later wave that touches a debtor pays it. |
+| G2 | P2 | Writers with no `commit` parameter commit unconditionally; `start_sprint` and `update_page` open `BEGIN IMMEDIATE` by hand. | Each takes `commit` or goes through `db.transaction`. |
+| G3 | P2 | Imported comments and pages name the local account the import matched. | Imported rows are marked by a forward-only migration and `authored_by` says so. |
+| G4 | P2 | JSON refusals from the cockpit's own routes carry no registered code, and the source check does not cover `web/`. | They do, and it does. |
+| G5 | P2 | The agent OpenAPI document omits the scope each operation needs, puts 404, 428 and scope denial under `default`, and costs 2.3 to 2.5 seconds on first request. | Scope per operation; the three statuses per route; built once at start. |
+| G6 | P2 | The app has no injectable clock; tests lapse a lease by rewriting its stored expiry. | One clock, replaceable in tests. C4's tests use it. |
+| G7 | P2 | The changed profile picks tests that reach changed code only through the app from a 17-entry map of file names. | A scheduled CI job records per-test coverage contexts and the map is generated from them. |
+| G8 | P2 | `seat+knowledge` can edit a notebook and cannot create one. | The profile can do both, or the desk stops advertising it. |
+| G9 | P2 | `field_guide/07_watching.md` and `DESK.md` name tools no seat profile carries; `examples/desk_loop.md` is not executed; `DISPATCH.md` and `WORKERS.md` keep hand tables of settings; `AGENT_API.md` calls `/openapi.json` the full reference; dated documents quote old coverage floors. | Each is corrected, generated or executed. |
+| G10 | P2 | `POST /issues/bulk` reports a wrong status without `valid_statuses`; list, search and learning reads carry no `authored_by`. | Both are closed. |
+| B6b | P2 | Carried unchanged. | As in the first specification. Setting a verdict stays the owner's act. |
+| B11 | P2 | Carried unchanged, and blocked: D9 waits on somebody operating an instance the lanes can reach. | As in the first specification, when unblocked. |
+
+## Waves
+
+These replace Waves 3 and 4 of the first specification. One requirement ID is
+one change with its own commit, in the order given.
+
+| Wave | Content | Uses decisions |
+|---|---|---|
+| 3. True again, and the fleet unblocked | F1, F2, F3, F4, F5, H11, U1, C6, C4, C5 | D4, D5, D11, D16 |
+| 4. What an outcome costs | C9, F7, F8, F9, F11, F12, A12, A13, W3 | D18, D19, D21 |
+| 5. Failure and recovery in a fleet | F6, F10, C8, C7, F13, F14, F15, A11, A14, W4, W5 | D6, D12, D17, D20, D22 |
+| 6. Scale | H8, H1, H2, H3, H4, H6, H5, H7, H9 | D2 |
+| 7. Operate | C11, H10, H12, H13, H14, H15, H16, H17, H18, H19, H20 | D7, D23, D24, D25, D26 |
+| 8. The cockpit | U2, U3, U4, U6, U7, U9, U14, U5, U8, U10, U11, U12, U13, U15, C10 | D12, D27 |
+| 9. Debts | G1 to G10, B6b, B11 | D9, D10 |
+
+Wave 3 is the six false statements and the three findings that block a fleet
+following the recipe. Wave 4 is where the per-outcome scorecard row moves.
+Waves 6 to 9 do not depend on each other and can be reordered.
+
+## Compatibility and deliberate exclusions
+
+- Everything under this heading in the first specification stands.
+- No lease is swept or released automatically. C4 records a lapse; it releases
+  nothing. C8 and U3 release only on an operator's explicit act.
+- The ready rule's treatment of `blocked` and `capacity` yields, and of a
+  direct claim by the account that settled, is unchanged (D28).
+- `review_state` and the behaviour of unrequested reviews are unchanged.
+- The idempotency fence still fails closed. F6 changes which acts move it.
+- The default for `ATHENA_ANONYMOUS_READS` does not change here (D23).
+- No metrics endpoint, no second process, no connection pool.
+- No approval covers more than one action. A gated conductor closing an
+  outcome and three slices still needs four decisions (FLEET-17); U9 makes
+  each row say what it is.
+- Nothing is promoted to a learning automatically (W4).
+- Migrations stay forward-only: H2, U4, F10 and G3 each add one.
+- From the course, only W1 to W5 are taken.
+
+## Decisions for the owner
+
+On 2026-11-22 the owner told the lead to go with its recommendations for this
+specification and to default to them at stopping points. Each recommendation
+below is therefore recorded as accepted, and each is the owner's to reverse.
+The record is
+[decisions/2026-11-22-athena-in-use-decisions.md](../decisions/2026-11-22-athena-in-use-decisions.md).
+
+| ID | Decision | Recommendation (accepted by standing instruction) |
+|---|---|---|
+| D16 | Is a review request naming an account an answer to that account's own completion, under the ready rule? This amends the 2026-11-22 ready-rule record. | Yes, when another account made the request. `blocked_by` keeps its meaning; pickup names a waiting review and does not claim it. |
+| D17 | May an issue's assignment or creator changing fence only that issue's receipts, and may a fenced marker expire? `OPERATIONS.md` documents the global fence as deliberately broad. | Yes to both, if the build can show a replay never returns what its caller could no longer obtain. Otherwise only the expiry. |
+| D18 | Should a lease renewal stop notifying the assignee, and should one call acknowledge many notifications? | Yes to both. The renewal stays an event. Extend the existing tool; add none. |
+| D19 | May a member read the accounts eligible for assignment or delegation on an issue it can see? | Yes: id, name and whether it is an agent, for that issue only. It replaces an enumeration that a write already allows. |
+| D20 | Should issue title and body edits keep the prior text, and should a bearer-token caller need `If-Match` to make one? The second can refuse a caller that works today. | Yes to both. The browser's forms are unaffected. |
+| D21 | Should the six parts of a work order be columns, or headings the packet recognises? Should a missing part refuse anything? | Headings, reported by the packet. Nothing is refused. |
+| D22 | Should a learning reach issues other than the one it was recorded on? | The parent and siblings under the same parent only. No new table and no project-wide scope yet. |
+| D23 | Should `ATHENA_ANONYMOUS_READS` default to off? | Not here. It would change every existing instance. Report the state loudly (C11) and decide the default with the next tagged release, which is the owner's. |
+| D24 | When a second process starts on the same database, should it refuse, or serve without the background loops? | Serve without them and say so. Refusing would break a deliberate second reader. |
+| D25 | Structured request logs and a request id on every response; a metrics endpoint? | The first two. No metrics endpoint: it is a new unauthenticated surface, and the log answers the question asked. |
+| D26 | May a maintenance command delete read notifications, expired sessions and expired idempotency markers? | Yes, as an explicit command the operator schedules, with documented ages. Never the trail. Ruling K1, on leases, is untouched. |
+| D27 | Should the declared fleet seats move from source to data? | Yes. An existing instance keeps its eight by migration; a new one starts with none. |
+| D28 | Should `blocked` and `capacity` yields hold work back from the account that yielded, and should a direct claim by the settling account count as an answer? | No change to either. The accepted ready-rule record stands until the fleet trial shows a loop. |
+
+Three questions stay with the owner and are not answered here: what the name
+"Astra" refers to in the lanes; whether the fallback rules in `AGENTS.md`
+match the machine-level handbook; and D9's precondition, an operated instance.
+
+## Verification and delivery
+
+The standing constraints of the first specification are unchanged.
+
+For each requirement: write the failing test from the baseline cell and
+confirm it fails on `0b42d40`; make the change; run
+`scripts/gate.sh --profile changed` while working and
+`scripts/gate.sh --profile product` on the wave's head; record the receipt in
+the PR. For Track F, add or extend a scenario in the fleet trial once F1
+exists, and lower its ceilings in the same commit when the change removes
+calls. For Track H, a statement that was slow gets a plan assertion. For Track
+U, read the design system first and attach a screenshot of the changed page
+at 1,280 and 390 px to the PR.
+
+A requirement is done when the Definition of Done in `AGENTS.md` holds and, in
+addition, its test fails without the change and passes with it, its scorecard
+row, if it has one, was re-measured, the documents that describe the behaviour
+were updated in the same PR, and "State of the project" says so.
