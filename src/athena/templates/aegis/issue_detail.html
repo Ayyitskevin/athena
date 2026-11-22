@@ -180,19 +180,55 @@
            and when it last moved. Every figure is scoped to what THIS page
            already loaded — the bounded activity window — and says so; a
            fleet-wide claim would belong to Mission Control, not here. #}
+        {# Claim, not assignment (DESIGN_SYSTEM.md): the Claim cell reads the
+           LEASE — the expiring possession the agent protocol runs on — and the
+           Assignee cell reads the accountable owner. An expired lease nobody
+           released is "lapsed": it holds nothing, but it still names its last
+           holder. Times are the lease row's own UTC stamps. #}
         {% set latest_run = (activity | selectattr("run_id") | list | first) if activity else none %}
+        {% set lease_holder = (users | selectattr("id", "equalto", lease.holder_id) | first) if lease else none %}
         <div class="supervision">
             <div>
                 <span class="k">Claim</span>
+                {# A live lease comes first: a handoff stays open until its new
+                   holder resumes it, so the two can hold at once, and the page
+                   must not read "yielded" while somebody holds the work. #}
+                {% if lease and lease.active %}
+                <span class="v">{{ lease.holder_name }}</span>
+                <div class="sub">
+                    <span class="chip" data-tone="{{ 'active' | checkin_tone }}">live lease</span>
+                    {% if lease_holder and lease_holder.is_agent %}<span class="chip" data-tone="agent">agent</span>{% endif %}
+                </div>
+                <div class="sub">expires {{ lease.expires_at }} UTC</div>
+                <div class="sub">claimed or renewed {{ lease.claimed_at }} UTC</div>
                 {% if open_claim_handoff %}
+                <div class="sub">handoff open · {{ open_claim_handoff.reason }} · not resumed</div>
+                {% endif %}
+                {% elif open_claim_handoff %}
                 <span class="v">yielded</span>
                 <div class="sub">handoff open · {{ open_claim_handoff.reason }}</div>
-                {% elif issue.assignee_name %}
-                <span class="v">{{ issue.assignee_name }}</span>
-                <div class="sub">{{ "agent" if issue.assignee_is_agent else "human" }} assignee</div>
+                {% elif lease %}
+                {# Unclaimed, as is:unclaimed reads it (QUERY.md): a lapsed
+                   lease holds nothing, but its last holder is still the fact. #}
+                <span class="v">unclaimed</span>
+                <div class="sub">
+                    <span class="chip" data-tone="{{ 'expired' | checkin_tone }}">lapsed lease</span>
+                    last held by {{ lease.holder_name }}
+                </div>
+                <div class="sub">expired {{ lease.expires_at }} UTC · not released</div>
                 {% else %}
                 <span class="v">unclaimed</span>
-                <div class="sub">no assignee</div>
+                <div class="sub">no lease</div>
+                {% endif %}
+            </div>
+            <div>
+                <span class="k">Assignee</span>
+                {% if issue.assignee_name %}
+                <span class="v">{{ issue.assignee_name }}</span>
+                <div class="sub">{{ "agent" if issue.assignee_is_agent else "human" }} assignee · accountable owner</div>
+                {% else %}
+                <span class="v">unassigned</span>
+                <div class="sub">no accountable owner</div>
                 {% endif %}
             </div>
             <div>

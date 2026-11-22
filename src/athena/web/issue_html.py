@@ -20,6 +20,7 @@ from athena.aegis import (
     dependencies,
     issue_commands,
     issues,
+    leases,
     projects,
     rollups,
     sprints,
@@ -146,6 +147,16 @@ def render_issue_detail(
         "users": users.list_users(conn),
         "contributors": contributors.list_contributors(conn, issue_id),
         "open_claim_handoff": claim_handoffs.get_open_handoff(conn, issue_id),
+        # The Claim card reads the lease, never the assignee: the same row
+        # GET /issues/{id}/lease serves (expired rows included, active=False, so
+        # a lapsed lease still names its last holder). Gated by the same
+        # visibility check that read applies, so the card can never show a
+        # holder to a viewer the REST read would answer 404.
+        "lease": (
+            leases.get_lease(conn, issue_id)
+            if access.can_see_project_or_backlog(conn, user, issue["project_id"])
+            else None
+        ),
         "issue_labels": labels.labels_for_issue(conn, issue_id),
         "all_labels": labels.list_labels(conn),
         "all_projects": visible_projects,
