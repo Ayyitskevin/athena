@@ -68,7 +68,9 @@ def test_queue_materializes_and_parses_only_fixed_limit_despite_history_growth(
         return len(statements)
 
     first_count = measure()
-    other = projects.create_project(conn, name="Other", key="OTH", created_by=1)
+    other = projects.create_project(
+        conn, name="Other", key="OTH", created_by=1, commit=True
+    )
     for _ in range(30):
         submit(conn, issue(conn, other))
     # Unselected report history must not be eagerly parsed either.
@@ -89,8 +91,8 @@ def test_read_is_pure_and_excerpts_do_not_leak_full_names_or_raw_report(board):
         unfinished=["PRIVATE EVIDENCE VALUE"],
     )
     long = "x" * 10_000
-    issues.update_issue(conn, build["id"], title=long, status="z" * 300)
-    issues.update_issue(conn, check["id"], title=long)
+    issues.update_issue(conn, build["id"], title=long, status="z" * 300, commit=True)
+    issues.update_issue(conn, check["id"], title=long, commit=True)
     conn.execute("UPDATE users SET name=? WHERE id IN (2,3)", (long,))
     conn.execute("UPDATE projects SET name=? WHERE id=?", (long, project["id"]))
     conn.commit()
@@ -117,9 +119,11 @@ def test_latest_review_current_root_visibility_required_after_move(board):
     build, check = issue(conn, project), issue(conn, project, assignee=3)
     candidate = submit(conn, build)
     review(conn, check, candidate["candidate_id"], verdict="PASS")
-    hidden = projects.create_project(conn, name="Hidden", key="HID", created_by=1)
+    hidden = projects.create_project(
+        conn, name="Hidden", key="HID", created_by=1, commit=True
+    )
     private(conn, hidden)
-    issues.set_project(conn, check["id"], hidden["id"])
+    issues.set_project(conn, check["id"], hidden["id"], commit=True)
     assert queue(conn, project)["items"][0]["latest_review"] is None
     private(conn, hidden, 2)
     assert queue(conn, project)["items"][0]["review_state"] == "reported_pass"

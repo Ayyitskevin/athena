@@ -108,6 +108,7 @@ def test_every_route_has_an_explicit_auth_or_non_actor_boundary(tmp_path, closed
     app = _seeded_app(tmp_path, "route_inventory.db")
     intentional_non_actor_boundaries = {
         (frozenset({"GET", "HEAD"}), "/openapi.json"),
+        (frozenset({"GET", "HEAD"}), "/openapi-agent.json"),
         (frozenset({"GET"}), "/healthz"),
         (frozenset({"GET"}), "/readyz"),
         (frozenset({"GET"}), "/version"),
@@ -264,6 +265,7 @@ def test_framework_html_docs_require_a_browser_session(tmp_path, closed):
         assert client.get("/healthz").status_code == 200
         assert client.get("/readyz").status_code == 200
         assert client.get("/openapi.json").status_code == 200
+        assert client.get("/openapi-agent.json").status_code == 200
 
         signed_in = client.post(
             "/login",
@@ -359,7 +361,9 @@ def test_a_revoked_bearer_does_not_open_the_browser_surface(tmp_path, closed):
         minted = token_commands.mint_token(
             conn, actor_id=admin["id"], name="doomed", scopes=[tokens.READ_SCOPE]
         )
-        tokens.revoke_token(conn, user_id=admin["id"], token_id=minted["id"])
+        tokens.revoke_token(
+            conn, user_id=admin["id"], token_id=minted["id"], commit=True
+        )
         conn.commit()
     finally:
         conn.close()
@@ -421,7 +425,7 @@ def test_a_paused_bearer_does_not_open_the_browser_surface(tmp_path, closed):
         minted = token_commands.mint_token(
             conn, actor_id=admin["id"], name="paused", scopes=[tokens.READ_SCOPE]
         )
-        users.set_paused(conn, user_id=admin["id"], paused=True)
+        users.set_paused(conn, user_id=admin["id"], paused=True, commit=True)
         conn.commit()
     finally:
         conn.close()
@@ -613,11 +617,15 @@ def test_default_visibility_private_makes_new_containers_born_private(
     conn = db.connect(tmp_path / "born.db")
     db.migrate(conn)
     try:
-        owner = users.create_user(conn, email="o@e.com", name="O", role="admin")
-        project = projects.create_project(
-            conn, name="P", key="P", created_by=owner["id"]
+        owner = users.create_user(
+            conn, email="o@e.com", name="O", role="admin", commit=True
         )
-        space = spaces.create_space(conn, key="S", name="S", created_by=owner["id"])
+        project = projects.create_project(
+            conn, name="P", key="P", created_by=owner["id"], commit=True
+        )
+        space = spaces.create_space(
+            conn, key="S", name="S", created_by=owner["id"], commit=True
+        )
         assert project["visibility"] == "private"
         assert (
             conn.execute(
@@ -635,9 +643,11 @@ def test_containers_are_born_public_by_default(tmp_path):
     conn = db.connect(tmp_path / "public.db")
     db.migrate(conn)
     try:
-        owner = users.create_user(conn, email="o@e.com", name="O", role="admin")
+        owner = users.create_user(
+            conn, email="o@e.com", name="O", role="admin", commit=True
+        )
         project = projects.create_project(
-            conn, name="P", key="P", created_by=owner["id"]
+            conn, name="P", key="P", created_by=owner["id"], commit=True
         )
         assert project["visibility"] == "public"
     finally:

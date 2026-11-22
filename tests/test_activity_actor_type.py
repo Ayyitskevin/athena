@@ -51,8 +51,12 @@ def _two_actors_acting(client):
 def test_list_activity_actor_type_lens(tmp_path):
     conn = _migrated_conn(tmp_path / "lens.db")
     _seed_actors(conn)
-    activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=1)
-    activity.record(conn, actor_id=2, verb="created", target_kind="issue", target_id=2)
+    activity.record(
+        conn, actor_id=1, verb="created", target_kind="issue", target_id=1, commit=True
+    )
+    activity.record(
+        conn, actor_id=2, verb="created", target_kind="issue", target_id=2, commit=True
+    )
 
     agents = activity.list_activity(conn, actor_is_agent=True)
     assert [r["actor_name"] for r in agents] == ["Bot"]
@@ -70,9 +74,16 @@ def test_actor_type_lens_composes_with_other_filters(tmp_path):
     # narrow correctly, not override or get overridden.
     conn = _migrated_conn(tmp_path / "compose.db")
     _seed_actors(conn)
-    activity.record(conn, actor_id=2, verb="created", target_kind="issue", target_id=2)
     activity.record(
-        conn, actor_id=2, verb="commented", target_kind="issue", target_id=9
+        conn, actor_id=2, verb="created", target_kind="issue", target_id=2, commit=True
+    )
+    activity.record(
+        conn,
+        actor_id=2,
+        verb="commented",
+        target_kind="issue",
+        target_id=9,
+        commit=True,
     )
     rows = activity.list_activity(
         conn, actor_is_agent=True, target_kind="issue", target_id=2

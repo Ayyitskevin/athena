@@ -101,7 +101,7 @@ def revoke_other_sessions(
     user_id: int,
     keep_raw: str | None,
     *,
-    commit: bool = True,
+    commit: bool,
 ) -> int:
     """Delete every OTHER session of a user, keeping only the one `keep_raw` names.
     Called after a password change so an older or stolen cookie can't outlive the
@@ -120,9 +120,7 @@ def revoke_other_sessions(
     return cur.rowcount
 
 
-def revoke_all_sessions(
-    conn: sqlite3.Connection, user_id: int, *, commit: bool = True
-) -> int:
+def revoke_all_sessions(conn: sqlite3.Connection, user_id: int, *, commit: bool) -> int:
     """Delete every session of a user, forcing a fresh login everywhere. The hard
     lockout half of offboarding: unlike revoke_other_sessions it keeps NO cookie
     alive, so the target's browser access ends now rather than after SESSION_TTL_DAYS.

@@ -348,25 +348,29 @@ def test_schedule_health_states_and_progress_are_visible(tmp_path):
                 name="future-schedule",
                 schedule_at="2099-01-01T00:00:00Z",
                 **common,
+                commit=True,
             )
             disabled = automation.create_rule(
                 conn,
                 name="disabled-schedule",
                 schedule_at="2099-01-02T00:00:00Z",
                 **common,
+                commit=True,
             )
-            automation.set_enabled(conn, disabled["id"], False)
+            automation.set_enabled(conn, disabled["id"], False, commit=True)
             automation.create_rule(
                 conn,
                 name="overdue-schedule",
                 schedule_at="2000-01-01T00:00:00Z",
                 **common,
+                commit=True,
             )
             failing = automation.create_rule(
                 conn,
                 name="failing-schedule",
                 schedule_at="2099-01-03T00:00:00Z",
                 **common,
+                commit=True,
             )
             conn.execute(
                 "UPDATE automation_rules SET last_scheduled_for = ?, "

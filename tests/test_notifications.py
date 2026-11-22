@@ -37,8 +37,8 @@ def _make_user2(client):
 
 def test_watch_is_idempotent(tmp_path):
     conn = _conn(tmp_path / "w.db")
-    notifications.watch(conn, 1, "issue", 5)
-    notifications.watch(conn, 1, "issue", 5)
+    notifications.watch(conn, 1, "issue", 5, commit=True)
+    notifications.watch(conn, 1, "issue", 5, commit=True)
     assert notifications.is_watching(conn, 1, "issue", 5)
     assert notifications.unwatch(conn, 1, "issue", 5) is True
     assert notifications.is_watching(conn, 1, "issue", 5) is False
@@ -47,10 +47,15 @@ def test_watch_is_idempotent(tmp_path):
 
 def test_event_notifies_watchers_except_actor(tmp_path):
     conn = _conn(tmp_path / "n.db")
-    notifications.watch(conn, 1, "issue", 5)  # actor, also watching
-    notifications.watch(conn, 2, "issue", 5)  # a watcher
+    notifications.watch(conn, 1, "issue", 5, commit=True)  # actor, also watching
+    notifications.watch(conn, 2, "issue", 5, commit=True)  # a watcher
     activity.record(
-        conn, actor_id=1, verb="changed_status", target_kind="issue", target_id=5
+        conn,
+        actor_id=1,
+        verb="changed_status",
+        target_kind="issue",
+        target_id=5,
+        commit=True,
     )
     # The watcher hears about it; the actor does not (even though they watch).
     assert notifications.unread_count(conn, 2) == 1
@@ -59,9 +64,13 @@ def test_event_notifies_watchers_except_actor(tmp_path):
 
 def test_mark_read_and_read_all(tmp_path):
     conn = _conn(tmp_path / "r.db")
-    notifications.watch(conn, 2, "issue", 5)
-    activity.record(conn, actor_id=1, verb="a", target_kind="issue", target_id=5)
-    activity.record(conn, actor_id=1, verb="b", target_kind="issue", target_id=5)
+    notifications.watch(conn, 2, "issue", 5, commit=True)
+    activity.record(
+        conn, actor_id=1, verb="a", target_kind="issue", target_id=5, commit=True
+    )
+    activity.record(
+        conn, actor_id=1, verb="b", target_kind="issue", target_id=5, commit=True
+    )
     inbox = notifications.list_notifications(conn, 2)
     assert len(inbox) == 2 and notifications.unread_count(conn, 2) == 2
     assert notifications.mark_read(conn, 2, inbox[0]["id"]) is True

@@ -128,7 +128,9 @@ def test_superseded_target_is_on_held_reviewers_desk_until_release(board):
 
 def test_hidden_newest_fulfillment_has_same_status_and_counts_as_no_fulfillment(board):
     conn, _, public = board
-    other = projects.create_project(conn, name="Temporary", key="TEMP", created_by=1)
+    other = projects.create_project(
+        conn, name="Temporary", key="TEMP", created_by=1, commit=True
+    )
     build, check = issue(conn, public), issue(conn, public, assignee=3)
     candidate = submit(conn, build)
     request(conn, check, candidate)
@@ -145,10 +147,10 @@ def test_hidden_newest_fulfillment_has_same_status_and_counts_as_no_fulfillment(
     review(conn, check, candidate["candidate_id"], verdict="PASS")
     assert desk_group(conn) is None
     for item in (build, check):
-        issues.set_project(conn, item["id"], other["id"])
+        issues.set_project(conn, item["id"], other["id"], commit=True)
     review(conn, check, candidate["candidate_id"], verdict="HOLD")
     for item in (build, check):
-        issues.set_project(conn, item["id"], public["id"])
+        issues.set_project(conn, item["id"], public["id"], commit=True)
     private(conn, other)
     assert projections() == without_completion
     assert context(conn, check, who=1)["review_request"]["status"] == "fulfilled"
@@ -159,22 +161,24 @@ def test_hidden_newest_fulfillment_has_same_status_and_counts_as_no_fulfillment(
 )
 def test_missing_visibility_omits_request_without_counts(board, hidden):
     conn, _, public = board
-    other = projects.create_project(conn, name="Other", key="OTH", created_by=1)
+    other = projects.create_project(
+        conn, name="Other", key="OTH", created_by=1, commit=True
+    )
     origin = other if hidden == "candidate_event" else public
     build, check = issue(conn, origin), issue(conn, public, assignee=3)
     candidate = submit(conn, build)
     if hidden == "candidate_event":
-        issues.set_project(conn, build["id"], public["id"])
+        issues.set_project(conn, build["id"], public["id"], commit=True)
     if hidden == "request_event":
         for item in (build, check):
-            issues.set_project(conn, item["id"], other["id"])
+            issues.set_project(conn, item["id"], other["id"], commit=True)
     request(conn, check, candidate)
     if hidden == "request_event":
         for item in (build, check):
-            issues.set_project(conn, item["id"], public["id"])
+            issues.set_project(conn, item["id"], public["id"], commit=True)
     if hidden in ("source_root", "review_root"):
         item = build if hidden == "source_root" else check
-        issues.set_project(conn, item["id"], other["id"])
+        issues.set_project(conn, item["id"], other["id"], commit=True)
     private(conn, other)
     assert desk_group(conn) is None
     packet = queue(conn, public, who=3)
@@ -186,14 +190,16 @@ def test_missing_visibility_omits_request_without_counts(board, hidden):
 
 def test_hidden_successor_and_hidden_latest_request_never_fall_back(board):
     conn, _, public = board
-    other = projects.create_project(conn, name="Other", key="OTH", created_by=1)
+    other = projects.create_project(
+        conn, name="Other", key="OTH", created_by=1, commit=True
+    )
     build, check = issue(conn, public), issue(conn, public, assignee=3)
     first = submit(conn, build)
     request(conn, check, first)
     held = claim(conn, check, 3)
-    issues.set_project(conn, build["id"], other["id"])
+    issues.set_project(conn, build["id"], other["id"], commit=True)
     second = submit(conn, build, first["candidate_id"], "b" * 40)
-    issues.set_project(conn, build["id"], public["id"])
+    issues.set_project(conn, build["id"], public["id"], commit=True)
     private(conn, other)
     assert desk_group(conn) is None
     assert "review_request" not in context(conn, check)
@@ -201,12 +207,14 @@ def test_hidden_successor_and_hidden_latest_request_never_fall_back(board):
     complete(conn, check, held, 3)
     # Make the successor visible but keep the new request's own event hidden.
     private(conn, other, 3)
-    third = projects.create_project(conn, name="Third", key="THR", created_by=1)
+    third = projects.create_project(
+        conn, name="Third", key="THR", created_by=1, commit=True
+    )
     for item in (build, check):
-        issues.set_project(conn, item["id"], third["id"])
+        issues.set_project(conn, item["id"], third["id"], commit=True)
     request(conn, check, second)
     for item in (build, check):
-        issues.set_project(conn, item["id"], public["id"])
+        issues.set_project(conn, item["id"], public["id"], commit=True)
     private(conn, third)
     assert queue_group(conn, public) is None
     assert desk_group(conn) is None
@@ -219,7 +227,9 @@ def test_hidden_successor_and_hidden_latest_request_never_fall_back(board):
 
 def test_limit_applies_after_visibility_and_desk_relevance(board, monkeypatch):
     conn, _, public = board
-    hidden = projects.create_project(conn, name="Other", key="OTH", created_by=1)
+    hidden = projects.create_project(
+        conn, name="Other", key="OTH", created_by=1, commit=True
+    )
     build = issue(conn, public)
     candidate = submit(conn, build)
     visible_ids = []
@@ -228,7 +238,7 @@ def test_limit_applies_after_visibility_and_desk_relevance(board, monkeypatch):
         visible_ids.append(request(conn, check, candidate)["request_id"])
     hidden_check = issue(conn, public, assignee=3)
     request(conn, hidden_check, candidate)
-    issues.set_project(conn, hidden_check["id"], hidden["id"])
+    issues.set_project(conn, hidden_check["id"], hidden["id"], commit=True)
     private(conn, hidden)
     # This one stays in the queue, but it must not displace a desk row.
     answered_check = issue(conn, public, assignee=3)

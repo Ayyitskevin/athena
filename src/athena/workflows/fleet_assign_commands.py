@@ -135,6 +135,7 @@ def _record_radio_receipt(
             target_kind="issue",
             target_id=issue_id,
             detail=f"{issue_key} radioed to {seat_name} — {permalink}",
+            commit=True,
         )
     except sqlite3.Error as exc:  # reported to the caller, never raised into the assign
         return {"status": "failed", "detail": f"receipt not recorded: {exc}"}

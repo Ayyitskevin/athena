@@ -43,6 +43,7 @@ def test_native_event_restrictions_and_foreign_keys(board, invalid):
         else "",
         imported_at="2026-01-01" if invalid == "imported" else None,
         **({"issue_project_ids": [99999]} if invalid == "restricted" else {}),
+        commit=True,
     )
     sql = "INSERT INTO issue_review_requests(candidate_id,review_issue_id,reviewer_id,request_event_id) VALUES (?,?,?,?)"
     with pytest.raises(sqlite3.IntegrityError):
@@ -174,7 +175,7 @@ def test_populated_0082_upgrade_and_restored_snapshot(
             )
         conn.commit()
         project = projects.create_project(
-            conn, name="Retained", key="OLD", created_by=1
+            conn, name="Retained", key="OLD", created_by=1, commit=True
         )
         build, check = issue(conn, project), issue(conn, project, assignee=3)
         target = submit(conn, build)["candidate_id"]

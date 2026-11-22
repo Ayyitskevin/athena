@@ -38,27 +38,41 @@ def edge(kind, target_id, title):
 @pytest.mark.parametrize("size", [10, 100])
 @pytest.mark.parametrize("source_kind", ["issue", "page"])
 def test_each_size_reads_every_link_in_one_statement(conn, source_kind, size):
-    space = spaces.create_space(conn, key="DOC", name="Docs", created_by=1)
-    project = projects.create_project(conn, key="WRK", name="Work", created_by=1)
+    space = spaces.create_space(conn, key="DOC", name="Docs", created_by=1, commit=True)
+    project = projects.create_project(
+        conn, key="WRK", name="Work", created_by=1, commit=True
+    )
     issue_edges = []
     page_edges = []
     tokens = []
     for n in range(size // 2):
         issue = issues.create_issue(
-            conn, project_id=project["id"], title=f"Task {n}", body="", created_by=1
+            conn,
+            project_id=project["id"],
+            title=f"Task {n}",
+            body="",
+            created_by=1,
+            commit=True,
         )
         page = pages.create_page(
-            conn, space_id=space["id"], title=f"Doc {n}", created_by=1
+            conn, space_id=space["id"], title=f"Doc {n}", created_by=1, commit=True
         )
         issue_edges.append(edge("issue", issue["id"], issue["title"]))
         page_edges.append(edge("page", page["id"], page["title"]))
         tokens.extend([f"[[issue:{issue['id']}]]", f"[[page:{page['id']}]]"])
     body = " ".join(reversed(tokens))
     if source_kind == "issue":
-        source = issues.create_issue(conn, title="Source", body=body, created_by=1)
+        source = issues.create_issue(
+            conn, title="Source", body=body, created_by=1, commit=True
+        )
     else:
         source = pages.create_page(
-            conn, space_id=space["id"], title="Source", body=body, created_by=1
+            conn,
+            space_id=space["id"],
+            title="Source",
+            body=body,
+            created_by=1,
+            commit=True,
         )
 
     statements = []
@@ -75,25 +89,36 @@ def test_each_size_reads_every_link_in_one_statement(conn, source_kind, size):
 
 
 def test_current_targets_are_sorted_and_filtered_for_each_reader(conn):
-    space = spaces.create_space(conn, key="PUB", name="Docs", created_by=1)["id"]
-    private_space = spaces.create_space(conn, key="PVT", name="Drafts", created_by=1)[
-        "id"
-    ]
-    project = projects.create_project(conn, key="WRK", name="Work", created_by=1)["id"]
-    spaces.set_visibility(conn, private_space, "private")
-    projects.set_visibility(conn, project, "private")
-    access.add_project_member(conn, project, user_id=2, added_by=1)
-    access.add_space_member(conn, private_space, user_id=3, added_by=1)
-
-    backlog = issues.create_issue(conn, title="Task draft", body="", created_by=1)["id"]
-    restricted = issues.create_issue(
-        conn, project_id=project, title="Private task", body="", created_by=1
+    space = spaces.create_space(
+        conn, key="PUB", name="Docs", created_by=1, commit=True
     )["id"]
-    public = pages.create_page(conn, space_id=space, title="Doc draft", created_by=1)[
-        "id"
-    ]
+    private_space = spaces.create_space(
+        conn, key="PVT", name="Drafts", created_by=1, commit=True
+    )["id"]
+    project = projects.create_project(
+        conn, key="WRK", name="Work", created_by=1, commit=True
+    )["id"]
+    spaces.set_visibility(conn, private_space, "private", commit=True)
+    projects.set_visibility(conn, project, "private", commit=True)
+    access.add_project_member(conn, project, user_id=2, added_by=1, commit=True)
+    access.add_space_member(conn, private_space, user_id=3, added_by=1, commit=True)
+
+    backlog = issues.create_issue(
+        conn, title="Task draft", body="", created_by=1, commit=True
+    )["id"]
+    restricted = issues.create_issue(
+        conn,
+        project_id=project,
+        title="Private task",
+        body="",
+        created_by=1,
+        commit=True,
+    )["id"]
+    public = pages.create_page(
+        conn, space_id=space, title="Doc draft", created_by=1, commit=True
+    )["id"]
     draft = pages.create_page(
-        conn, space_id=private_space, title="Private doc", created_by=1
+        conn, space_id=private_space, title="Private doc", created_by=1, commit=True
     )["id"]
     assert (backlog, restricted) == (public, draft)  # Distinct targets share IDs.
     source = pages.create_page(
@@ -105,20 +130,23 @@ def test_current_targets_are_sorted_and_filtered_for_each_reader(conn):
             f"[[issue:{backlog}]] [[page:999]] [[page:{public}]]"
         ),
         created_by=1,
+        commit=True,
     )["id"]
     # The same ID under another source kind, and another ID under this source kind.
     decoy_body = f"[[page:{source}]]"
     assert (
-        issues.create_issue(conn, title="Other", body=decoy_body, created_by=1)["id"]
+        issues.create_issue(
+            conn, title="Other", body=decoy_body, created_by=1, commit=True
+        )["id"]
         == source
     )
     pages.create_page(
-        conn, space_id=space, title="Other", body=decoy_body, created_by=1
+        conn, space_id=space, title="Other", body=decoy_body, created_by=1, commit=True
     )
-    issues.update_issue(conn, backlog, title="Archived task")
-    pages.update_page(conn, public, editor_id=1, title="Archived doc")
-    issues.set_archived(conn, backlog, True)
-    pages.set_archived(conn, public, True)
+    issues.update_issue(conn, backlog, title="Archived task", commit=True)
+    pages.update_page(conn, public, editor_id=1, title="Archived doc", commit=True)
+    issues.set_archived(conn, backlog, True, commit=True)
+    pages.set_archived(conn, public, True, commit=True)
 
     task = edge("issue", backlog, "Archived task")
     private_task = edge("issue", restricted, "Private task")

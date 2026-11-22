@@ -106,8 +106,8 @@ def test_feed_gates_issue_page_and_space_events(tmp_path):
             assert {("issue", hi), ("page", hp), ("space", ps)} <= seen
 
         # Membership opens the private project + space events to the outsider.
-        access.add_project_member(conn, pp, 3, added_by=2)
-        access.add_space_member(conn, ps, 3, added_by=2)
+        access.add_project_member(conn, pp, 3, added_by=2, commit=True)
+        access.add_space_member(conn, ps, 3, added_by=2, commit=True)
         opened = _feed_targets(client, H_OUTSIDER)
         assert {("issue", hi), ("page", hp), ("space", ps)} <= opened
 
@@ -291,7 +291,7 @@ def test_inbox_filters_notifications_on_hidden_targets(tmp_path):
         )
 
         # Granting membership reveals the still-unread notification and counts it.
-        access.add_project_member(conn, pp, 3, added_by=2)
+        access.add_project_member(conn, pp, 3, added_by=2, commit=True)
         assert iid in inbox_targets()
         assert badge() >= 1
 
@@ -322,7 +322,7 @@ def test_inbox_gates_page_notifications_by_space(tmp_path):
             n["target_id"]
             for n in client.get("/notifications", headers=H_OUTSIDER).json()
         }
-        access.add_space_member(conn, ps, 3, added_by=2)
+        access.add_space_member(conn, ps, 3, added_by=2, commit=True)
         assert pid in {
             n["target_id"]
             for n in client.get("/notifications", headers=H_OUTSIDER).json()
@@ -346,6 +346,7 @@ def test_orphan_target_events_hidden_from_non_admin(tmp_path):
                 target_kind=kind,
                 target_id=99999,
                 detail="orphan",
+                commit=True,
             )
         conn.close()
 
@@ -382,7 +383,7 @@ def test_events_stream_gates_by_actor(tmp_path):
         out = stream_targets(H_OUTSIDER)
         assert ("issue", pi) in out and ("issue", hi) not in out
         assert ("issue", hi) in stream_targets(H_ADMIN)
-        access.add_project_member(conn, pp, 3, added_by=2)
+        access.add_project_member(conn, pp, 3, added_by=2, commit=True)
         assert ("issue", hi) in stream_targets(H_OUTSIDER)
 
 
@@ -609,7 +610,7 @@ def test_issue_events_keep_every_event_time_project_scope(tmp_path):
         assert history.status_code == 403
         assert "medium → high" not in history.text
 
-        access.add_project_member(conn, project_a, 3, added_by=2)
+        access.add_project_member(conn, project_a, 3, added_by=2, commit=True)
         assert {
             ("created", ""),
             ("changed_priority", "medium → high"),
@@ -624,7 +625,7 @@ def test_issue_events_keep_every_event_time_project_scope(tmp_path):
             == 403
         )
 
-        access.add_project_member(conn, project_b, 3, added_by=2)
+        access.add_project_member(conn, project_b, 3, added_by=2, commit=True)
         assert outsider_facts() == set(scope_by_fact)
         reopened = client.get(f"/aegis/issues/{issue_id}/history")
         assert reopened.status_code == 200
@@ -666,6 +667,7 @@ def test_raw_issue_activity_fails_closed_while_native_events_are_scoped(tmp_path
             target_kind="issue",
             target_id=issue_id,
             detail="scoped",
+            commit=True,
         )["id"]
 
         flags = {
@@ -749,6 +751,7 @@ def test_activity_scope_and_event_roll_back_together(tmp_path, monkeypatch):
             verb="scope_probe",
             target_kind="issue",
             target_id=issue_id,
+            commit=True,
         )
 
     assert (
@@ -775,7 +778,7 @@ def test_migration_keeps_preexisting_issue_events_restricted(tmp_path):
         conn.executescript(path.read_text())
     assert migration is not None
 
-    user = users.create_user(conn, email="owner@e.com", name="Owner")
+    user = users.create_user(conn, email="owner@e.com", name="Owner", commit=True)
     project_id = conn.execute(
         "INSERT INTO projects (name, key, description, created_by) "
         "VALUES ('Legacy', 'LEG', '', ?)",
@@ -788,6 +791,7 @@ def test_migration_keeps_preexisting_issue_events_restricted(tmp_path):
         body="",
         created_by=user["id"],
         project_id=project_id,
+        commit=True,
     )
     legacy_id = conn.execute(
         "INSERT INTO activity "
@@ -811,6 +815,7 @@ def test_migration_keeps_preexisting_issue_events_restricted(tmp_path):
         verb="native_event",
         target_kind="issue",
         target_id=issue["id"],
+        commit=True,
     )["id"]
 
     assert {
@@ -1069,6 +1074,7 @@ def test_cross_project_parent_and_sprint_details_use_related_scopes(tmp_path):
             issue_id=child["id"],
             before=None,
             after=parent["id"],
+            commit=True,
         )
         issue_activity.record_sprint_change(
             conn,
@@ -1076,6 +1082,7 @@ def test_cross_project_parent_and_sprint_details_use_related_scopes(tmp_path):
             issue_id=child["id"],
             before=sprint["id"],
             after=None,
+            commit=True,
         )
         related_rows = conn.execute(
             "SELECT id, verb FROM activity "
@@ -1105,7 +1112,7 @@ def test_cross_project_parent_and_sprint_details_use_related_scopes(tmp_path):
             headers=H_OUTSIDER,
         ).json()
         assert [(row["verb"], row["detail"]) for row in outsider] == [("created", "")]
-        access.add_project_member(conn, private_project, 3, added_by=2)
+        access.add_project_member(conn, private_project, 3, added_by=2, commit=True)
         opened = {
             (row["verb"], row["detail"])
             for row in client.get(

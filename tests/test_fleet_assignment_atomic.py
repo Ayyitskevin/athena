@@ -19,7 +19,7 @@ def transfer(tmp_path):
     with closing(db.connect(path)) as conn:
         db.migrate(conn)
         owner = users.create_user(
-            conn, email="owner@example.invalid", name="Owner", role="admin"
+            conn, email="owner@example.invalid", name="Owner", role="admin", commit=True
         )
         member = users.create_user(
             conn,
@@ -27,12 +27,13 @@ def transfer(tmp_path):
             name="Member",
             password="local-test-password",
             role="member",
+            commit=True,
         )
         recipient = users.create_user(
-            conn, email="grok@agents.local", name="Grok", is_agent=True
+            conn, email="grok@agents.local", name="Grok", is_agent=True, commit=True
         )
         project = projects.create_project(
-            conn, key="LAB", name="Lab", created_by=owner["id"]
+            conn, key="LAB", name="Lab", created_by=owner["id"], commit=True
         )
         issue = issue_commands.create_issue(
             conn, actor=owner, project_id=project["id"], title="Transfer"

@@ -50,7 +50,12 @@ def test_record_stamps_ambient_run_id_within_scope(tmp_path):
     token = run_context.set_run_id("run-abc")
     try:
         tagged = activity.record(
-            conn, actor_id=1, verb="created", target_kind="issue", target_id=1
+            conn,
+            actor_id=1,
+            verb="created",
+            target_kind="issue",
+            target_id=1,
+            commit=True,
         )
     finally:
         run_context.reset_run_id(token)
@@ -58,7 +63,12 @@ def test_record_stamps_ambient_run_id_within_scope(tmp_path):
     assert tagged["run_id"] == "run-abc"
     # ...and untagged once it's reset — the id never bleeds past its scope.
     untagged = activity.record(
-        conn, actor_id=1, verb="commented", target_kind="issue", target_id=1
+        conn,
+        actor_id=1,
+        verb="commented",
+        target_kind="issue",
+        target_id=1,
+        commit=True,
     )
     assert untagged["run_id"] is None
     conn.close()
@@ -71,7 +81,12 @@ def test_list_filters_by_run_id(tmp_path):
         token = run_context.set_run_id(run)
         try:
             activity.record(
-                conn, actor_id=1, verb=verb, target_kind="issue", target_id=1
+                conn,
+                actor_id=1,
+                verb=verb,
+                target_kind="issue",
+                target_id=1,
+                commit=True,
             )
         finally:
             run_context.reset_run_id(token)

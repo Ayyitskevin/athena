@@ -27,9 +27,7 @@ def _default_rows() -> list[dict]:
     ]
 
 
-def seed_defaults(
-    conn: sqlite3.Connection, project_id: int, *, commit: bool = True
-) -> None:
+def seed_defaults(conn: sqlite3.Connection, project_id: int, *, commit: bool) -> None:
     """Give a brand-new project the default status set. Called from project create.
     ``commit=False`` lets the create command fold the seed into its own
     transaction, so a project and its starting statuses land or roll back together."""
@@ -190,7 +188,7 @@ def add_status(
     name: str,
     category: str,
     *,
-    commit: bool = True,
+    commit: bool,
 ) -> str | None:
     """Append a status to a project. Returns None on success, else one of the
     REASON_* constants the caller turns into an error (same predicate shape as
@@ -219,7 +217,7 @@ def add_status(
 
 
 def remove_status(
-    conn: sqlite3.Connection, project_id: int, name: str, *, commit: bool = True
+    conn: sqlite3.Connection, project_id: int, name: str, *, commit: bool
 ) -> str | None:
     """Remove a status from a project. Refuses to remove the last one, or one that
     issues in the project still use (reassign them first). Returns None on success,

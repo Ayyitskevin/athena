@@ -7,10 +7,20 @@ from __future__ import annotations
 from typing import Literal
 
 from athena.aegis.review_models import ReviewCandidateId
-from athena.core import dispatch, run_controls, security_events
+from athena.core import dispatch, run_controls, security_events, tokens
 from athena.mcp import results
 from athena.mcp.results import ListResult, listing, window
 from athena.mcp.server import (
+    ADDS,
+    ANY_WRITE_SCOPE,
+    CONDUCTOR,
+    ERASES,
+    FULL_ONLY,
+    KNOWLEDGE,
+    READS,
+    READ_ONLY,
+    SEAT,
+    SETS,
     DispatchIssueId,
     DispatchLimit,
     IdempotencyKey,
@@ -36,7 +46,8 @@ APPROVAL_LIST_CAP = 200
 def register_admin_tools(tool, mutation_tool, client) -> None:
     # --- agent control (admin) ---------------------------------------------
 
-    @mutation_tool
+    # The same email (or name-derived email) is refused.
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def onboard_agent(
         name: str,
         scopes: list[str],
@@ -52,7 +63,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             name=name, email=email, scopes=scopes, token_name=token_name
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def pause_agent(user_id: int) -> dict:
         """Admin: PAUSE user_id — every authenticated action it attempts is
         refused until resumed, but nothing is destroyed (tokens and sessions
@@ -60,27 +71,27 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         agent looks off-course. Audited. Requires an admin token."""
         return client.set_user_paused(user_id, True)
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def resume_agent(user_id: int) -> dict:
         """Admin: RESUME a paused user_id — restores the account exactly as it
         was before the pause. Audited. Requires an admin token."""
         return client.set_user_paused(user_id, False)
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=ERASES)
     def revoke_agent_tokens(user_id: int) -> dict:
         """Admin kill switch: revoke EVERY live API token held by user_id — the
         lever to immediately stop a compromised or runaway agent. Idempotent and
         audited; returns {user_id, revoked_token_count}. Requires an admin token."""
         return client.revoke_agent_tokens(user_id)
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=ERASES)
     def offboard_agent(user_id: int) -> dict:
         """Admin one-click offboard: demote user_id to viewer, revoke every session,
         and revoke every token — one audited lockout. Refuses to strip the last
         admin. Returns the counts revoked. Requires an admin token."""
         return client.offboard_user(user_id)
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=ADDS)
     def dispatch_to_icarus(
         issue_id: DispatchIssueId,
         repo: str,
@@ -113,7 +124,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def list_dispatches(
         work_item_id: DispatchIssueId | None = None,
         state: str | None = None,
@@ -133,7 +144,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             cap=dispatch.MAX_LIST_LIMIT,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.DOCS_WRITE_SCOPE, profiles=KNOWLEDGE, hints=ADDS)
     def record_run_learning(
         issue_id: int,
         summary: str,
@@ -166,14 +177,14 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=KNOWLEDGE)
     def get_issue_runbook(issue_id: int) -> dict | None:
         """The issue's runbook page — accumulated learnings from earlier runs — or
         {found: false} when nobody has recorded one yet. Read it before starting work, and
         add to it with `record_run_learning` when you finish."""
         return client.get_issue_runbook(issue_id)
 
-    @tool
+    @tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=READS)
     def list_security_events(
         verb: str | None = None,
         since: str | None = None,
@@ -196,7 +207,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             cap=security_events.MAX_LIST_LIMIT,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=ADDS)
     def start_playbook(
         page_id: int,
         project_id: int | None = None,
@@ -228,7 +239,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=SEAT)
     def my_desk() -> dict:
         """START HERE. Your desk: who you are, what is asked of you, what you
         are holding, and what changed since you last looked.
@@ -260,7 +271,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             item["issue"] = results.summary(item["issue"])
         return desk
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def my_office() -> dict:
         """Your cubicle: active leases, declared paths, and a checkout branch hint.
         At most one active lease is workflow guidance, not a server quota. START HERE if you
@@ -275,7 +286,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         you up; it does not close the issue."""
         return client.my_office()
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=CONDUCTOR)
     def get_project_floor(project_id: int) -> dict:
         """A project's floor: every open issue is a chair. Occupied chairs
         have a sitting agent and optional fenced paths. Empty chairs still
@@ -283,7 +294,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         flag. RESERVES NOTHING."""
         return client.get_project_floor(project_id)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=CONDUCTOR)
     def get_project_brief(project_id: ProjectId, limit: ProjectBriefLimit = 5) -> dict:
         """A compact visible project snapshot: summary, active claims, blocker edges,
         awaiting-resume handoffs and latest native completion reports. limit is per
@@ -294,7 +305,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         recovery. See docs/CONDUCTOR_RECIPE.md for interpretation."""
         return client.get_project_brief(project_id, limit=limit)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=CONDUCTOR)
     def get_project_review_queue(
         project_id: ProjectId,
         limit: ProjectReviewQueueLimit = 5,
@@ -312,7 +323,9 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         for the exact candidate and bounded history. See docs/CONDUCTOR_RECIPE.md."""
         return client.get_project_review_queue(project_id, limit=limit, cursor=cursor)
 
-    @mutation_tool
+    # An acknowledgement moves a marker forward; what it acknowledges stays
+    # readable.
+    @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=SEAT, hints=SETS)
     def advance_desk_cursor(after_id: int) -> dict:
         """Record that you have handled every visible event up to `after_id`.
 
@@ -330,7 +343,9 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         id you can see) and the cursor does not move."""
         return client.advance_desk_cursor(after_id=after_id)
 
-    @tool
+    # An admin read: the route carries the admin dependency
+    # (core/activity_api.py).
+    @tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=READS)
     def activity_chain_status() -> dict:
         """Where the audit trail's hash chain stands (admin only).
 
@@ -342,7 +357,9 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         actually did off the record."""
         return client.activity_chain_status()
 
-    @tool
+    # An admin read: the route carries the admin dependency
+    # (core/activity_api.py).
+    @tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=READS)
     def verify_activity_chain(
         after_id: int | None = None,
         limit: int = 1000,
@@ -356,7 +373,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         WINDOW verified, not the whole trail."""
         return client.verify_activity_chain(after_id=after_id, limit=limit)
 
-    @tool
+    @tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=READS)
     def agent_answerability(agent_id: int | None = None) -> dict:
         """The per-agent ask-and-answer ledger (admin only).
 
@@ -369,7 +386,8 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         judge why. Narrow with agent_id."""
         return client.agent_answerability(agent_id=agent_id)
 
-    @mutation_tool
+    # Liveness: every call refreshes last-seen.
+    @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=FULL_ONLY, hints=ADDS)
     def worker_heartbeat(
         worker_key: str,
         node_label: str | None = None,
@@ -398,7 +416,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def list_workers(
         agent_id: int | None = None, limit: int = 100, offset: ListOffset = 0
     ) -> ListResult:
@@ -413,7 +431,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             cap=WORKER_LIST_CAP,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def request_worker_kill(
         worker_id: int,
         idempotency_key: IdempotencyKey | None = None,
@@ -428,7 +446,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         token."""
         return client.request_worker_kill(worker_id, idempotency_key=idempotency_key)
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def cancel_worker_kill(
         worker_id: int,
         idempotency_key: IdempotencyKey | None = None,
@@ -438,7 +456,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         admin token."""
         return client.cancel_worker_kill(worker_id, idempotency_key=idempotency_key)
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=ADDS)
     def create_run_control(
         run_id: RunId,
         kind: RunControlKind,
@@ -465,7 +483,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=SEAT)
     def list_run_controls(
         run_id: str | None = None,
         state: RunControlStateFilter | None = None,
@@ -487,12 +505,13 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             cap=run_controls.MAX_LIST_LIMIT,
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def get_run_control(control_id: RunControlId) -> dict:
         """One run control, for an admin or the agent it is addressed to."""
         return client.get_run_control(control_id)
 
-    @mutation_tool
+    # An acknowledgement moves a marker forward; the control stays readable.
+    @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=SEAT, hints=SETS)
     def acknowledge_run_control(
         control_id: RunControlId,
         idempotency_key: IdempotencyKey | None = None,
@@ -506,7 +525,8 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             control_id, idempotency_key=idempotency_key
         )
 
-    @mutation_tool
+    # A settled control refuses a repeat.
+    @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=SEAT, hints=SETS)
     def decline_run_control(
         control_id: RunControlId,
         reason: RunControlSummary,
@@ -518,7 +538,8 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             control_id, reason=reason, idempotency_key=idempotency_key
         )
 
-    @mutation_tool
+    # An acknowledgement moves a marker forward; the control stays readable.
+    @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=SEAT, hints=SETS)
     def complete_run_control(
         control_id: RunControlId,
         summary: RunControlSummary | None = None,
@@ -540,7 +561,8 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    # Inverses are reversible; a repeat is refused.
+    @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def undo_action(
         event_id: int,
         idempotency_key: IdempotencyKey | None = None,
@@ -562,7 +584,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         `recent_events(...)`."""
         return client.undo_action(event_id, idempotency_key=idempotency_key)
 
-    @tool
+    @tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=READS)
     def list_approvals(
         state: str | None = None, limit: int = 100, offset: ListOffset = 0
     ) -> ListResult:
@@ -576,7 +598,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             cap=APPROVAL_LIST_CAP,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def decide_approval(
         request_id: int,
         decision: str,
@@ -598,7 +620,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def set_approval_policy(
         user_id: int,
         action_kind: str,
@@ -613,7 +635,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             )
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def get_agent_budget(user_id: int) -> dict | None:
         """Read a user's durable action budget — how many metered writes it may
         make per fixed window, how many it has used, and how many remain — or
@@ -621,7 +643,8 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         anyone else; any actor may read its own. `whoami` carries yours already."""
         return client.get_agent_budget(user_id)
 
-    @mutation_tool
+    # Usage and window survive; each limit is audited.
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def set_agent_budget(
         user_id: int,
         window: str,
@@ -641,7 +664,8 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    # Destructive: drops the window's usage count.
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=ERASES)
     def clear_agent_budget(
         user_id: int, idempotency_key: IdempotencyKey | None = None
     ) -> dict:

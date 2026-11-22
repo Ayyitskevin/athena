@@ -75,6 +75,7 @@ def _record_with_run(conn, *, actor_id, run_id, parent_run_id=None, target_id=1)
             target_kind="issue",
             target_id=target_id,
             detail="open to done",
+            commit=True,
         )
     finally:
         run_context.reset_parent_run_id(parent_token)
@@ -132,25 +133,35 @@ def test_agents_admin_shows_tokens_access_assignments_and_activity(tmp_path):
                 user_id=agent["id"],
                 name="review-bot-ci",
                 scopes=[tokens.READ_SCOPE, tokens.ISSUE_WRITE_SCOPE],
+                commit=True,
             )
             old = tokens.create_token(
                 conn,
                 user_id=agent["id"],
                 name="old-review-bot",
                 scopes=[tokens.READ_SCOPE],
+                commit=True,
             )
-            assert tokens.revoke_token(conn, user_id=agent["id"], token_id=old["id"])
+            assert tokens.revoke_token(
+                conn, user_id=agent["id"], token_id=old["id"], commit=True
+            )
 
             project = projects.create_project(
-                conn, name="Launch", key="LAN", created_by=admin["id"]
+                conn, name="Launch", key="LAN", created_by=admin["id"], commit=True
             )
             space = spaces.create_space(
-                conn, key="KB", name="Knowledge Base", created_by=admin["id"]
+                conn,
+                key="KB",
+                name="Knowledge Base",
+                created_by=admin["id"],
+                commit=True,
             )
             assert access.add_project_member(
-                conn, project["id"], agent["id"], admin["id"]
+                conn, project["id"], agent["id"], admin["id"], commit=True
             )
-            assert access.add_space_member(conn, space["id"], agent["id"], admin["id"])
+            assert access.add_space_member(
+                conn, space["id"], agent["id"], admin["id"], commit=True
+            )
 
             issue = issues.create_issue(
                 conn,
@@ -158,9 +169,10 @@ def test_agents_admin_shows_tokens_access_assignments_and_activity(tmp_path):
                 body="",
                 created_by=admin["id"],
                 project_id=project["id"],
+                commit=True,
             )
             assert contributors.add_contributor(
-                conn, issue["id"], agent["id"], admin["id"]
+                conn, issue["id"], agent["id"], admin["id"], commit=True
             )
             activity.record(
                 conn,
@@ -169,6 +181,7 @@ def test_agents_admin_shows_tokens_access_assignments_and_activity(tmp_path):
                 target_kind="issue",
                 target_id=issue["id"],
                 detail="open to in_progress",
+                commit=True,
             )
         finally:
             conn.close()
@@ -212,9 +225,10 @@ def test_agents_admin_shows_token_posture_warnings(tmp_path):
                 user_id=no_live["id"],
                 name="revoked-only",
                 scopes=[tokens.READ_SCOPE],
+                commit=True,
             )
             assert tokens.revoke_token(
-                conn, user_id=no_live["id"], token_id=revoked["id"]
+                conn, user_id=no_live["id"], token_id=revoked["id"], commit=True
             )
 
             admin_token = tokens.create_token(
@@ -222,24 +236,28 @@ def test_agents_admin_shows_token_posture_warnings(tmp_path):
                 user_id=admin_bot["id"],
                 name="operator-admin",
                 scopes=[tokens.ADMIN_SCOPE],
+                commit=True,
             )
             tokens.create_token(
                 conn,
                 user_id=never_bot["id"],
                 name="never-used",
                 scopes=[tokens.READ_SCOPE],
+                commit=True,
             )
             stale_token = tokens.create_token(
                 conn,
                 user_id=stale_bot["id"],
                 name="stale-reader",
                 scopes=[tokens.READ_SCOPE],
+                commit=True,
             )
             fresh_token = tokens.create_token(
                 conn,
                 user_id=fresh_bot["id"],
                 name="fresh-reader",
                 scopes=[tokens.READ_SCOPE],
+                commit=True,
             )
             conn.execute(
                 "UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?",
@@ -310,7 +328,7 @@ def test_agent_run_health_rolls_up_tagged_and_heuristic_runs(tmp_path):
         conn = db.connect(db_path)
         try:
             issue = issues.create_issue(
-                conn, title="Replay me", body="", created_by=admin["id"]
+                conn, title="Replay me", body="", created_by=admin["id"], commit=True
             )
             _record_with_run(
                 conn,
@@ -332,6 +350,7 @@ def test_agent_run_health_rolls_up_tagged_and_heuristic_runs(tmp_path):
                 target_kind="issue",
                 target_id=issue["id"],
                 detail="heuristic follow-up",
+                commit=True,
             )
             _record_with_run(
                 conn,
@@ -429,7 +448,11 @@ def test_agent_run_health_surfaces_bounded_checkins_separately(tmp_path, monkeyp
         conn = db.connect(db_path)
         try:
             issue = issues.create_issue(
-                conn, title="Observed work", body="", created_by=admin["id"]
+                conn,
+                title="Observed work",
+                body="",
+                created_by=admin["id"],
+                commit=True,
             )
             _record_with_run(
                 conn,
@@ -625,6 +648,7 @@ def test_agent_run_health_shares_one_clock_and_wal_snapshot(tmp_path, monkeypatc
                 user_id=agent["id"],
                 name="snapshot writer",
                 scopes=(tokens.ISSUE_WRITE_SCOPE,),
+                commit=True,
             )
             actor = tokens.resolve_token(setup, token["token"])
             assert actor is not None

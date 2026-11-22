@@ -18,24 +18,7 @@ from fastapi.testclient import TestClient
 from athena.core import db
 from athena.main import create_app
 
-H1 = {"X-Athena-Actor": "1"}
-
-
-def _bootstrap(client):
-    client.post("/users", json={"email": "a@e.com", "name": "Ann", "password": "pw"})
-
-
-def _agent(client, email="sol@e.com"):
-    """Onboard an agent user with a scoped token; returns {user, token, ...}."""
-    return client.post(
-        "/users/onboard_agent",
-        json={
-            "email": email,
-            "name": email.split("@")[0],
-            "scopes": ["read", "issue:write"],
-        },
-        headers=H1,
-    ).json()
+from support import ADMIN, bearer, bootstrap, onboard_agent
 
 
 def _revision(db_file):
@@ -49,7 +32,7 @@ def _revision(db_file):
 
 def _set_paused(client, user_id, paused):
     response = client.put(
-        f"/users/{user_id}/paused", json={"paused": paused}, headers=H1
+        f"/users/{user_id}/paused", json={"paused": paused}, headers=ADMIN
     )
     assert response.status_code == 200
     return response
@@ -58,13 +41,10 @@ def _set_paused(client, user_id, paused):
 def test_paused_bearer_cannot_replay_and_resume_stays_fenced(tmp_path):
     db_file = tmp_path / "pause-replay.db"
     with TestClient(create_app(db_file)) as client:
-        _bootstrap(client)
-        onboarded = _agent(client)
+        bootstrap(client)
+        onboarded = onboard_agent(client)
         agent_id = onboarded["user"]["id"]
-        keyed = {
-            "Authorization": f"Bearer {onboarded['token']['token']}",
-            "Idempotency-Key": "before-pause",
-        }
+        keyed = {**bearer(onboarded), "Idempotency-Key": "before-pause"}
 
         first = client.post("/issues", json={"title": "created"}, headers=keyed)
         assert first.status_code == 201
@@ -89,7 +69,7 @@ def test_paused_bearer_cannot_replay_and_resume_stays_fenced(tmp_path):
         assert after_resume.json()["code"] == "idempotency_authorization_changed"
 
         # The fence never re-ran the mutation: exactly one issue exists.
-        issues = client.get("/issues", headers=H1).json()
+        issues = client.get("/issues", headers=ADMIN).json()
         assert [i["title"] for i in issues] == ["created"]
 
     conn = db.connect(db_file)
@@ -104,13 +84,10 @@ def test_paused_bearer_cannot_replay_and_resume_stays_fenced(tmp_path):
 def test_paused_keyed_request_claims_no_receipt(tmp_path):
     db_file = tmp_path / "pause-noclaim.db"
     with TestClient(create_app(db_file)) as client:
-        _bootstrap(client)
-        onboarded = _agent(client)
+        bootstrap(client)
+        onboarded = onboard_agent(client)
         _set_paused(client, onboarded["user"]["id"], True)
-        keyed = {
-            "Authorization": f"Bearer {onboarded['token']['token']}",
-            "Idempotency-Key": "while-paused",
-        }
+        keyed = {**bearer(onboarded), "Idempotency-Key": "while-paused"}
         refused = client.post("/issues", json={"title": "never"}, headers=keyed)
         assert refused.status_code == 403
     conn = db.connect(db_file)
@@ -127,8 +104,8 @@ def test_paused_keyed_request_claims_no_receipt(tmp_path):
 def test_pause_and_resume_each_bump_the_authorization_revision(tmp_path):
     db_file = tmp_path / "pause-revision.db"
     with TestClient(create_app(db_file)) as client:
-        _bootstrap(client)
-        agent_id = _agent(client)["user"]["id"]
+        bootstrap(client)
+        agent_id = onboard_agent(client)["user"]["id"]
         before = _revision(db_file)
         _set_paused(client, agent_id, True)
         assert _revision(db_file) == before + 1

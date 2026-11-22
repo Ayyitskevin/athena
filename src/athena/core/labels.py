@@ -31,7 +31,7 @@ def create_label(
     *,
     name: str,
     color: str = _DEFAULT_COLOR,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Insert a label and return it. Raises sqlite3.IntegrityError if a label
     with this name already exists (name is UNIQUE, case-insensitive).
@@ -64,7 +64,7 @@ def get_or_create_label(
     *,
     name: str,
     color: str = _DEFAULT_COLOR,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Return the existing label with this name, or create it. Lets the web layer
     attach a label by typing its name without a separate "create label" step.
@@ -154,7 +154,7 @@ def label_usage(
 
 
 def add_label_to_issue(
-    conn: sqlite3.Connection, issue_id: int, label_id: int, *, commit: bool = True
+    conn: sqlite3.Connection, issue_id: int, label_id: int, *, commit: bool
 ) -> bool:
     """Attach a label to an issue. Idempotent: re-attaching the same pair is a
     no-op (the composite PK + OR IGNORE swallow the duplicate). Returns True if a
@@ -172,7 +172,7 @@ def add_label_to_issue(
 
 
 def remove_label_from_issue(
-    conn: sqlite3.Connection, issue_id: int, label_id: int, *, commit: bool = True
+    conn: sqlite3.Connection, issue_id: int, label_id: int, *, commit: bool
 ) -> bool:
     """Detach a label from an issue. Returns True if a pairing was removed, False
     if the pair wasn't attached (so the caller can 404). ``commit=False`` lets the
@@ -249,7 +249,7 @@ def labels_for_issues(
 
 
 def add_label_to_page(
-    conn: sqlite3.Connection, page_id: int, label_id: int, *, commit: bool = True
+    conn: sqlite3.Connection, page_id: int, label_id: int, *, commit: bool
 ) -> bool:
     """Attach a label to a page. Idempotent (composite PK + OR IGNORE). Returns True
     if a new pairing was created, False if it was already attached — so the caller
@@ -266,7 +266,7 @@ def add_label_to_page(
 
 
 def remove_label_from_page(
-    conn: sqlite3.Connection, page_id: int, label_id: int, *, commit: bool = True
+    conn: sqlite3.Connection, page_id: int, label_id: int, *, commit: bool
 ) -> bool:
     """Detach a label from a page. Returns True if a pairing was removed, False if
     the pair wasn't attached (so the caller can 404). ``commit=False`` lets the

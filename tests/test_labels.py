@@ -74,9 +74,9 @@ def test_attach_is_idempotent(tmp_path):
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.execute("INSERT INTO issues (title, created_by) VALUES ('i', 1)")
     conn.commit()
-    lab = labels.create_label(conn, name="bug")
-    labels.add_label_to_issue(conn, 1, lab["id"])
-    labels.add_label_to_issue(conn, 1, lab["id"])  # again
+    lab = labels.create_label(conn, name="bug", commit=True)
+    labels.add_label_to_issue(conn, 1, lab["id"], commit=True)
+    labels.add_label_to_issue(conn, 1, lab["id"], commit=True)  # again
     assert [label["name"] for label in labels.labels_for_issue(conn, 1)] == ["bug"]
     conn.close()
 
@@ -86,8 +86,8 @@ def test_get_or_create_is_case_insensitive(tmp_path):
     # doesn't fragment by capitalization (name is UNIQUE COLLATE NOCASE).
     db_file = tmp_path / "u2.db"
     conn = _migrated_conn(db_file)
-    first = labels.get_or_create_label(conn, name="Bug")
-    again = labels.get_or_create_label(conn, name="bug")
+    first = labels.get_or_create_label(conn, name="Bug", commit=True)
+    again = labels.get_or_create_label(conn, name="bug", commit=True)
     assert first["id"] == again["id"]
     assert len(labels.list_labels(conn)) == 1
     conn.close()
@@ -104,11 +104,11 @@ def test_labels_for_issues_bulk_groups_by_issue(tmp_path):
     conn.execute("INSERT INTO issues (title, created_by) VALUES ('i2', 1)")
     conn.execute("INSERT INTO issues (title, created_by) VALUES ('i3', 1)")
     conn.commit()
-    bug = labels.create_label(conn, name="bug")
-    feat = labels.create_label(conn, name="feature")
-    labels.add_label_to_issue(conn, 1, bug["id"])
-    labels.add_label_to_issue(conn, 1, feat["id"])
-    labels.add_label_to_issue(conn, 2, bug["id"])
+    bug = labels.create_label(conn, name="bug", commit=True)
+    feat = labels.create_label(conn, name="feature", commit=True)
+    labels.add_label_to_issue(conn, 1, bug["id"], commit=True)
+    labels.add_label_to_issue(conn, 1, feat["id"], commit=True)
+    labels.add_label_to_issue(conn, 2, bug["id"], commit=True)
     out = labels.labels_for_issues(conn, [1, 2, 3])
     assert {label["name"] for label in out[1]} == {"bug", "feature"}
     assert {label["name"] for label in out[2]} == {"bug"}
@@ -125,10 +125,12 @@ def test_remove_reports_whether_it_removed(tmp_path):
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.execute("INSERT INTO issues (title, created_by) VALUES ('i', 1)")
     conn.commit()
-    lab = labels.create_label(conn, name="bug")
-    labels.add_label_to_issue(conn, 1, lab["id"])
-    assert labels.remove_label_from_issue(conn, 1, lab["id"]) is True
-    assert labels.remove_label_from_issue(conn, 1, lab["id"]) is False  # gone now
+    lab = labels.create_label(conn, name="bug", commit=True)
+    labels.add_label_to_issue(conn, 1, lab["id"], commit=True)
+    assert labels.remove_label_from_issue(conn, 1, lab["id"], commit=True) is True
+    assert (
+        labels.remove_label_from_issue(conn, 1, lab["id"], commit=True) is False
+    )  # gone now
     conn.close()
 
 
@@ -140,8 +142,8 @@ def test_deleting_issue_cascades_join_rows(tmp_path):
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.execute("INSERT INTO issues (title, created_by) VALUES ('i', 1)")
     conn.commit()
-    lab = labels.create_label(conn, name="bug")
-    labels.add_label_to_issue(conn, 1, lab["id"])
+    lab = labels.create_label(conn, name="bug", commit=True)
+    labels.add_label_to_issue(conn, 1, lab["id"], commit=True)
     conn.execute("DELETE FROM issues WHERE id = 1")
     conn.commit()
     rows = conn.execute("SELECT COUNT(*) AS n FROM issue_labels").fetchone()

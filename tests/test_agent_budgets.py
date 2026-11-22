@@ -533,6 +533,7 @@ def test_automation_rule_firings_are_not_metered(tmp_path):
             action_type="assign",
             action_params={"user_id": member["id"]},
             created_by=1,
+            commit=True,
         )
         conn.commit()
         # Budget the automation system actor to zero — the most hostile setting.

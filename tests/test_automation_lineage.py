@@ -36,6 +36,7 @@ def _rule(db_file, action_type, params, trigger_verb="created"):
         action_type=action_type,
         action_params=params,
         created_by=1,
+        commit=True,
     )
     conn.commit()
     conn.close()

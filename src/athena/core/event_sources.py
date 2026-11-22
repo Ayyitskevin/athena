@@ -57,7 +57,7 @@ def create_source(
     kind: str,
     host: str,
     created_by: int,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Insert a source and return it **with** its one-time secret."""
     secret = generate_secret()
@@ -149,7 +149,7 @@ def record_delivery(
     *,
     matched: int,
     unmatched: int,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Update a source's health counters after one authenticated delivery.
 
@@ -170,7 +170,7 @@ def record_delivery(
 
 
 def set_enabled(
-    conn: sqlite3.Connection, source_id: int, enabled: bool, commit: bool = True
+    conn: sqlite3.Connection, source_id: int, enabled: bool, *, commit: bool
 ) -> dict | None:
     conn.execute(
         "UPDATE event_sources SET enabled = ? WHERE id = ?",
@@ -181,9 +181,7 @@ def set_enabled(
     return get_source(conn, source_id)
 
 
-def delete_source(
-    conn: sqlite3.Connection, source_id: int, commit: bool = True
-) -> bool:
+def delete_source(conn: sqlite3.Connection, source_id: int, *, commit: bool) -> bool:
     cur = conn.execute("DELETE FROM event_sources WHERE id = ?", (source_id,))
     if commit:
         conn.commit()

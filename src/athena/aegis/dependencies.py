@@ -54,7 +54,7 @@ def add_link(
     to_id: int,
     relation: str,
     created_by: int,
-    commit: bool = True,
+    commit: bool,
 ) -> tuple[str | None, bool]:
     """Create a relationship declared FROM from_id. Returns ``(reason, inserted)``:
     ``reason`` is None on success, else a human-readable string the boundary turns
@@ -109,7 +109,7 @@ def remove_link(
     from_id: int,
     to_id: int,
     relation: str,
-    commit: bool = True,
+    commit: bool,
 ) -> bool:
     """Remove a relationship, addressed by the same user-facing relation used to
     create it. Returns True if a row was deleted, False if there was nothing to
@@ -129,7 +129,8 @@ def remove_link(
         "DELETE FROM issue_links WHERE from_id = ? AND to_id = ? AND kind = ?",
         (a, b, kind),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 

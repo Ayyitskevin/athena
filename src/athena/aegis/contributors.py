@@ -28,7 +28,7 @@ def add_contributor(
     user_id: int,
     added_by: int,
     *,
-    commit: bool = True,
+    commit: bool,
 ) -> bool:
     """Add a contributor to an issue. Idempotent: re-adding the same pair is a no-op
     (composite PK + OR IGNORE swallow the duplicate). Returns True if a NEW pairing
@@ -47,7 +47,7 @@ def add_contributor(
 
 
 def remove_contributor(
-    conn: sqlite3.Connection, issue_id: int, user_id: int, *, commit: bool = True
+    conn: sqlite3.Connection, issue_id: int, user_id: int, *, commit: bool
 ) -> bool:
     """Remove a contributor. Returns True if a pairing was removed, False if the
     user wasn't a contributor (so the caller can 404). ``commit=False`` lets the

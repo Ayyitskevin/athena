@@ -216,7 +216,7 @@ def record(
     target_kind: str,
     target_id: int,
     detail: str = "",
-    commit: bool = True,
+    commit: bool,
     issue_project_ids: Collection[int | None] | object = _AUTO_ISSUE_PROJECTS,
     imported_at: str | None = None,
 ) -> dict:

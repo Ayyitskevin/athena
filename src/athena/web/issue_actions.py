@@ -621,7 +621,7 @@ def watch_issue(
     _, err = issue_visible_or_404(conn, issue_id, user)
     if err is not None:
         return err
-    notifications.watch(conn, user["id"], "issue", issue_id)
+    notifications.watch(conn, user["id"], "issue", issue_id, commit=True)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 

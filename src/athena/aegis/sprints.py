@@ -41,7 +41,7 @@ def create_sprint(
     goal: str = "",
     start_date: str | None = None,
     end_date: str | None = None,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Create a sprint (state `planned`) and return it. Raises sqlite3.IntegrityError
     if project_id isn't a real project (the foreign key). ``commit=False`` lets the
@@ -105,7 +105,7 @@ def update_sprint(
     goal=_UNSET,
     start_date=_UNSET,
     end_date=_UNSET,
-    commit: bool = True,
+    commit: bool,
 ) -> dict | None:
     """Partial edit of a sprint's descriptive fields (name/goal/dates); only fields
     passed are written. State is NOT editable here — it moves via start/complete.
@@ -151,7 +151,7 @@ def _start_sprint_locked(conn: sqlite3.Connection, sprint_id: int) -> dict | Non
 
 
 def start_sprint(
-    conn: sqlite3.Connection, sprint_id: int, *, commit: bool = True
+    conn: sqlite3.Connection, sprint_id: int, *, commit: bool
 ) -> dict | None:
     """Move a sprint planned → active. Returns the updated sprint, or None if no
     sprint has that id. Raises SprintStateError if the sprint isn't planned, or if
@@ -181,7 +181,7 @@ def start_sprint(
 
 
 def complete_sprint(
-    conn: sqlite3.Connection, sprint_id: int, *, commit: bool = True
+    conn: sqlite3.Connection, sprint_id: int, *, commit: bool
 ) -> dict | None:
     """Move a sprint active → completed. Returns the updated sprint, or None if no
     sprint has that id. Raises SprintStateError if the sprint isn't active. Stamps
@@ -211,9 +211,7 @@ def count_issues_in_sprint(conn: sqlite3.Connection, sprint_id: int) -> int:
     ).fetchone()["n"]
 
 
-def delete_sprint(
-    conn: sqlite3.Connection, sprint_id: int, *, commit: bool = True
-) -> bool:
+def delete_sprint(conn: sqlite3.Connection, sprint_id: int, *, commit: bool) -> bool:
     """Delete a sprint. Returns True if one was deleted, False if no sprint had that
     id (so the boundary can 404).
 

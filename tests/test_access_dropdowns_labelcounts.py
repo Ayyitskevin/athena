@@ -131,7 +131,7 @@ def test_label_usage_counts_respect_visibility(tmp_path):
         assert out["issue_count"] == 1 and out["page_count"] == 1
 
         # Membership brings the hidden tallies back.
-        access.add_project_member(conn, pp, 3, added_by=2)
-        access.add_space_member(conn, ps, 3, added_by=2)
+        access.add_project_member(conn, pp, 3, added_by=2, commit=True)
+        access.add_space_member(conn, ps, 3, added_by=2, commit=True)
         revealed = usage_for(3)
         assert revealed["issue_count"] == 2 and revealed["page_count"] == 2

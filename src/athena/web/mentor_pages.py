@@ -204,6 +204,7 @@ def _conflict_response(
         title=title,
         body=body,
         based_on=based_on,
+        commit=True,
     )
     return get_templates().TemplateResponse(
         request=request,
@@ -349,6 +350,7 @@ def autosave_page_draft(
             # cached pre-upgrade form; falling back to the current etag there
             # restores the old (weaker) behavior instead of refusing the save.
             based_on=based_on.strip() or page_etags.current_etag(conn, page),
+            commit=True,
         )
     except page_drafts.DraftTooLarge:
         # Fixed literals from the module's own bounds, not the exception's text
@@ -377,7 +379,7 @@ def discard_page_draft(
     if err is not None:
         return err
     assert user is not None
-    page_drafts.discard_draft(conn, page_id=page_id, owner_id=user["id"])
+    page_drafts.discard_draft(conn, page_id=page_id, owner_id=user["id"], commit=True)
     # Explicit int() for the URL-redirection taint analysis, mirroring the
     # issue-side discard; FastAPI's own coercion is invisible to it.
     return RedirectResponse(
@@ -464,7 +466,7 @@ def edit_page(
     # The text IS the page now, so the author's draft of it is a stale copy of
     # something that finally has a real home and a version row. Dropping it is
     # what makes "you have unsaved work" mean it the next time it appears.
-    page_drafts.discard_draft(conn, page_id=page_id, owner_id=user["id"])
+    page_drafts.discard_draft(conn, page_id=page_id, owner_id=user["id"], commit=True)
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
@@ -699,7 +701,7 @@ def watch_page(request: Request, page_id: int, conn=Depends(get_conn)):
     _, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
-    notifications.watch(conn, user["id"], "page", page_id)
+    notifications.watch(conn, user["id"], "page", page_id, commit=True)
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 

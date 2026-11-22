@@ -42,9 +42,9 @@ def _conn(db_file):
 
 
 def _space_with_page(conn, *, key="ENG", name="Eng", title="Runbook"):
-    space = spaces.create_space(conn, key=key, name=name, created_by=1)
+    space = spaces.create_space(conn, key=key, name=name, created_by=1, commit=True)
     page = pages.create_page(
-        conn, space_id=space["id"], title=title, body="", created_by=1
+        conn, space_id=space["id"], title=title, body="", created_by=1, commit=True
     )
     return space, page
 
@@ -78,9 +78,14 @@ def test_space_watcher_hears_a_page_event_inside_the_space(tmp_path):
     # it — the space subscription alone carries the news.
     conn = _conn(tmp_path / "s.db")
     space, page = _space_with_page(conn)
-    notifications.watch(conn, 2, "space", space["id"])
+    notifications.watch(conn, 2, "space", space["id"], commit=True)
     activity.record(
-        conn, actor_id=1, verb="page_edited", target_kind="page", target_id=page["id"]
+        conn,
+        actor_id=1,
+        verb="page_edited",
+        target_kind="page",
+        target_id=page["id"],
+        commit=True,
     )
     assert notifications.unread_count(conn, 2) == 1
 
@@ -90,13 +95,14 @@ def test_page_in_another_space_is_silence(tmp_path):
     conn = _conn(tmp_path / "other.db")
     watched, _ = _space_with_page(conn, key="ENG", name="Eng")
     _, elsewhere = _space_with_page(conn, key="OPS", name="Ops", title="Other")
-    notifications.watch(conn, 2, "space", watched["id"])
+    notifications.watch(conn, 2, "space", watched["id"], commit=True)
     activity.record(
         conn,
         actor_id=1,
         verb="page_edited",
         target_kind="page",
         target_id=elsewhere["id"],
+        commit=True,
     )
     assert notifications.unread_count(conn, 2) == 0
 
@@ -106,9 +112,14 @@ def test_your_own_page_edit_does_not_notify_you(tmp_path):
     # subscribed agent would wake itself up on every write it makes.
     conn = _conn(tmp_path / "self.db")
     space, page = _space_with_page(conn)
-    notifications.watch(conn, 1, "space", space["id"])
+    notifications.watch(conn, 1, "space", space["id"], commit=True)
     activity.record(
-        conn, actor_id=1, verb="page_edited", target_kind="page", target_id=page["id"]
+        conn,
+        actor_id=1,
+        verb="page_edited",
+        target_kind="page",
+        target_id=page["id"],
+        commit=True,
     )
     assert notifications.unread_count(conn, 1) == 0
 
@@ -118,10 +129,15 @@ def test_watching_page_and_its_space_yields_one_notification(tmp_path):
     # (user_id, event_id) is what collapses them, and this proves it does.
     conn = _conn(tmp_path / "dedupe.db")
     space, page = _space_with_page(conn)
-    notifications.watch(conn, 2, "space", space["id"])
-    notifications.watch(conn, 2, "page", page["id"])
+    notifications.watch(conn, 2, "space", space["id"], commit=True)
+    notifications.watch(conn, 2, "page", page["id"], commit=True)
     activity.record(
-        conn, actor_id=1, verb="page_edited", target_kind="page", target_id=page["id"]
+        conn,
+        actor_id=1,
+        verb="page_edited",
+        target_kind="page",
+        target_id=page["id"],
+        commit=True,
     )
     assert notifications.unread_count(conn, 2) == 1
 
@@ -131,13 +147,14 @@ def test_space_watch_also_covers_the_space_rows_own_events(tmp_path):
     # the direct pass covers them — the subscription is one thing, not two.
     conn = _conn(tmp_path / "own.db")
     space, _ = _space_with_page(conn)
-    notifications.watch(conn, 2, "space", space["id"])
+    notifications.watch(conn, 2, "space", space["id"], commit=True)
     activity.record(
         conn,
         actor_id=1,
         verb="space_edited",
         target_kind="space",
         target_id=space["id"],
+        commit=True,
     )
     assert notifications.unread_count(conn, 2) == 1
 
@@ -145,10 +162,15 @@ def test_space_watch_also_covers_the_space_rows_own_events(tmp_path):
 def test_unwatch_stops_the_delivery(tmp_path):
     conn = _conn(tmp_path / "off.db")
     space, page = _space_with_page(conn)
-    notifications.watch(conn, 2, "space", space["id"])
+    notifications.watch(conn, 2, "space", space["id"], commit=True)
     assert notifications.unwatch(conn, 2, "space", space["id"]) is True
     activity.record(
-        conn, actor_id=1, verb="page_edited", target_kind="page", target_id=page["id"]
+        conn,
+        actor_id=1,
+        verb="page_edited",
+        target_kind="page",
+        target_id=page["id"],
+        commit=True,
     )
     assert notifications.unread_count(conn, 2) == 0
 
@@ -156,8 +178,8 @@ def test_unwatch_stops_the_delivery(tmp_path):
 def test_watching_a_space_twice_is_a_no_op(tmp_path):
     conn = _conn(tmp_path / "idem.db")
     space, _ = _space_with_page(conn)
-    notifications.watch(conn, 2, "space", space["id"])
-    notifications.watch(conn, 2, "space", space["id"])
+    notifications.watch(conn, 2, "space", space["id"], commit=True)
+    notifications.watch(conn, 2, "space", space["id"], commit=True)
     assert notifications.is_watching(conn, 2, "space", space["id"])
     assert (
         conn.execute(
@@ -172,13 +194,14 @@ def test_a_page_comment_reaches_the_space_watcher(tmp_path):
     # whose target is a page in the space counts, one rule with no carve-outs.
     conn = _conn(tmp_path / "comment.db")
     space, page = _space_with_page(conn)
-    notifications.watch(conn, 2, "space", space["id"])
+    notifications.watch(conn, 2, "space", space["id"], commit=True)
     activity.record(
         conn,
         actor_id=1,
         verb="page_commented",
         target_kind="page",
         target_id=page["id"],
+        commit=True,
     )
     assert notifications.unread_count(conn, 2) == 1
 
@@ -192,7 +215,7 @@ def test_deleting_a_page_notifies_the_space_watcher(tmp_path):
     # that can happen to a shared space; silence was the wrong answer.
     conn = _conn(tmp_path / "del-space.db")
     space, page = _space_with_page(conn)
-    notifications.watch(conn, 2, "space", space["id"])
+    notifications.watch(conn, 2, "space", space["id"], commit=True)
     assert (
         page_commands.delete_page(conn, actor={"id": 1}, page_id=page["id"])["id"]
         == page["id"]
@@ -213,7 +236,7 @@ def test_a_deleted_pages_notification_renders_only_for_an_admin(tmp_path):
     # issues carry) is an access-model change, deliberately not smuggled in here.
     conn = _conn(tmp_path / "del-gate.db")
     space, page = _space_with_page(conn)
-    notifications.watch(conn, 2, "space", space["id"])
+    notifications.watch(conn, 2, "space", space["id"], commit=True)
     page_commands.delete_page(conn, actor={"id": 1}, page_id=page["id"])
     member = {"id": 2, "role": "member"}
     admin = {"id": 3, "role": "admin"}
@@ -229,7 +252,7 @@ def test_deleting_a_page_notifies_its_direct_watcher_too(tmp_path):
     # the thing they watched no longer exists. Their watch is then purged.
     conn = _conn(tmp_path / "del-page.db")
     _, page = _space_with_page(conn)
-    notifications.watch(conn, 2, "page", page["id"])
+    notifications.watch(conn, 2, "page", page["id"], commit=True)
     page_commands.delete_page(conn, actor={"id": 1}, page_id=page["id"])
     assert notifications.unread_count(conn, 2) == 1
     assert notifications.is_watching(conn, 2, "page", page["id"]) is False
@@ -249,9 +272,14 @@ def test_inbox_hides_events_from_a_space_the_watcher_cannot_see(tmp_path):
         "UPDATE spaces SET visibility = 'private' WHERE id = ?", (space["id"],)
     )
     conn.commit()
-    notifications.watch(conn, 2, "space", space["id"])
+    notifications.watch(conn, 2, "space", space["id"], commit=True)
     activity.record(
-        conn, actor_id=1, verb="page_edited", target_kind="page", target_id=page["id"]
+        conn,
+        actor_id=1,
+        verb="page_edited",
+        target_kind="page",
+        target_id=page["id"],
+        commit=True,
     )
     viewer = {"id": 2, "role": "member"}
     assert notifications.unread_count(conn, 2) == 1  # ungated: the row exists

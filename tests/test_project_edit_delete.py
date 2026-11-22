@@ -409,7 +409,7 @@ def test_web_delete_with_sprint_is_409_and_survives(tmp_path):
         _bootstrap_first_user(client)
         proj = _make_project(client, actor="1")
         conn = db.connect(db_file)
-        sprints.create_sprint(conn, project_id=proj["id"], name="Launch")
+        sprints.create_sprint(conn, project_id=proj["id"], name="Launch", commit=True)
         conn.close()
 
         r = client.post(f"/aegis/projects/{proj['id']}/delete")
@@ -457,9 +457,11 @@ def test_update_project_partial_leaves_unsent_fields(tmp_path):
         conn.execute("INSERT INTO users (email, name) VALUES ('z@e.com', 'Z')")
         conn.commit()
         proj = projects.create_project(
-            conn, name="Orig", key="ORIG", created_by=1, description="d"
+            conn, name="Orig", key="ORIG", created_by=1, description="d", commit=True
         )
-        updated = projects.update_project(conn, proj["id"], description="d2")
+        updated = projects.update_project(
+            conn, proj["id"], description="d2", commit=True
+        )
         assert updated["name"] == "Orig"  # untouched
         assert updated["description"] == "d2"
         conn.close()

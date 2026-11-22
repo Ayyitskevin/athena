@@ -77,24 +77,34 @@ def _mixed_fixture(tmp_path):
     spaces with pages in each, and events on issues, pages, spaces and projects."""
     conn = db.connect(tmp_path / "feed.db")
     db.migrate(conn)
-    admin = users.create_user(conn, email="a@e.com", name="Admin", role="admin")
-    owner = users.create_user(conn, email="o@e.com", name="Owner")
-    member = users.create_user(conn, email="m@e.com", name="Member")
-    outsider = users.create_user(conn, email="x@e.com", name="Outsider")
+    admin = users.create_user(
+        conn, email="a@e.com", name="Admin", role="admin", commit=True
+    )
+    owner = users.create_user(conn, email="o@e.com", name="Owner", commit=True)
+    member = users.create_user(conn, email="m@e.com", name="Member", commit=True)
+    outsider = users.create_user(conn, email="x@e.com", name="Outsider", commit=True)
 
-    pub = projects.create_project(conn, name="Pub", key="PUB", created_by=owner["id"])
-    priv = projects.create_project(conn, name="Priv", key="PRV", created_by=owner["id"])
+    pub = projects.create_project(
+        conn, name="Pub", key="PUB", created_by=owner["id"], commit=True
+    )
+    priv = projects.create_project(
+        conn, name="Priv", key="PRV", created_by=owner["id"], commit=True
+    )
     conn.execute("UPDATE projects SET visibility='private' WHERE id=?", (priv["id"],))
-    access.add_project_member(conn, priv["id"], member["id"], owner["id"])
+    access.add_project_member(conn, priv["id"], member["id"], owner["id"], commit=True)
 
-    pub_space = spaces.create_space(conn, key="PS", name="Pub", created_by=owner["id"])
+    pub_space = spaces.create_space(
+        conn, key="PS", name="Pub", created_by=owner["id"], commit=True
+    )
     priv_space = spaces.create_space(
-        conn, key="RS", name="Priv", created_by=owner["id"]
+        conn, key="RS", name="Priv", created_by=owner["id"], commit=True
     )
     conn.execute(
         "UPDATE spaces SET visibility='private' WHERE id=?", (priv_space["id"],)
     )
-    access.add_space_member(conn, priv_space["id"], member["id"], owner["id"])
+    access.add_space_member(
+        conn, priv_space["id"], member["id"], owner["id"], commit=True
+    )
     conn.commit()
 
     targets: list[tuple[str, int]] = []
@@ -106,12 +116,17 @@ def _mixed_fixture(tmp_path):
                 body="b",
                 created_by=owner["id"],
                 project_id=project["id"] if project else None,
+                commit=True,
             )
             targets.append(("issue", issue["id"]))
     for space in (pub_space, priv_space):
         for n in range(3):
             page = pages.create_page(
-                conn, space_id=space["id"], title=f"P{n}", created_by=owner["id"]
+                conn,
+                space_id=space["id"],
+                title=f"P{n}",
+                created_by=owner["id"],
+                commit=True,
             )
             targets.append(("page", page["id"]))
         targets.append(("space", space["id"]))
@@ -127,6 +142,7 @@ def _mixed_fixture(tmp_path):
             target_kind=kind,
             target_id=target_id,
             detail=f"d{i}",
+            commit=True,
         )
     return conn, {"admin": admin, "owner": owner, "member": member, "out": outsider}
 

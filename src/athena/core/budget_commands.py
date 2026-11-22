@@ -1,8 +1,9 @@
 """Audited budget ceiling writes.
 
-``core/budgets.py`` still owns the charge, the exhaustion record, and the
-reads. Setting or clearing a ceiling is the operator's write, so it lives in
-a command module the transports call directly.
+``core/budgets.py`` still owns the charge and the reads. Setting or clearing a
+ceiling is the operator's write, so it lives in a command module the transports
+call directly; so does recording an exhaustion, which the app's refusal handler
+writes after the refused command rolled back.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from athena.core import activity, db
 from athena.core._util import utc_now
 from athena.core.budgets import (
     VERB_BUDGET_CLEARED,
+    VERB_BUDGET_EXHAUSTED,
     VERB_BUDGET_SET,
     WINDOWS,
     Budget,
@@ -127,3 +129,23 @@ def clear_budget(
             commit=False,
         )
         return True
+
+
+def record_exhaustion(conn: sqlite3.Connection, *, actor_id: int, detail: str) -> None:
+    """Put a refused write on the trail, AFTER its transaction rolled back.
+
+    The refusal is exactly the "steer by exception" signal the operator wants — an
+    agent hitting its ceiling is a decision to make, not noise. It cannot be
+    recorded inside the command, because that transaction is unwinding; this runs
+    on the now-free connection in its own transaction. Best-effort by construction:
+    the write was already refused, so a failure to log must not mask that.
+    """
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb=VERB_BUDGET_EXHAUSTED,
+        target_kind="user",
+        target_id=actor_id,
+        detail=detail,
+        commit=True,
+    )

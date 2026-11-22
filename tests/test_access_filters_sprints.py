@@ -78,7 +78,7 @@ def test_saved_filter_run_excludes_hidden_issues(tmp_path):
         # Running it never surfaces the private project's issue...
         assert "Public bug" in titles() and "Hidden bug" not in titles()
         # ...until the outsider is granted membership.
-        access.add_project_member(conn, pp, 3, added_by=2)
+        access.add_project_member(conn, pp, 3, added_by=2, commit=True)
         assert "Hidden bug" in titles()
 
 
@@ -103,7 +103,7 @@ def test_sprint_reads_404_for_outsider(tmp_path):
             assert client.get(f"/sprints/{sid}", headers=h).status_code == 200
 
         # Membership opens them up.
-        access.add_project_member(conn, pp, 3, added_by=2)
+        access.add_project_member(conn, pp, 3, added_by=2, commit=True)
         assert (
             client.get(f"/projects/{pp}/sprints", headers=H_OUTSIDER).status_code == 200
         )

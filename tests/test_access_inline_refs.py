@@ -87,7 +87,7 @@ def test_render_body_gates_hidden_issue_ref(tmp_path):
             assert "TopSecretTitle" in html
             assert f'{href} class="xref"' in html
         # Membership reveals it to the outsider.
-        access.add_project_member(conn, pp, 3, added_by=2)
+        access.add_project_member(conn, pp, 3, added_by=2, commit=True)
         assert "TopSecretTitle" in str(
             render_body(conn, body, actor=users.get_user(conn, 3))
         )
@@ -144,7 +144,7 @@ def test_render_body_gates_hidden_page_ref(tmp_path):
         for uid in (1, 2):
             html = str(render_body(conn, body, actor=users.get_user(conn, uid)))
             assert "HushHushPage" in html and f'{href} class="xref"' in html
-        access.add_space_member(conn, ps, 3, added_by=2)
+        access.add_space_member(conn, ps, 3, added_by=2, commit=True)
         assert "HushHushPage" in str(
             render_body(conn, body, actor=users.get_user(conn, 3))
         )

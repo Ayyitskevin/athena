@@ -94,7 +94,7 @@ def test_rest_space_list_hides_private(tmp_path):
         for h in (H_CREATOR, H_ADMIN):
             assert keys(h) == {"SEC", "ENG"}
 
-        access.add_space_member(conn, priv, 3, added_by=2)
+        access.add_space_member(conn, priv, 3, added_by=2, commit=True)
         assert keys(H_OUTSIDER) == {"SEC", "ENG"}
 
 
@@ -119,7 +119,7 @@ def test_rest_space_and_pages_404_for_outsider(tmp_path):
         assert client.get(f"/pages/{pub_page}").status_code == 200
 
         # Membership opens it up.
-        access.add_space_member(conn, priv, 3, added_by=2)
+        access.add_space_member(conn, priv, 3, added_by=2, commit=True)
         assert client.get(f"/pages/{priv_page}", headers=H_OUTSIDER).status_code == 200
 
 

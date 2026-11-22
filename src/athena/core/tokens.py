@@ -141,7 +141,7 @@ def create_token(
     user_id: int,
     name: str,
     scopes: Iterable[str] | None = None,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Mint a token for a user. Returns the row plus a one-time `token` field
     holding the raw secret — it is never retrievable again after this call.
@@ -235,7 +235,7 @@ def list_tokens(conn: sqlite3.Connection, user_id: int) -> list[dict]:
 
 
 def revoke_token(
-    conn: sqlite3.Connection, *, user_id: int, token_id: int, commit: bool = True
+    conn: sqlite3.Connection, *, user_id: int, token_id: int, commit: bool
 ) -> bool:
     """Disable a token the user owns. Returns False if no such live token exists
     (wrong owner, unknown id, or already revoked) so the API can 404 honestly.
@@ -252,7 +252,7 @@ def revoke_token(
 
 
 def revoke_all_tokens_for_user(
-    conn: sqlite3.Connection, *, user_id: int, commit: bool = True
+    conn: sqlite3.Connection, *, user_id: int, commit: bool
 ) -> int:
     """Revoke EVERY live token a user holds; return how many were revoked.
 

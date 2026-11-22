@@ -53,7 +53,7 @@ def save_draft(
     title: str,
     body: str,
     based_on: str,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Record where this author has got to on this issue.
 
@@ -86,7 +86,7 @@ def save_draft(
 
 
 def discard_draft(
-    conn: sqlite3.Connection, *, issue_id: int, owner_id: int, commit: bool = True
+    conn: sqlite3.Connection, *, issue_id: int, owner_id: int, commit: bool
 ) -> bool:
     """Drop this author's draft. True when one existed.
 

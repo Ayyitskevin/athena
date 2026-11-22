@@ -416,7 +416,7 @@ def create_rule(
     trigger_type: str = "event",
     schedule_at: str | None = None,
     schedule_every_seconds: int | None = None,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Insert a rule and return it. conditions/action_params are stored as JSON text.
     The boundary validates trigger_verb/action_type/condition keys; this layer persists.
@@ -477,7 +477,7 @@ def list_rules(
 
 
 def set_enabled(
-    conn: sqlite3.Connection, rule_id: int, enabled: bool, *, commit: bool = True
+    conn: sqlite3.Connection, rule_id: int, enabled: bool, *, commit: bool
 ) -> dict | None:
     """Switch a rule on/off WITHOUT deleting it (the pause twin of a webhook's active
     flag). Returns the updated rule, or None if there is no such rule. ``commit=False``
@@ -493,7 +493,7 @@ def set_enabled(
     return get_rule(conn, rule_id)
 
 
-def delete_rule(conn: sqlite3.Connection, rule_id: int, *, commit: bool = True) -> bool:
+def delete_rule(conn: sqlite3.Connection, rule_id: int, *, commit: bool) -> bool:
     """Delete a rule. Returns True if one was removed, False if there was no such row.
     ``commit=False`` lets an audited command fold the delete and its activity event
     into one transaction."""
@@ -551,7 +551,7 @@ def _set_cursor(conn: sqlite3.Connection, value: int) -> None:
 
 
 def record_rule_failure(
-    conn: sqlite3.Connection, rule_id: int, error: str, *, commit: bool = True
+    conn: sqlite3.Connection, rule_id: int, error: str, *, commit: bool
 ) -> None:
     """Note that a rule's action raised: bump its failure_count and stamp the error text
     and time. The engine still advances its cursor past the event (at-most-once, by
@@ -632,7 +632,7 @@ def process_pending(
                         exc_info=True,
                     )
                     record_rule_failure(
-                        conn, rule["id"], f"{type(exc).__name__}: {exc}"
+                        conn, rule["id"], f"{type(exc).__name__}: {exc}", commit=True
                     )
     _set_cursor(conn, last_id)
     return fired
@@ -658,6 +658,7 @@ def system_actor_id(conn: sqlite3.Connection) -> int:
         name="Automation",
         is_agent=True,
         role=users.VIEWER_ROLE,
+        commit=True,
     )["id"]
 
 
@@ -801,7 +802,7 @@ def _perform_action(
         # its find-or-create lives inside issue_commands.attach_label_by_name,
         # after the write gate, because a refused request must not grow the
         # shared vocabulary.)
-        label = labels.get_or_create_label(conn, name=name)
+        label = labels.get_or_create_label(conn, name=name, commit=True)
         try:
             return issue_commands.attach_label_as_automation(
                 conn,

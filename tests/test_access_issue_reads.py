@@ -123,7 +123,7 @@ def test_rest_list_opens_to_a_granted_member(tmp_path):
             i["title"] for i in client.get("/issues", headers=H_OUTSIDER).json()
         }
 
-        access.add_project_member(conn, pid, 3, added_by=2)
+        access.add_project_member(conn, pid, 3, added_by=2, commit=True)
         assert "Hidden bug" in {
             i["title"] for i in client.get("/issues", headers=H_OUTSIDER).json()
         }
@@ -147,7 +147,7 @@ def test_rest_detail_404s_private_for_outsider(tmp_path):
         assert client.get(f"/issues/{back}").status_code == 200
 
         # Granting membership turns the 404 into a 200.
-        access.add_project_member(conn, pid, 3, added_by=2)
+        access.add_project_member(conn, pid, 3, added_by=2, commit=True)
         assert client.get(f"/issues/{priv}", headers=H_OUTSIDER).status_code == 200
 
 

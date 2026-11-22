@@ -407,6 +407,7 @@ def test_budget_exhaustion_and_security_refusal_are_excluded_when_imported(tmp_p
             target_kind="user",
             target_id=1,
             imported_at="2026-01-01 00:00:00",
+            commit=True,
         )
     conn.close()
 
@@ -508,6 +509,7 @@ def test_event_signals_cite_the_activity_event_not_the_actor(tmp_path):
         target_kind="user",
         target_id=1,
         detail="daily ceiling reached",
+        commit=True,
     )
     refusal_event = activity.record(
         conn,
@@ -516,6 +518,7 @@ def test_event_signals_cite_the_activity_event_not_the_actor(tmp_path):
         target_kind="user",
         target_id=1,
         detail="admin scope required",
+        commit=True,
     )
     conn.close()
 

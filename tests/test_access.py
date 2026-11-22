@@ -37,9 +37,15 @@ def people(tmp_path):
     """A connection plus three actors: an admin, the creator of things, and an
     unrelated outsider — the cast every visibility test needs."""
     conn = _conn(tmp_path)
-    admin = users.create_user(conn, email="admin@e.com", name="Admin", role="admin")
-    creator = users.create_user(conn, email="c@e.com", name="Creator", role="member")
-    outsider = users.create_user(conn, email="o@e.com", name="Outsider", role="member")
+    admin = users.create_user(
+        conn, email="admin@e.com", name="Admin", role="admin", commit=True
+    )
+    creator = users.create_user(
+        conn, email="c@e.com", name="Creator", role="member", commit=True
+    )
+    outsider = users.create_user(
+        conn, email="o@e.com", name="Outsider", role="member", commit=True
+    )
     return conn, admin, creator, outsider
 
 
@@ -48,7 +54,9 @@ def people(tmp_path):
 
 def test_public_project_is_visible_to_everyone_including_anonymous(people):
     conn, admin, creator, outsider = people
-    p = projects.create_project(conn, name="Ops", key="OPS", created_by=creator["id"])
+    p = projects.create_project(
+        conn, name="Ops", key="OPS", created_by=creator["id"], commit=True
+    )
 
     # Public is the default; every actor — and the signed-out None viewer — can read it.
     for actor in (admin, creator, outsider, None):
@@ -58,7 +66,9 @@ def test_public_project_is_visible_to_everyone_including_anonymous(people):
 
 def test_public_space_is_visible_to_everyone_including_anonymous(people):
     conn, admin, creator, outsider = people
-    s = spaces.create_space(conn, key="ENG", name="Eng", created_by=creator["id"])
+    s = spaces.create_space(
+        conn, key="ENG", name="Eng", created_by=creator["id"], commit=True
+    )
 
     for actor in (admin, creator, outsider, None):
         assert access.can_see_space(conn, actor, s["id"]) is True
@@ -71,7 +81,7 @@ def test_public_space_is_visible_to_everyone_including_anonymous(people):
 def test_private_project_hidden_from_outsiders_and_anonymous(people):
     conn, admin, creator, outsider = people
     p = projects.create_project(
-        conn, name="Secret", key="SEC", created_by=creator["id"]
+        conn, name="Secret", key="SEC", created_by=creator["id"], commit=True
     )
     _make_private(conn, "projects", p["id"])
 
@@ -90,31 +100,39 @@ def test_private_project_hidden_from_outsiders_and_anonymous(people):
 def test_private_project_opens_to_an_added_member(people):
     conn, admin, creator, outsider = people
     p = projects.create_project(
-        conn, name="Secret", key="SEC", created_by=creator["id"]
+        conn, name="Secret", key="SEC", created_by=creator["id"], commit=True
     )
     _make_private(conn, "projects", p["id"])
     assert access.can_see_project(conn, outsider, p["id"]) is False
 
     # Granting membership lets them in; revoking shuts them back out.
     assert (
-        access.add_project_member(conn, p["id"], outsider["id"], added_by=creator["id"])
+        access.add_project_member(
+            conn, p["id"], outsider["id"], added_by=creator["id"], commit=True
+        )
         is True
     )
     assert access.can_see_project(conn, outsider, p["id"]) is True
     assert p["id"] in access.visible_project_ids(conn, outsider)
 
-    assert access.remove_project_member(conn, p["id"], outsider["id"]) is True
+    assert (
+        access.remove_project_member(conn, p["id"], outsider["id"], commit=True) is True
+    )
     assert access.can_see_project(conn, outsider, p["id"]) is False
 
 
 def test_private_space_membership_mirrors_projects(people):
     conn, admin, creator, outsider = people
-    s = spaces.create_space(conn, key="SEC", name="Secret", created_by=creator["id"])
+    s = spaces.create_space(
+        conn, key="SEC", name="Secret", created_by=creator["id"], commit=True
+    )
     _make_private(conn, "spaces", s["id"])
 
     assert access.can_see_space(conn, outsider, s["id"]) is False
     assert (
-        access.add_space_member(conn, s["id"], outsider["id"], added_by=creator["id"])
+        access.add_space_member(
+            conn, s["id"], outsider["id"], added_by=creator["id"], commit=True
+        )
         is True
     )
     assert access.can_see_space(conn, outsider, s["id"]) is True
@@ -129,31 +147,50 @@ def test_private_space_membership_mirrors_projects(people):
 
 def test_membership_add_is_idempotent_and_remove_reports(people):
     conn, _admin, creator, outsider = people
-    p = projects.create_project(conn, name="P", key="P", created_by=creator["id"])
+    p = projects.create_project(
+        conn, name="P", key="P", created_by=creator["id"], commit=True
+    )
 
     assert access.is_project_member(conn, p["id"], outsider["id"]) is False
     assert (
-        access.add_project_member(conn, p["id"], outsider["id"], added_by=creator["id"])
+        access.add_project_member(
+            conn, p["id"], outsider["id"], added_by=creator["id"], commit=True
+        )
         is True
     )
     # Re-adding the same pair is a no-op (returns False) so callers log only real grants.
     assert (
-        access.add_project_member(conn, p["id"], outsider["id"], added_by=creator["id"])
+        access.add_project_member(
+            conn, p["id"], outsider["id"], added_by=creator["id"], commit=True
+        )
         is False
     )
     assert access.is_project_member(conn, p["id"], outsider["id"]) is True
 
-    assert access.remove_project_member(conn, p["id"], outsider["id"]) is True
+    assert (
+        access.remove_project_member(conn, p["id"], outsider["id"], commit=True) is True
+    )
     # Removing a non-member reports False so the caller can 404.
-    assert access.remove_project_member(conn, p["id"], outsider["id"]) is False
+    assert (
+        access.remove_project_member(conn, p["id"], outsider["id"], commit=True)
+        is False
+    )
 
 
 def test_list_project_members_resolves_names_and_excludes_implicit(people):
     conn, admin, creator, outsider = people
-    second = users.create_user(conn, email="s2@e.com", name="Alice", role="member")
-    p = projects.create_project(conn, name="P", key="P", created_by=creator["id"])
-    access.add_project_member(conn, p["id"], outsider["id"], added_by=creator["id"])
-    access.add_project_member(conn, p["id"], second["id"], added_by=creator["id"])
+    second = users.create_user(
+        conn, email="s2@e.com", name="Alice", role="member", commit=True
+    )
+    p = projects.create_project(
+        conn, name="P", key="P", created_by=creator["id"], commit=True
+    )
+    access.add_project_member(
+        conn, p["id"], outsider["id"], added_by=creator["id"], commit=True
+    )
+    access.add_project_member(
+        conn, p["id"], second["id"], added_by=creator["id"], commit=True
+    )
 
     members = access.list_project_members(conn, p["id"])
     # Only the explicitly-added rows, name-resolved, alphabetical — not creator/admin.
@@ -172,8 +209,12 @@ def test_unknown_container_is_never_visible(people):
 
 def test_admin_sees_every_private_container(people):
     conn, admin, creator, outsider = people
-    a = projects.create_project(conn, name="A", key="A", created_by=creator["id"])
-    b = projects.create_project(conn, name="B", key="B", created_by=outsider["id"])
+    a = projects.create_project(
+        conn, name="A", key="A", created_by=creator["id"], commit=True
+    )
+    b = projects.create_project(
+        conn, name="B", key="B", created_by=outsider["id"], commit=True
+    )
     _make_private(conn, "projects", a["id"])
     _make_private(conn, "projects", b["id"])
 
@@ -189,12 +230,16 @@ def test_admin_sees_every_private_container(people):
 
 def test_deleting_project_cascades_membership(people):
     conn, _admin, creator, outsider = people
-    p = projects.create_project(conn, name="Temp", key="TMP", created_by=creator["id"])
-    access.add_project_member(conn, p["id"], outsider["id"], added_by=creator["id"])
+    p = projects.create_project(
+        conn, name="Temp", key="TMP", created_by=creator["id"], commit=True
+    )
+    access.add_project_member(
+        conn, p["id"], outsider["id"], added_by=creator["id"], commit=True
+    )
 
     # delete_project is allowed once the project holds no issues; the membership row
     # must not block it and must not survive it (ON DELETE CASCADE).
-    assert projects.delete_project(conn, p["id"]) is True
+    assert projects.delete_project(conn, p["id"], commit=True) is True
     leftover = conn.execute(
         "SELECT COUNT(*) AS n FROM project_members WHERE project_id = ?", (p["id"],)
     ).fetchone()["n"]
@@ -213,9 +258,11 @@ def test_container_write_reason_is_visibility_first_and_creator_only(people):
     # gates (destroying someone's container isn't a governance power).
     conn, admin, creator, outsider = people
     p = projects.create_project(
-        conn, name="Secret", key="SEC", created_by=creator["id"]
+        conn, name="Secret", key="SEC", created_by=creator["id"], commit=True
     )
-    s = spaces.create_space(conn, key="ENG", name="Eng", created_by=creator["id"])
+    s = spaces.create_space(
+        conn, key="ENG", name="Eng", created_by=creator["id"], commit=True
+    )
 
     def reason(kind, actor, cid, created_by):
         return access.container_write_reason(
@@ -235,7 +282,9 @@ def test_container_write_reason_is_visibility_first_and_creator_only(people):
     assert reason("project", outsider, p["id"], creator["id"]) == "not_visible"
     assert reason("space", outsider, s["id"], creator["id"]) == "not_visible"
     # A member CAN see it, but still isn't the creator → 'not_owner' (403), not a pass.
-    access.add_project_member(conn, p["id"], outsider["id"], added_by=creator["id"])
+    access.add_project_member(
+        conn, p["id"], outsider["id"], added_by=creator["id"], commit=True
+    )
     assert reason("project", outsider, p["id"], creator["id"]) == "not_owner"
     # Creator and admin still see it; only the creator may write it.
     assert reason("project", creator, p["id"], creator["id"]) is None

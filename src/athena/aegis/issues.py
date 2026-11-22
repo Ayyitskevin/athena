@@ -129,7 +129,7 @@ def create_issue(
     status: str = "open",
     priority: str = "medium",
     project_id: int | None = None,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Insert an issue and return it. Raises sqlite3.IntegrityError if
     created_by isn't a real user, or if project_id is a non-NULL id with no
@@ -191,7 +191,7 @@ def update_issue(
     body: str | None = None,
     status: str | None = None,
     priority: str | None = None,
-    commit: bool = True,
+    commit: bool,
 ) -> dict | None:
     """Partial update: only the fields passed as non-None change. Returns the
     updated issue, or None if no issue has that id (so the caller can 404).
@@ -253,7 +253,7 @@ def update_status(conn: sqlite3.Connection, issue_id: int, status: str) -> dict 
     User-facing and automation writes go through issue_commands so this mutation
     and its audit event share one transaction.
     """
-    return update_issue(conn, issue_id, status=status)
+    return update_issue(conn, issue_id, status=status, commit=True)
 
 
 def set_assignee(
@@ -261,7 +261,7 @@ def set_assignee(
     issue_id: int,
     assignee_id: int | None,
     *,
-    commit: bool = True,
+    commit: bool,
 ) -> dict | None:
     """Assign the issue to a user, or clear it (assignee_id=None -> Unassigned).
     Returns the updated issue, or None if no issue has that id. Checking that
@@ -291,7 +291,7 @@ def set_sprint(
     issue_id: int,
     sprint_id: int | None,
     *,
-    commit: bool = True,
+    commit: bool,
 ) -> dict | None:
     """Put the issue in a sprint, or move it back to the backlog (sprint_id=None).
     Returns the updated issue, or None if no issue has that id. Like set_assignee:
@@ -319,7 +319,7 @@ def set_sprint(
 
 
 def set_archived(
-    conn: sqlite3.Connection, issue_id: int, archived: bool, *, commit: bool = True
+    conn: sqlite3.Connection, issue_id: int, archived: bool, *, commit: bool
 ) -> dict | None:
     """Archive (soft-delete) an issue or restore it. Returns the updated issue, or
     None if no issue has that id. The row is never destroyed — archiving only stamps
@@ -343,7 +343,7 @@ def set_project(
     issue_id: int,
     project_id: int | None,
     *,
-    commit: bool = True,
+    commit: bool,
 ) -> dict | None:
     """Move the issue into a project, or remove it from one (project_id=None ->
     no project). Returns the updated issue, or None if no issue has that id.
@@ -401,7 +401,7 @@ def set_parent(
     issue_id: int,
     parent_id: int | None,
     *,
-    commit: bool = True,
+    commit: bool,
 ) -> dict | None:
     """Nest an issue under a parent (parent_id=None clears it to top-level).
     Returns the updated issue, or None if no issue has that id. Validation

@@ -111,7 +111,7 @@ def test_successful_login_transparently_upgrades_an_old_hash(tmp_path, monkeypat
     conn = _conn(tmp_path)
     # Store the hash at a LOWER cost than current policy (simulating a pre-upgrade row).
     monkeypatch.setattr(passwords, "_ITERATIONS", 1_000)
-    users.create_user(conn, email="a@e.com", name="A", password="pw")
+    users.create_user(conn, email="a@e.com", name="A", password="pw", commit=True)
     old_stored = conn.execute(
         "SELECT password_hash FROM users WHERE id = 1"
     ).fetchone()["password_hash"]
@@ -139,7 +139,7 @@ def test_successful_login_transparently_upgrades_an_old_hash(tmp_path, monkeypat
 def test_failed_login_never_rewrites_the_hash(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     monkeypatch.setattr(passwords, "_ITERATIONS", 1_000)
-    users.create_user(conn, email="a@e.com", name="A", password="pw")
+    users.create_user(conn, email="a@e.com", name="A", password="pw", commit=True)
     stored = conn.execute("SELECT password_hash FROM users WHERE id = 1").fetchone()[
         "password_hash"
     ]
@@ -160,7 +160,9 @@ def test_unknown_email_and_passwordless_account_burn_a_dummy_verify(
     tmp_path, monkeypatch
 ):
     conn = _conn(tmp_path)
-    users.create_user(conn, email="api-only@e.com", name="Bot")  # no password
+    users.create_user(
+        conn, email="api-only@e.com", name="Bot", commit=True
+    )  # no password
 
     burned: list[str] = []
     monkeypatch.setattr(passwords, "dummy_verify", lambda raw: burned.append(raw))
@@ -217,6 +219,7 @@ def test_legacy_long_password_can_login_and_rehash_without_a_new_write(
         email="legacy@example.com",
         name="Legacy",
         role="admin",
+        commit=True,
     )
     conn.execute(
         "UPDATE users SET password_hash = ? WHERE id = ?",

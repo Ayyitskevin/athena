@@ -62,6 +62,7 @@ def test_all_action_types_apply_and_are_attributed(tmp_path):
             conditions=cond,
             action_params={"user_id": 2},
             created_by=1,
+            commit=True,
         )
         automation.create_rule(
             conn,
@@ -71,6 +72,7 @@ def test_all_action_types_apply_and_are_attributed(tmp_path):
             conditions=cond,
             action_params={"status": target_status},
             created_by=1,
+            commit=True,
         )
         automation.create_rule(
             conn,
@@ -80,6 +82,7 @@ def test_all_action_types_apply_and_are_attributed(tmp_path):
             conditions=cond,
             action_params={"label": "auto"},
             created_by=1,
+            commit=True,
         )
         automation.create_rule(
             conn,
@@ -89,6 +92,7 @@ def test_all_action_types_apply_and_are_attributed(tmp_path):
             conditions=cond,
             action_params={"body": "triaged"},
             created_by=1,
+            commit=True,
         )
         automation.create_rule(
             conn,
@@ -98,6 +102,7 @@ def test_all_action_types_apply_and_are_attributed(tmp_path):
             conditions=cond,
             action_params={"user_id": 2},
             created_by=1,
+            commit=True,
         )
 
         # One 'created' event fires all five rules.
@@ -146,6 +151,7 @@ def test_loop_guard_prevents_runaway(tmp_path):
             action_type="comment",
             action_params={"body": "tick"},
             created_by=1,
+            commit=True,
         )
         iid = client.post("/issues", json={"title": "x"}, headers=H1).json()["id"]
 
@@ -190,6 +196,7 @@ def test_imported_history_never_fires_a_rule(tmp_path):
             action_type="set_status",
             action_params={"status": target_status},
             created_by=1,
+            commit=True,
         )
         # What a forge delivery lands as (0041): same verb and target as the
         # native control below, marked imported.
@@ -201,6 +208,7 @@ def test_imported_history_never_fires_a_rule(tmp_path):
             target_id=iid,
             detail="gh: commit",
             imported_at="2026-01-01 00:00:00",
+            commit=True,
         )
         conn.close()
 
@@ -218,6 +226,7 @@ def test_imported_history_never_fires_a_rule(tmp_path):
             target_kind="issue",
             target_id=iid,
             detail="native",
+            commit=True,
         )
         conn.close()
         assert automation.run_pass(db_file) == 1
@@ -256,6 +265,7 @@ def test_invalid_action_params_fail_soft(tmp_path):
             action_type="assign",
             action_params={"user_id": 9999},
             created_by=1,
+            commit=True,
         )
         automation.create_rule(
             conn,
@@ -264,6 +274,7 @@ def test_invalid_action_params_fail_soft(tmp_path):
             action_type="set_status",
             action_params={"status": "nope"},
             created_by=1,
+            commit=True,
         )
         iid = client.post("/issues", json={"title": "x"}, headers=H1).json()["id"]
         before = issues.get_issue(conn, iid)["status"]
@@ -296,6 +307,7 @@ def _buzz_rule_and_event(client, conn, action_params):
         action_type="buzz_message",
         action_params=action_params,
         created_by=1,
+        commit=True,
     )
     iid = client.post("/issues", json={"title": "Radio me"}, headers=H1).json()["id"]
     event = next(
@@ -425,6 +437,7 @@ def test_buzz_message_rule_surfaces_missing_radio_as_configuration_error(
             action_type="buzz_message",
             action_params={},
             created_by=1,
+            commit=True,
         )
         listed = automation.list_rules(conn)
         assert any(

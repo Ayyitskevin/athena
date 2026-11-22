@@ -20,7 +20,7 @@ def create_space(
     name: str,
     created_by: int,
     description: str = "",
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Insert a space and return it. Raises sqlite3.IntegrityError if a space with
     this key already exists (key is UNIQUE, case-insensitive) or if created_by
@@ -87,7 +87,7 @@ def update_space(
     key: str | None = None,
     name: str | None = None,
     description: str | None = None,
-    commit: bool = True,
+    commit: bool,
 ) -> dict | None:
     """Partial edit: only the fields passed as non-None are written, the rest are
     left as-is (mirrors aegis.update_project). Returns the updated space, or None if
@@ -119,7 +119,7 @@ def update_space(
 
 
 def set_visibility(
-    conn: sqlite3.Connection, space_id: int, visibility: str, *, commit: bool = True
+    conn: sqlite3.Connection, space_id: int, visibility: str, *, commit: bool
 ) -> dict | None:
     """Flip a space public ↔ private. Returns the updated space, or None if no space
     has that id (so the boundary can 404). The twin of aegis.projects.set_visibility:
@@ -139,9 +139,7 @@ def set_visibility(
     return get_space(conn, space_id)
 
 
-def delete_space(
-    conn: sqlite3.Connection, space_id: int, *, commit: bool = True
-) -> bool:
+def delete_space(conn: sqlite3.Connection, space_id: int, *, commit: bool) -> bool:
     """Delete a space. Returns True if a space was deleted, False if no space had
     that id (so the boundary can 404).
 

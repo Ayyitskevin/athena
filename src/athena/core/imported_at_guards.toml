@@ -1,0 +1,250 @@
+# Every read of the activity table in athena.core, and how it treats
+# imported rows. scripts/check_imported_at_guards.py reads this file and every
+# other imported_at_guards.toml under src/athena, and fails the build on an
+# activity reader that no file declares. A module's entries live in the nearest
+# imported_at_guards.toml at or above its directory (this one, for the modules
+# beside it); `module` is relative to this file.
+#
+# [[mechanism]]  a native-only mechanism listed in docs/FORGE.md's guard table:
+#                `label` names its row (MECHANISM_ROWS in the checker) and
+#                `pattern` must appear in `function` (in the whole file, for a
+#                migration).
+# [[guarded]]    another native-only reader: `pattern` must appear in
+#                `function`; `why` says why foreign history must not reach it.
+# [[exempt]]     a general reader allowed to see imported rows; `why` says why
+#                that is safe. Function "<module>" is a module-level SQL
+#                constant. An exempt reader that stops reading the trail fails
+#                as stale.
+
+# --- access.py ---------------------------------------------------------------
+
+[[exempt]]
+module = "access.py"
+function = "can_see_complete_issue_history"
+why = """\
+    a visibility gate over the trail the actor may see, native or not; \
+    excluding foreign rows here would change what 'full history' means"""
+
+# --- activity.py -------------------------------------------------------------
+
+[[mechanism]]
+label = "Automation scan"
+module = "activity.py"
+function = "list_events"
+pattern = 'imported_at IS NULL'
+
+[[guarded]]
+module = "activity.py"
+function = "reversed_counts_by_actor"
+pattern = 'original\.imported_at IS NULL'
+why = """\
+    the answerability ledger counts corrections to NATIVE work: undo itself \
+    refuses imported events, so a reversed-imported row cannot exist — the \
+    guard keeps the count honest even if that ever changed"""
+
+[[exempt]]
+module = "activity.py"
+function = "<module>"
+why = """\
+    _SELECT backs the general audit readers (list_activity, the event \
+    stream); the native-only consumer applies the guard in list_events' \
+    native_only branch, asserted in MECHANISMS"""
+
+[[exempt]]
+module = "activity.py"
+function = "_validated_lineage"
+why = """\
+    run/fork coordinates are validated by primary key for the native row \
+    being recorded; imported rows carry NULL run coordinates, and forking \
+    from a visible trail row is a native act with honest provenance"""
+
+[[exempt]]
+module = "activity.py"
+function = "reversed_event_ids"
+why = """\
+    reversal links are written only by undo, which refuses imported events; \
+    this read projects the visible trail for undo badges"""
+
+[[exempt]]
+module = "activity.py"
+function = "_child_run_ids"
+why = "run-scoped; imported rows carry NULL run coordinates"
+
+[[exempt]]
+module = "activity.py"
+function = "can_see_complete_run"
+why = """\
+    run-scoped visibility gate; imported rows carry NULL run coordinates"""
+
+[[exempt]]
+module = "activity.py"
+function = "distinct_verbs"
+why = """\
+    filter metadata over the visible trail; the trail as-is includes foreign \
+    history"""
+
+[[exempt]]
+module = "activity.py"
+function = "distinct_target_kinds"
+why = """\
+    filter metadata over the visible trail; the trail as-is includes foreign \
+    history"""
+
+[[exempt]]
+module = "activity.py"
+function = "distinct_actors"
+why = """\
+    filter metadata over the visible trail; the trail as-is includes foreign \
+    history"""
+
+# --- activity_chain.py -------------------------------------------------------
+
+[[exempt]]
+module = "activity_chain.py"
+function = "<module>"
+why = """\
+    _ROW_SQL feeds the hash recipe: the chain attests the WHOLE trail as \
+    stored, and imported_at is one of the hashed facts — excluding foreign \
+    rows would open unchained gaps an importer could hide in"""
+
+[[exempt]]
+module = "activity_chain.py"
+function = "status"
+why = """\
+    coverage counting must see every row, imported included: unchained_count \
+    exists precisely to report what the chain does not claim, so filtering \
+    here would misstate the chain's own boundary"""
+
+# --- agents.py ---------------------------------------------------------------
+
+[[exempt]]
+module = "agents.py"
+function = "agent_run_exists"
+why = "run-scoped; imported rows carry NULL run coordinates"
+
+[[exempt]]
+module = "agents.py"
+function = "_child_run_count"
+why = "run-scoped; imported rows carry NULL run coordinates"
+
+# --- dispatch.py -------------------------------------------------------------
+
+[[exempt]]
+module = "dispatch.py"
+function = "fork_run_ids"
+why = "run-scoped; imported rows carry NULL run coordinates"
+
+[[exempt]]
+module = "dispatch.py"
+function = "digest_mismatch_recorded"
+why = """\
+    run-scoped retry deduplication; imported rows carry NULL run coordinates \
+    and cannot satisfy run_id = ?"""
+
+# --- notifications.py --------------------------------------------------------
+
+[[guarded]]
+module = "notifications.py"
+function = "notify_watchers"
+pattern = 'if event is not None and event\["imported_at"\] is not None:\s+return\b'
+why = """\
+    generic watcher fan-out is native-only; explicit mentions remain a \
+    separate path with their existing deduplication"""
+
+[[exempt]]
+module = "notifications.py"
+function = "process_mentions"
+why = """\
+    called from the native record wrappers with the id of the event just \
+    written; the import paths (forge, portability) never pass through them"""
+
+[[exempt]]
+module = "notifications.py"
+function = "<module>"
+why = """\
+    the inbox join is keyed by the notification row's own event id; \
+    notification rows are created only by native fan-out, and the inbox \
+    renders the trail as-is"""
+
+[[exempt]]
+module = "notifications.py"
+function = "unread_count"
+why = "visibility-gated count over the reader's own inbox; personal state"
+
+[[exempt]]
+module = "notifications.py"
+function = "mark_read"
+why = "visibility subquery for the reader's own inbox; personal state"
+
+[[exempt]]
+module = "notifications.py"
+function = "mark_all_read"
+why = "visibility subquery for the reader's own inbox; personal state"
+
+# --- portability.py ----------------------------------------------------------
+
+[[exempt]]
+module = "portability.py"
+function = "_activity_for_targets"
+why = """\
+    export must carry foreign history (with its imported_at marker) or the \
+    bundle would silently drop part of the trail"""
+
+# --- security_events.py ------------------------------------------------------
+
+[[mechanism]]
+label = "Attention rollup, security refusal counters"
+module = "security_events.py"
+function = "list_failures"
+pattern = 'imported_at IS NULL'
+
+[[mechanism]]
+label = "Attention rollup, security refusal counters"
+module = "security_events.py"
+function = "failure_counts"
+pattern = 'imported_at IS NULL'
+
+# --- undo.py -----------------------------------------------------------------
+
+[[mechanism]]
+label = "Undo"
+module = "undo.py"
+function = "undo"
+pattern = 'event\["imported_at"\] is not None'
+
+# --- webhooks.py -------------------------------------------------------------
+
+[[exempt]]
+module = "webhooks.py"
+function = "current_tip"
+why = """\
+    the delivery cursor spans the whole firehose; webhook subscribers to the \
+    trail receive foreign history too, honestly marked"""
+
+# --- migrations/0055_issue_lifecycle_facts.sql -------------------------------
+
+[[mechanism]]
+label = "Lifecycle facts (0055)"
+module = "migrations/0055_issue_lifecycle_facts.sql"
+pattern = 'imported_at IS NULL'
+
+# --- migrations/0058_issue_claim_handoffs.sql --------------------------------
+
+[[mechanism]]
+label = "Claim handoffs (0058)"
+module = "migrations/0058_issue_claim_handoffs.sql"
+pattern = 'imported_at IS NULL'
+
+# --- migrations/0068_issue_assignee_facts.sql --------------------------------
+
+[[mechanism]]
+label = "Assignee facts (0068)"
+module = "migrations/0068_issue_assignee_facts.sql"
+pattern = 'imported_at IS NULL'
+
+# --- migrations/0082_issue_review_candidates.sql -----------------------------
+
+[[mechanism]]
+label = "Exact-version candidates and reviews (0082)"
+module = "migrations/0082_issue_review_candidates.sql"
+pattern = 'imported_at IS NULL'

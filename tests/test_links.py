@@ -35,7 +35,7 @@ def _seed_user(conn):
 
 
 def _space(conn):
-    return spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    return spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
 
 
 # --- unit: extract_refs -----------------------------------------------------
@@ -66,7 +66,9 @@ def test_extract_refs_handles_empty_and_none():
 def test_create_issue_indexes_its_references(tmp_path):
     conn = _migrated_conn(tmp_path / "ci.db")
     _seed_user(conn)
-    src = issues.create_issue(conn, title="src", body="ref [[page:1]]", created_by=1)
+    src = issues.create_issue(
+        conn, title="src", body="ref [[page:1]]", created_by=1, commit=True
+    )
     rows = conn.execute(
         "SELECT target_kind, target_id FROM links WHERE source_kind='issue' "
         "AND source_id=?",
@@ -80,7 +82,12 @@ def test_create_page_indexes_its_references(tmp_path):
     _seed_user(conn)
     sp = _space(conn)
     pg = pages.create_page(
-        conn, space_id=sp["id"], title="p", body="see [[issue:9]]", created_by=1
+        conn,
+        space_id=sp["id"],
+        title="p",
+        body="see [[issue:9]]",
+        created_by=1,
+        commit=True,
     )
     rows = conn.execute(
         "SELECT target_kind, target_id FROM links WHERE source_kind='page' "
@@ -96,9 +103,9 @@ def test_editing_a_body_replaces_its_links(tmp_path):
     conn = _migrated_conn(tmp_path / "edit.db")
     _seed_user(conn)
     src = issues.create_issue(
-        conn, title="s", body="[[page:1]] [[page:2]]", created_by=1
+        conn, title="s", body="[[page:1]] [[page:2]]", created_by=1, commit=True
     )
-    issues.update_issue(conn, src["id"], body="now only [[page:2]]")
+    issues.update_issue(conn, src["id"], body="now only [[page:2]]", commit=True)
     rows = conn.execute(
         "SELECT target_id FROM links WHERE source_kind='issue' AND source_id=?",
         (src["id"],),
@@ -111,8 +118,10 @@ def test_title_only_edit_leaves_links_untouched(tmp_path):
     # re-sync (and must not wipe the existing links by syncing an absent body).
     conn = _migrated_conn(tmp_path / "title.db")
     _seed_user(conn)
-    src = issues.create_issue(conn, title="s", body="[[page:5]]", created_by=1)
-    issues.update_issue(conn, src["id"], title="renamed")
+    src = issues.create_issue(
+        conn, title="s", body="[[page:5]]", created_by=1, commit=True
+    )
+    issues.update_issue(conn, src["id"], title="renamed", commit=True)
     rows = conn.execute(
         "SELECT target_id FROM links WHERE source_id=? AND source_kind='issue'",
         (src["id"],),
@@ -126,8 +135,12 @@ def test_self_reference_is_not_indexed(tmp_path):
     # itself must be dropped.
     conn = _migrated_conn(tmp_path / "self.db")
     _seed_user(conn)
-    src = issues.create_issue(conn, title="s", body="placeholder", created_by=1)
-    issues.update_issue(conn, src["id"], body=f"I am [[issue:{src['id']}]]")
+    src = issues.create_issue(
+        conn, title="s", body="placeholder", created_by=1, commit=True
+    )
+    issues.update_issue(
+        conn, src["id"], body=f"I am [[issue:{src['id']}]]", commit=True
+    )
     rows = conn.execute(
         "SELECT * FROM links WHERE source_id=? AND source_kind='issue'",
         (src["id"],),
@@ -144,7 +157,9 @@ def test_resolve_title_ref_unique_match(tmp_path):
     conn = _migrated_conn(tmp_path / "t1.db")
     _seed_user(conn)
     sp = _space(conn)
-    pg = pages.create_page(conn, space_id=sp["id"], title="Design Doc", created_by=1)
+    pg = pages.create_page(
+        conn, space_id=sp["id"], title="Design Doc", created_by=1, commit=True
+    )
     ref = links.resolve_title_ref(conn, "design doc")
     assert ref == {
         "kind": "page",
@@ -159,10 +174,14 @@ def test_resolve_title_ref_ambiguous_is_unresolved(tmp_path):
     # no space to disambiguate must NOT guess — it resolves to nothing (renders broken).
     conn = _migrated_conn(tmp_path / "t2.db")
     _seed_user(conn)
-    a = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
-    b = spaces.create_space(conn, key="OPS", name="Ops", created_by=1)
-    pages.create_page(conn, space_id=a["id"], title="Runbook", created_by=1)
-    pages.create_page(conn, space_id=b["id"], title="Runbook", created_by=1)
+    a = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
+    b = spaces.create_space(conn, key="OPS", name="Ops", created_by=1, commit=True)
+    pages.create_page(
+        conn, space_id=a["id"], title="Runbook", created_by=1, commit=True
+    )
+    pages.create_page(
+        conn, space_id=b["id"], title="Runbook", created_by=1, commit=True
+    )
     ref = links.resolve_title_ref(conn, "Runbook")
     assert ref["exists"] is False and ref["id"] is None
 
@@ -172,10 +191,14 @@ def test_resolve_title_ref_prefers_source_space(tmp_path):
     # that breaks an otherwise-ambiguous tie deterministically.
     conn = _migrated_conn(tmp_path / "t3.db")
     _seed_user(conn)
-    a = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
-    b = spaces.create_space(conn, key="OPS", name="Ops", created_by=1)
-    in_a = pages.create_page(conn, space_id=a["id"], title="Runbook", created_by=1)
-    in_b = pages.create_page(conn, space_id=b["id"], title="Runbook", created_by=1)
+    a = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
+    b = spaces.create_space(conn, key="OPS", name="Ops", created_by=1, commit=True)
+    in_a = pages.create_page(
+        conn, space_id=a["id"], title="Runbook", created_by=1, commit=True
+    )
+    in_b = pages.create_page(
+        conn, space_id=b["id"], title="Runbook", created_by=1, commit=True
+    )
     assert (
         links.resolve_title_ref(conn, "Runbook", space_id=a["id"])["id"] == in_a["id"]
     )
@@ -190,8 +213,10 @@ def test_resolve_title_ref_excludes_archived(tmp_path):
     conn = _migrated_conn(tmp_path / "t4.db")
     _seed_user(conn)
     sp = _space(conn)
-    pg = pages.create_page(conn, space_id=sp["id"], title="Old Doc", created_by=1)
-    pages.set_archived(conn, pg["id"], True)
+    pg = pages.create_page(
+        conn, space_id=sp["id"], title="Old Doc", created_by=1, commit=True
+    )
+    pages.set_archived(conn, pg["id"], True, commit=True)
     assert links.resolve_title_ref(conn, "Old Doc")["exists"] is False
 
 
@@ -202,10 +227,15 @@ def test_title_ref_records_backlink_within_space(tmp_path):
     _seed_user(conn)
     sp = _space(conn)
     target = pages.create_page(
-        conn, space_id=sp["id"], title="Design Doc", created_by=1
+        conn, space_id=sp["id"], title="Design Doc", created_by=1, commit=True
     )
     src = pages.create_page(
-        conn, space_id=sp["id"], title="Src", body="see [[Design Doc]]", created_by=1
+        conn,
+        space_id=sp["id"],
+        title="Src",
+        body="see [[Design Doc]]",
+        created_by=1,
+        commit=True,
     )
     out = [
         (r["target_kind"], r["target_id"])
@@ -225,12 +255,18 @@ def test_ambiguous_title_ref_records_no_link(tmp_path):
     # winner) stores no link, exactly as a broken key ref records no backlink.
     conn = _migrated_conn(tmp_path / "t6.db")
     _seed_user(conn)
-    a = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
-    b = spaces.create_space(conn, key="OPS", name="Ops", created_by=1)
-    pages.create_page(conn, space_id=a["id"], title="Runbook", created_by=1)
-    pages.create_page(conn, space_id=b["id"], title="Runbook", created_by=1)
+    a = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
+    b = spaces.create_space(conn, key="OPS", name="Ops", created_by=1, commit=True)
+    pages.create_page(
+        conn, space_id=a["id"], title="Runbook", created_by=1, commit=True
+    )
+    pages.create_page(
+        conn, space_id=b["id"], title="Runbook", created_by=1, commit=True
+    )
     # An ISSUE (no space) referencing the ambiguous title can't disambiguate.
-    src = issues.create_issue(conn, title="s", body="see [[Runbook]]", created_by=1)
+    src = issues.create_issue(
+        conn, title="s", body="see [[Runbook]]", created_by=1, commit=True
+    )
     rows = conn.execute(
         "SELECT COUNT(*) AS n FROM links WHERE source_kind='issue' AND source_id=?",
         (src["id"],),
@@ -244,9 +280,16 @@ def test_typed_token_is_never_treated_as_a_title(tmp_path):
     conn = _migrated_conn(tmp_path / "t7.db")
     _seed_user(conn)
     sp = _space(conn)
-    tgt = pages.create_page(conn, space_id=sp["id"], title="Doc", created_by=1)
+    tgt = pages.create_page(
+        conn, space_id=sp["id"], title="Doc", created_by=1, commit=True
+    )
     src = pages.create_page(
-        conn, space_id=sp["id"], title="Src", body=f"[[page:{tgt['id']}]]", created_by=1
+        conn,
+        space_id=sp["id"],
+        title="Src",
+        body=f"[[page:{tgt['id']}]]",
+        created_by=1,
+        commit=True,
     )
     rows = [
         (r["target_kind"], r["target_id"])
@@ -264,7 +307,9 @@ def test_render_body_links_live_title_reference(tmp_path):
     conn = _migrated_conn(tmp_path / "t8.db")
     _seed_user(conn)
     sp = _space(conn)
-    pg = pages.create_page(conn, space_id=sp["id"], title="Design Doc", created_by=1)
+    pg = pages.create_page(
+        conn, space_id=sp["id"], title="Design Doc", created_by=1, commit=True
+    )
     html = str(render_body(conn, "see [[Design Doc]]"))
     assert f'href="/mentor/pages/{pg["id"]}"' in html
     assert 'class="xref"' in html and "Design Doc" in html
@@ -286,9 +331,16 @@ def test_title_with_ampersand_round_trips_index_and_render(tmp_path):
     conn = _migrated_conn(tmp_path / "t11.db")
     _seed_user(conn)
     sp = _space(conn)
-    target = pages.create_page(conn, space_id=sp["id"], title="Q&A", created_by=1)
+    target = pages.create_page(
+        conn, space_id=sp["id"], title="Q&A", created_by=1, commit=True
+    )
     src = pages.create_page(
-        conn, space_id=sp["id"], title="Src", body="see [[Q&A]]", created_by=1
+        conn,
+        space_id=sp["id"],
+        title="Src",
+        body="see [[Q&A]]",
+        created_by=1,
+        commit=True,
     )
     # Indexed: the backlink points at the real page.
     assert [b["id"] for b in links.backlinks(conn, "page", target["id"])] == [src["id"]]
@@ -330,9 +382,11 @@ def test_render_broken_typed_ref_is_not_relinked_as_title(tmp_path):
 def test_backlinks_resolve_title_and_existence(tmp_path):
     conn = _migrated_conn(tmp_path / "bl.db")
     _seed_user(conn)
-    target = issues.create_issue(conn, title="the target", body="", created_by=1)
+    target = issues.create_issue(
+        conn, title="the target", body="", created_by=1, commit=True
+    )
     src = issues.create_issue(
-        conn, title="s", body=f"see [[issue:{target['id']}]]", created_by=1
+        conn, title="s", body=f"see [[issue:{target['id']}]]", created_by=1, commit=True
     )
     refs = links.backlinks(conn, "issue", target["id"])
     assert len(refs) == 1
@@ -350,12 +404,16 @@ def test_forward_reference_lights_up_when_target_is_created(tmp_path):
     _seed_user(conn)
     sp = _space(conn)
     # An issue references page #1 before any page exists.
-    src = issues.create_issue(conn, title="s", body="[[page:1]]", created_by=1)
+    src = issues.create_issue(
+        conn, title="s", body="[[page:1]]", created_by=1, commit=True
+    )
     # Nothing to resolve yet: outgoing link is present but broken.
     out = links.outgoing_links(conn, "issue", src["id"])
     assert out[0]["exists"] is False and out[0]["title"] is None
     # Create the page that was referenced — its backlinks now include the issue.
-    pg = pages.create_page(conn, space_id=sp["id"], title="p1", created_by=1)
+    pg = pages.create_page(
+        conn, space_id=sp["id"], title="p1", created_by=1, commit=True
+    )
     assert pg["id"] == 1
     back = links.backlinks(conn, "page", 1)
     assert [b["id"] for b in back] == [src["id"]]
@@ -364,13 +422,14 @@ def test_forward_reference_lights_up_when_target_is_created(tmp_path):
 def test_outgoing_links_ordered_and_resolved(tmp_path):
     conn = _migrated_conn(tmp_path / "out.db")
     _seed_user(conn)
-    t1 = issues.create_issue(conn, title="one", body="", created_by=1)
-    t2 = issues.create_issue(conn, title="two", body="", created_by=1)
+    t1 = issues.create_issue(conn, title="one", body="", created_by=1, commit=True)
+    t2 = issues.create_issue(conn, title="two", body="", created_by=1, commit=True)
     src = issues.create_issue(
         conn,
         title="s",
         body=f"[[issue:{t2['id']}]] and [[issue:{t1['id']}]]",
         created_by=1,
+        commit=True,
     )
     out = links.outgoing_links(conn, "issue", src["id"])
     # Ordered by (kind, id) for deterministic render, regardless of body order.
@@ -447,7 +506,9 @@ def test_page_backlinks_404_for_missing_page(tmp_path):
 def test_render_body_links_live_reference(tmp_path):
     conn = _migrated_conn(tmp_path / "r1.db")
     _seed_user(conn)
-    target = issues.create_issue(conn, title="Real Target", body="", created_by=1)
+    target = issues.create_issue(
+        conn, title="Real Target", body="", created_by=1, commit=True
+    )
     html = str(render_body(conn, f"see [[issue:{target['id']}]]"))
     assert f'href="/aegis/issues/{target["id"]}"' in html
     assert 'class="xref"' in html

@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import sqlite3
 
-from athena.core import activity, db
+from athena.core import activity
 
 # The gated vocabulary. Kept here (not in a schema CHECK) so adding a gate is a
 # code change with tests, not a migration.
@@ -95,8 +95,8 @@ class ApprovalRequired(Exception):
 
     Raised INSIDE the command's transaction so the refused write rolls back whole.
     The request row itself is recorded afterwards, on the freed connection — see
-    :func:`open_request` — because anything written inside that transaction would
-    roll back with it.
+    ``approval_commands.open_request`` — because anything written inside that
+    transaction would roll back with it.
     """
 
     def __init__(
@@ -153,7 +153,7 @@ def is_gated(conn: sqlite3.Connection, user_id: int, action_kind: str) -> bool:
     )
 
 
-def _live_request(
+def live_request(
     conn: sqlite3.Connection,
     *,
     user_id: int,
@@ -214,7 +214,7 @@ def require(
         return
     if not is_gated(conn, actor["id"], action_kind):
         return
-    live = _live_request(
+    live = live_request(
         conn,
         user_id=actor["id"],
         action_kind=action_kind,
@@ -251,54 +251,6 @@ def require(
         target_kind=target_kind,
         target_id=target_id,
     )
-
-
-def open_request(
-    conn: sqlite3.Connection,
-    *,
-    actor_id: int,
-    action_kind: str,
-    target_kind: str,
-    target_id: int,
-    run_id: str | None,
-) -> ApprovalRequest:
-    """Record (or return) the pending ask for a refused gated action.
-
-    Called AFTER the refused command's transaction unwound, on the freed
-    connection — a row written inside it would roll back with the refusal.
-    Idempotent by the live partial unique index: an agent retrying while it waits
-    re-reads its existing ask instead of flooding the operator's queue.
-    """
-    with db.transaction(conn, immediate=True):
-        existing = _live_request(
-            conn,
-            user_id=actor_id,
-            action_kind=action_kind,
-            target_kind=target_kind,
-            target_id=target_id,
-        )
-        if existing is not None:
-            return existing
-        cursor = conn.execute(
-            "INSERT INTO approval_requests "
-            "(action_kind, target_kind, target_id, requested_by, run_id) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (action_kind, target_kind, target_id, actor_id, run_id),
-        )
-        request_id = cursor.lastrowid
-        assert request_id is not None
-        activity.record(
-            conn,
-            actor_id=actor_id,
-            verb=VERB_REQUESTED,
-            target_kind=target_kind,
-            target_id=target_id,
-            detail=f"{action_kind} (approval #{request_id})",
-            commit=False,
-        )
-        created = get_request(conn, request_id)
-        assert created is not None
-        return created
 
 
 def get_request(conn: sqlite3.Connection, request_id: int) -> ApprovalRequest | None:

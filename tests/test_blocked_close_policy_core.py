@@ -27,12 +27,14 @@ def _setup(db_file):
         email="admin@example.com",
         name="Admin",
         role=users.ADMIN_ROLE,
+        commit=True,
     )
     human = users.create_user(
         conn,
         email="human@example.com",
         name="Human",
         role=users.MEMBER_ROLE,
+        commit=True,
     )
     agent = users.create_user(
         conn,
@@ -40,12 +42,14 @@ def _setup(db_file):
         name="Agent",
         role=users.MEMBER_ROLE,
         is_agent=True,
+        commit=True,
     )
     watcher = users.create_user(
         conn,
         email="watcher@example.com",
         name="Watcher",
         role=users.MEMBER_ROLE,
+        commit=True,
     )
     return conn, admin, human, agent, watcher
 
@@ -56,6 +60,7 @@ def _project(conn, actor, name, *, policy=False):
         name=name,
         key=name[:3].upper(),
         created_by=actor["id"],
+        commit=True,
     )
     if policy:
         conn.execute(
@@ -85,6 +90,7 @@ def _block(conn, blocker, target, actor):
         to_id=target["id"],
         relation="blocks",
         created_by=actor["id"],
+        commit=True,
     )
     assert (reason, inserted) == (None, True)
 
@@ -121,7 +127,7 @@ def test_agent_close_is_atomic_stable_and_does_not_leak_hidden_blocker(
     # and the rejection cannot name a blocker hidden in a private project.
     conn, admin, _, agent, _ = _setup(tmp_path / f"agent-{forged_override}.db")
     if forged_override:
-        agent = users.set_role(conn, agent["id"], users.ADMIN_ROLE)
+        agent = users.set_role(conn, agent["id"], users.ADMIN_ROLE, commit=True)
         assert agent is not None
     governed = _project(conn, admin, "Governed", policy=True)
     hidden = _project(conn, admin, "Hidden")
@@ -159,8 +165,16 @@ def test_custom_done_categories_resolve_the_canonical_blocker(tmp_path):
     conn, admin, _, agent, _ = _setup(tmp_path / "custom-done.db")
     governed = _project(conn, admin, "Governed", policy=True)
     blocker_project = _project(conn, admin, "Upstream")
-    assert statuses.add_status(conn, governed["id"], "shipped", "done") is None
-    assert statuses.add_status(conn, blocker_project["id"], "verified", "done") is None
+    assert (
+        statuses.add_status(conn, governed["id"], "shipped", "done", commit=True)
+        is None
+    )
+    assert (
+        statuses.add_status(
+            conn, blocker_project["id"], "verified", "done", commit=True
+        )
+        is None
+    )
     target = _issue(conn, agent, "Target", governed)
     blocker = _issue(conn, admin, "Blocker", blocker_project)
     _block(conn, blocker, target, admin)
@@ -194,7 +208,7 @@ def test_eligible_human_requires_explicit_audited_override_with_lineage_and_etag
     target = _issue(conn, actor, "Target", governed)
     blocker = _issue(conn, admin, "Blocker", governed)
     _block(conn, blocker, target, admin)
-    notifications.watch(conn, watcher["id"], "issue", target["id"])
+    notifications.watch(conn, watcher["id"], "issue", target["id"], commit=True)
 
     stale_tag = issue_etags.current_etag(conn, target)
     target = issue_commands.update_issue(
@@ -232,6 +246,7 @@ def test_eligible_human_requires_explicit_audited_override_with_lineage_and_etag
             verb="commented",
             target_kind="issue",
             target_id=target["id"],
+            commit=True,
         )
     finally:
         run_context.reset_run_id(session_token)
@@ -357,8 +372,13 @@ def test_project_only_move_that_implicitly_enters_done_category_is_still_a_close
     conn, admin, _, agent, _ = _setup(tmp_path / "implicit-close.db")
     source = _project(conn, admin, "Source")
     destination = _project(conn, admin, "Destination", policy=True)
-    assert statuses.add_status(conn, source["id"], "ready", "doing") is None
-    assert statuses.add_status(conn, destination["id"], "ready", "done") is None
+    assert (
+        statuses.add_status(conn, source["id"], "ready", "doing", commit=True) is None
+    )
+    assert (
+        statuses.add_status(conn, destination["id"], "ready", "done", commit=True)
+        is None
+    )
     target = _issue(conn, agent, "Target", source, status="ready")
     blocker = _issue(conn, agent, "Blocker", source)
     _block(conn, blocker, target, agent)
@@ -385,6 +405,7 @@ def test_automation_actor_is_also_denied_and_cannot_request_override(tmp_path):
         email=issue_commands.AUTOMATION_ACTOR_EMAIL,
         name="Automation",
         is_agent=True,
+        commit=True,
     )
     governed = _project(conn, admin, "Governed", policy=True)
     target = _issue(conn, admin, "Target", governed)
@@ -413,7 +434,7 @@ def test_live_agent_flag_prevents_stale_human_snapshot_override(tmp_path):
     blocker = _issue(conn, admin, "Blocker", governed)
     _block(conn, blocker, target, admin)
     stale_human = dict(human)
-    assert users.set_agent(conn, human["id"], True) is not None
+    assert users.set_agent(conn, human["id"], True, commit=True) is not None
 
     with pytest.raises(issue_commands.IssueCommandError) as rejected:
         issue_commands.update_issue(
@@ -440,9 +461,12 @@ def test_live_authorization_prevents_stale_human_override(tmp_path, live_change)
     _block(conn, blocker, target, admin)
     stale_human = dict(human)
     if live_change == "viewer":
-        assert users.set_role(conn, human["id"], users.VIEWER_ROLE) is not None
+        assert (
+            users.set_role(conn, human["id"], users.VIEWER_ROLE, commit=True)
+            is not None
+        )
     else:
-        assert users.set_paused(conn, human["id"], True) is not None
+        assert users.set_paused(conn, human["id"], True, commit=True) is not None
     baseline_events = conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0]
 
     with pytest.raises(issue_commands.IssueCommandError) as rejected:
@@ -471,7 +495,7 @@ def test_override_audit_failure_rolls_back_status_event_notifications_and_run(
     target = _issue(conn, human, "Target", governed)
     blocker = _issue(conn, admin, "Blocker", governed)
     _block(conn, blocker, target, admin)
-    notifications.watch(conn, watcher["id"], "issue", target["id"])
+    notifications.watch(conn, watcher["id"], "issue", target["id"], commit=True)
     baseline = {
         table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         for table in ("activity", "notifications", "run_bindings")

@@ -18,18 +18,22 @@ from athena.core import db, users
 def _setup(tmp_path):
     conn = db.connect(tmp_path / "sprints.db")
     db.migrate(conn)
-    uid = users.create_user(conn, email="a@e.com", name="A")["id"]
-    proj = projects.create_project(conn, name="Ops", key="OPS", created_by=uid)
+    uid = users.create_user(conn, email="a@e.com", name="A", commit=True)["id"]
+    proj = projects.create_project(
+        conn, name="Ops", key="OPS", created_by=uid, commit=True
+    )
     return conn, uid, proj["id"]
 
 
 def test_create_get_list_and_state_filter(tmp_path):
     conn, _, pid = _setup(tmp_path)
-    s1 = sprints.create_sprint(conn, project_id=pid, name="Sprint 1", goal="ship it")
+    s1 = sprints.create_sprint(
+        conn, project_id=pid, name="Sprint 1", goal="ship it", commit=True
+    )
     assert s1["state"] == sprints.PLANNED and s1["goal"] == "ship it"
     assert sprints.get_sprint(conn, s1["id"])["name"] == "Sprint 1"
 
-    sprints.create_sprint(conn, project_id=pid, name="Sprint 2")
+    sprints.create_sprint(conn, project_id=pid, name="Sprint 2", commit=True)
     assert {s["name"] for s in sprints.list_sprints(conn, project_id=pid)} == {
         "Sprint 1",
         "Sprint 2",
@@ -47,14 +51,14 @@ def test_create_get_list_and_state_filter(tmp_path):
 def test_create_rejects_unknown_project(tmp_path):
     conn, _, _ = _setup(tmp_path)
     with pytest.raises(sqlite3.IntegrityError):
-        sprints.create_sprint(conn, project_id=9999, name="orphan")
+        sprints.create_sprint(conn, project_id=9999, name="orphan", commit=True)
     conn.close()
 
 
 def test_start_activates_and_stamps_start_date(tmp_path):
     conn, _, pid = _setup(tmp_path)
-    s = sprints.create_sprint(conn, project_id=pid, name="S1")
-    started = sprints.start_sprint(conn, s["id"])
+    s = sprints.create_sprint(conn, project_id=pid, name="S1", commit=True)
+    started = sprints.start_sprint(conn, s["id"], commit=True)
     assert started["state"] == sprints.ACTIVE
     assert started["start_date"]  # stamped
     assert sprints.active_sprint(conn, pid)["id"] == s["id"]
@@ -63,20 +67,20 @@ def test_start_activates_and_stamps_start_date(tmp_path):
 
 def test_cannot_start_a_non_planned_sprint(tmp_path):
     conn, _, pid = _setup(tmp_path)
-    s = sprints.create_sprint(conn, project_id=pid, name="S1")
-    sprints.start_sprint(conn, s["id"])
+    s = sprints.create_sprint(conn, project_id=pid, name="S1", commit=True)
+    sprints.start_sprint(conn, s["id"], commit=True)
     with pytest.raises(sprints.SprintStateError):
-        sprints.start_sprint(conn, s["id"])  # already active
+        sprints.start_sprint(conn, s["id"], commit=True)  # already active
     conn.close()
 
 
 def test_one_active_sprint_per_project(tmp_path):
     conn, _, pid = _setup(tmp_path)
-    a = sprints.create_sprint(conn, project_id=pid, name="A")
-    b = sprints.create_sprint(conn, project_id=pid, name="B")
-    sprints.start_sprint(conn, a["id"])
+    a = sprints.create_sprint(conn, project_id=pid, name="A", commit=True)
+    b = sprints.create_sprint(conn, project_id=pid, name="B", commit=True)
+    sprints.start_sprint(conn, a["id"], commit=True)
     with pytest.raises(sprints.SprintStateError):
-        sprints.start_sprint(conn, b["id"])  # A is already active
+        sprints.start_sprint(conn, b["id"], commit=True)  # A is already active
     conn.close()
 
 
@@ -87,38 +91,40 @@ def test_rejected_start_rolls_back_and_leaves_conn_usable(tmp_path):
     # sprint stays PLANNED and the connection isn't left mid-transaction (which would
     # break the next write).
     conn, _, pid = _setup(tmp_path)
-    a = sprints.create_sprint(conn, project_id=pid, name="A")
-    b = sprints.create_sprint(conn, project_id=pid, name="B")
-    sprints.start_sprint(conn, a["id"])
+    a = sprints.create_sprint(conn, project_id=pid, name="A", commit=True)
+    b = sprints.create_sprint(conn, project_id=pid, name="B", commit=True)
+    sprints.start_sprint(conn, a["id"], commit=True)
     with pytest.raises(sprints.SprintStateError):
-        sprints.start_sprint(conn, b["id"])
+        sprints.start_sprint(conn, b["id"], commit=True)
     # B untouched by the rejected start (rollback), A still the only active sprint.
     assert sprints.get_sprint(conn, b["id"])["state"] == sprints.PLANNED
     assert sprints.active_sprint(conn, pid)["id"] == a["id"]
     # The connection is not stuck in a dangling transaction — a later write still commits.
-    c = sprints.create_sprint(conn, project_id=pid, name="C")
+    c = sprints.create_sprint(conn, project_id=pid, name="C", commit=True)
     assert sprints.get_sprint(conn, c["id"])["name"] == "C"
     conn.close()
 
 
 def test_another_project_can_have_its_own_active_sprint(tmp_path):
     conn, uid, pid = _setup(tmp_path)
-    other = projects.create_project(conn, name="Web", key="WEB", created_by=uid)["id"]
-    a = sprints.create_sprint(conn, project_id=pid, name="A")
-    b = sprints.create_sprint(conn, project_id=other, name="B")
-    sprints.start_sprint(conn, a["id"])
+    other = projects.create_project(
+        conn, name="Web", key="WEB", created_by=uid, commit=True
+    )["id"]
+    a = sprints.create_sprint(conn, project_id=pid, name="A", commit=True)
+    b = sprints.create_sprint(conn, project_id=other, name="B", commit=True)
+    sprints.start_sprint(conn, a["id"], commit=True)
     # A different project's cadence is independent.
-    assert sprints.start_sprint(conn, b["id"])["state"] == sprints.ACTIVE
+    assert sprints.start_sprint(conn, b["id"], commit=True)["state"] == sprints.ACTIVE
     conn.close()
 
 
 def test_complete_only_from_active_and_stamps_end_date(tmp_path):
     conn, _, pid = _setup(tmp_path)
-    s = sprints.create_sprint(conn, project_id=pid, name="S1")
+    s = sprints.create_sprint(conn, project_id=pid, name="S1", commit=True)
     with pytest.raises(sprints.SprintStateError):
-        sprints.complete_sprint(conn, s["id"])  # still planned
-    sprints.start_sprint(conn, s["id"])
-    done = sprints.complete_sprint(conn, s["id"])
+        sprints.complete_sprint(conn, s["id"], commit=True)  # still planned
+    sprints.start_sprint(conn, s["id"], commit=True)
+    done = sprints.complete_sprint(conn, s["id"], commit=True)
     assert done["state"] == sprints.COMPLETED and done["end_date"]
     # A completed sprint no longer counts as the project's active one.
     assert sprints.active_sprint(conn, pid) is None
@@ -127,8 +133,12 @@ def test_complete_only_from_active_and_stamps_end_date(tmp_path):
 
 def test_update_edits_fields_and_can_clear_a_date(tmp_path):
     conn, _, pid = _setup(tmp_path)
-    s = sprints.create_sprint(conn, project_id=pid, name="S1", start_date="2026-07-01")
-    updated = sprints.update_sprint(conn, s["id"], name="Renamed", start_date=None)
+    s = sprints.create_sprint(
+        conn, project_id=pid, name="S1", start_date="2026-07-01", commit=True
+    )
+    updated = sprints.update_sprint(
+        conn, s["id"], name="Renamed", start_date=None, commit=True
+    )
     assert updated["name"] == "Renamed" and updated["start_date"] is None
     assert updated["goal"] == ""  # untouched
     conn.close()
@@ -136,14 +146,16 @@ def test_update_edits_fields_and_can_clear_a_date(tmp_path):
 
 def test_assign_issue_to_sprint_and_back_to_backlog(tmp_path):
     conn, uid, pid = _setup(tmp_path)
-    s = sprints.create_sprint(conn, project_id=pid, name="S1")
-    iss = issues.create_issue(conn, title="x", body="", created_by=uid, project_id=pid)
+    s = sprints.create_sprint(conn, project_id=pid, name="S1", commit=True)
+    iss = issues.create_issue(
+        conn, title="x", body="", created_by=uid, project_id=pid, commit=True
+    )
 
-    in_sprint = issues.set_sprint(conn, iss["id"], s["id"])
+    in_sprint = issues.set_sprint(conn, iss["id"], s["id"], commit=True)
     assert in_sprint["sprint_id"] == s["id"]
     assert sprints.count_issues_in_sprint(conn, s["id"]) == 1
 
-    back = issues.set_sprint(conn, iss["id"], None)
+    back = issues.set_sprint(conn, iss["id"], None, commit=True)
     assert back["sprint_id"] is None
     assert sprints.count_issues_in_sprint(conn, s["id"]) == 0
     conn.close()
@@ -151,24 +163,28 @@ def test_assign_issue_to_sprint_and_back_to_backlog(tmp_path):
 
 def test_assign_to_unknown_sprint_is_refused(tmp_path):
     conn, uid, pid = _setup(tmp_path)
-    iss = issues.create_issue(conn, title="x", body="", created_by=uid, project_id=pid)
+    iss = issues.create_issue(
+        conn, title="x", body="", created_by=uid, project_id=pid, commit=True
+    )
     with pytest.raises(sqlite3.IntegrityError):
-        issues.set_sprint(conn, iss["id"], 9999)  # FK backstop
+        issues.set_sprint(conn, iss["id"], 9999, commit=True)  # FK backstop
     conn.close()
 
 
 def test_delete_guarded_by_membership(tmp_path):
     conn, uid, pid = _setup(tmp_path)
-    s = sprints.create_sprint(conn, project_id=pid, name="S1")
-    iss = issues.create_issue(conn, title="x", body="", created_by=uid, project_id=pid)
-    issues.set_sprint(conn, iss["id"], s["id"])
+    s = sprints.create_sprint(conn, project_id=pid, name="S1", commit=True)
+    iss = issues.create_issue(
+        conn, title="x", body="", created_by=uid, project_id=pid, commit=True
+    )
+    issues.set_sprint(conn, iss["id"], s["id"], commit=True)
 
     # The caller's precondition: don't delete a sprint that still holds issues.
     assert sprints.count_issues_in_sprint(conn, s["id"]) == 1
     # Empty it, then the delete succeeds.
-    issues.set_sprint(conn, iss["id"], None)
-    assert sprints.delete_sprint(conn, s["id"]) is True
+    issues.set_sprint(conn, iss["id"], None, commit=True)
+    assert sprints.delete_sprint(conn, s["id"], commit=True) is True
     assert sprints.get_sprint(conn, s["id"]) is None
     # Deleting a missing sprint is a clean False.
-    assert sprints.delete_sprint(conn, 9999) is False
+    assert sprints.delete_sprint(conn, 9999, commit=True) is False
     conn.close()

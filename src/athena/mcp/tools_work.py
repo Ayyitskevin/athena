@@ -10,9 +10,19 @@ from pydantic import Field, SkipValidation, ValidationError
 
 from athena.aegis import lease_commands
 from athena.aegis.review_models import CandidateSubmission, ReviewCandidateId
+from athena.core import tokens
 from athena.mcp import results
 from athena.mcp.results import ListResult, listing
 from athena.mcp.server import (
+    ADDS,
+    CONDUCTOR,
+    ERASES,
+    FULL_ONLY,
+    KNOWLEDGE,
+    READS,
+    READ_ONLY,
+    SEAT,
+    SETS,
     ClaimNextLeaseSeconds,
     ClaimNextLimit,
     DispatchIssueId,
@@ -49,7 +59,7 @@ ReportFindings = Annotated[
 def register_work_tools(tool, mutation_tool, client) -> None:
     # --- issue writes -------------------------------------------------------
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=SEAT, hints=ADDS)
     def create_issue(
         title: str,
         body: str = "",
@@ -74,7 +84,8 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    # Destructive: an issue's title and body keep no history.
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=SEAT, hints=ERASES)
     def update_issue(
         issue_id: int,
         title: str | None = None,
@@ -115,7 +126,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def set_issue_placement(
         issue_id: int,
         project_id: int | None,
@@ -136,7 +147,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=CONDUCTOR, hints=SETS)
     def assign_issue(
         issue_id: int,
         assignee_id: int | None = None,
@@ -151,7 +162,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=CONDUCTOR, hints=SETS)
     def delegate_issue(
         issue_id: int,
         agent_user_id: int,
@@ -166,7 +177,8 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             )
         )
 
-    @mutation_tool
+    # An identical request returns its receipt.
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=CONDUCTOR, hints=SETS)
     def request_candidate_review(
         review_issue_id: DispatchIssueId,
         candidate_id: ReviewCandidateId,
@@ -181,7 +193,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             review_issue_id, candidate_id, reviewer_id, idempotency_key=idempotency_key
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=SEAT)
     def get_issue_lease(issue_id: int) -> dict | None:
         """Who holds the exclusive claim on this issue right now — {holder_id, holder_name,
         claimed_at, expires_at, generation, active, open_claim_handoff}, or {found:
@@ -189,7 +201,8 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         active=false is an expired, reclaimable lease (the last holder is still shown)."""
         return client.get_issue_lease(issue_id)
 
-    @mutation_tool
+    # Not idempotent: a repeat with the generation renews the lease.
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=SEAT, hints=ADDS)
     def claim_issue(
         issue_id: int,
         if_match: str,
@@ -220,7 +233,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=SEAT, hints=ADDS)
     def claim_next_ready(
         limit: ClaimNextLimit = 1,
         lease_seconds: ClaimNextLeaseSeconds | None = None,
@@ -249,7 +262,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=SEAT, hints=SETS)
     def yield_claim(
         issue_id: int,
         generation: LeaseGeneration,
@@ -282,7 +295,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=SEAT, hints=SETS)
     def resume_claim_handoff(
         issue_id: int,
         handoff_token: HandoffToken,
@@ -302,7 +315,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=SEAT, hints=SETS)
     def complete_claim(
         issue_id: int,
         generation: LeaseGeneration,
@@ -372,7 +385,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             review_candidate_id=review_candidate_id,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=SEAT, hints=SETS)
     def decline_delegation(
         issue_id: int,
         generation: LeaseGeneration | None = None,
@@ -392,14 +405,14 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             )
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=SEAT, hints=ADDS)
     def comment_on_issue(
         issue_id: int, body: str, idempotency_key: IdempotencyKey | None = None
     ) -> dict:
         """Add a comment to an issue, authored by the token's user."""
         return client.comment_on_issue(issue_id, body, idempotency_key=idempotency_key)
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def archive_issue(
         issue_id: int, idempotency_key: IdempotencyKey | None = None
     ) -> dict:
@@ -407,14 +420,15 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         row and its history are kept, and it can be restored. Returns the issue."""
         return client.archive_issue(issue_id, idempotency_key=idempotency_key)
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def unarchive_issue(
         issue_id: int, idempotency_key: IdempotencyKey | None = None
     ) -> dict:
         """Restore a previously archived issue to the active lists. Returns the issue."""
         return client.unarchive_issue(issue_id, idempotency_key=idempotency_key)
 
-    @mutation_tool
+    # These fields' previous values are in the trail.
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def bulk_update_issues(
         ids: list[int],
         status: str | None = None,
@@ -440,7 +454,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
 
     # --- hierarchy (epics & sub-tasks) --------------------------------------
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=CONDUCTOR, hints=SETS)
     def set_issue_parent(
         issue_id: int,
         parent_id: int | None = None,
@@ -453,7 +467,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             issue_id, parent_id, idempotency_key=idempotency_key
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=CONDUCTOR)
     def list_subtasks(issue_id: int, offset: ListOffset = 0) -> ListResult:
         """List the direct child issues (sub-tasks) nested under this issue."""
         rows = client.list_subtasks(issue_id)
@@ -461,13 +475,15 @@ def register_work_tools(tool, mutation_tool, client) -> None:
 
     # --- dependencies (blocks / relates) ------------------------------------
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def list_issue_links(issue_id: int) -> dict:
         """Read an issue's dependency links — what it blocks, what blocks it, and
         what it relates to. Returns {blocks, blocked_by, relates}."""
         return client.list_issue_links(issue_id)
 
-    @mutation_tool
+    @mutation_tool(
+        scope=tokens.ISSUE_WRITE_SCOPE, profiles=(KNOWLEDGE, CONDUCTOR), hints=SETS
+    )
     def link_issues(
         issue_id: int,
         target_ref: str,
@@ -481,7 +497,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             issue_id, target_ref, relation, idempotency_key=idempotency_key
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def unlink_issues(
         issue_id: int,
         relation: str,
@@ -496,19 +512,19 @@ def register_work_tools(tool, mutation_tool, client) -> None:
 
     # --- sprints ------------------------------------------------------------
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def list_sprints(project_id: ProjectId, state: str | None = None) -> ListResult:
         """List a project's sprints, optionally filtered by state
         (planned/active/completed)."""
         return listing(client.list_sprints(project_id, state=state))
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def get_sprint(sprint_id: SprintId) -> dict:
         """Get one sprint's descriptive fields and lifecycle state. Hidden and
         missing sprints are both reported as not found."""
         return client.get_sprint(sprint_id)
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=ADDS)
     def create_sprint(
         project_id: ProjectId,
         name: str,
@@ -529,7 +545,8 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    # Destructive: goal and dates are overwritten, not quoted.
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=ERASES)
     def update_sprint(
         sprint_id: SprintId,
         name: str | None = None,
@@ -555,7 +572,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def start_sprint(
         sprint_id: SprintId,
         idempotency_key: IdempotencyKey | None = None,
@@ -565,7 +582,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         when start_date is unset."""
         return client.start_sprint(sprint_id, idempotency_key=idempotency_key)
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def complete_sprint(
         sprint_id: SprintId,
         idempotency_key: IdempotencyKey | None = None,
@@ -574,7 +591,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         end_date is unset. Issues stay associated with the completed sprint."""
         return client.complete_sprint(sprint_id, idempotency_key=idempotency_key)
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=ERASES)
     def delete_sprint(
         sprint_id: SprintId,
         confirm_permanent: PermanentDeleteConfirmation,
@@ -587,7 +604,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             raise ValueError("confirm_permanent must be true")
         return client.delete_sprint(sprint_id, idempotency_key=idempotency_key)
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def set_issue_sprint(
         issue_id: int,
         sprint_id: SprintId | None = None,
@@ -606,12 +623,13 @@ def register_work_tools(tool, mutation_tool, client) -> None:
 
     # --- labels -------------------------------------------------------------
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=KNOWLEDGE)
     def list_labels(offset: ListOffset = 0) -> ListResult:
         """List the shared label vocabulary (id, name, color)."""
         return results.sliced(client.list_labels(), offset=offset)
 
-    @mutation_tool
+    # A second label of that name is refused.
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def create_label(
         name: str,
         color: str = "#6b7280",
@@ -621,7 +639,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         Fails if a label with that name already exists (names are case-insensitive)."""
         return client.create_label(name, color=color, idempotency_key=idempotency_key)
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=KNOWLEDGE, hints=SETS)
     def attach_label(
         issue_id: int, label_id: int, idempotency_key: IdempotencyKey | None = None
     ) -> dict:
@@ -629,7 +647,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         Idempotent. Returns the updated issue."""
         return client.attach_label(issue_id, label_id, idempotency_key=idempotency_key)
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def detach_label(
         issue_id: int, label_id: int, idempotency_key: IdempotencyKey | None = None
     ) -> dict:
@@ -638,12 +656,12 @@ def register_work_tools(tool, mutation_tool, client) -> None:
 
     # --- projects & users ---------------------------------------------------
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=KNOWLEDGE)
     def list_projects(offset: ListOffset = 0) -> ListResult:
         """List Aegis projects (id, key, name)."""
         return results.sliced(client.list_projects(), offset=offset)
 
-    @tool
+    @tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=READS)
     def list_users() -> ListResult:
         """List users (id, name, role) — useful for resolving an assignee."""
         return listing(client.list_users())

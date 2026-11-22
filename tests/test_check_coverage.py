@@ -136,6 +136,211 @@ def test_fails_each_floor_independently(tmp_path, floor, value, message):
         _evaluate(tmp_path, payload)
 
 
+def _round_counts(payload: dict) -> dict:
+    """Measure exactly 90% line, 70% branch and 80% combined coverage.
+
+    The default fixture's combined value (87.142857...%) has no two-decimal floor
+    exactly half a point below it; these counts do.
+    """
+    payload["files"]["src/athena/__init__.py"]["summary"] = {
+        "covered_lines": 90,
+        "num_statements": 100,
+        "missing_lines": 10,
+        "excluded_lines": 0,
+        "covered_branches": 70,
+        "num_branches": 100,
+        "missing_branches": 30,
+    }
+    payload["files"]["src/athena/demo.py"]["summary"] = {
+        "covered_lines": 0,
+        "num_statements": 0,
+        "missing_lines": 0,
+        "excluded_lines": 2,
+        "covered_branches": 0,
+        "num_branches": 0,
+        "missing_branches": 0,
+    }
+    payload["totals"] = {
+        "covered_lines": 90,
+        "num_statements": 100,
+        "missing_lines": 10,
+        "excluded_lines": 2,
+        "covered_branches": 70,
+        "num_branches": 100,
+        "missing_branches": 30,
+    }
+    return payload
+
+
+_HALF_A_POINT_BELOW = {
+    "line_floor": "89.50",
+    "branch_floor": "69.50",
+    "combined_floor": "79.50",
+}
+
+
+def test_ratchet_passes_exactly_half_a_point_above_each_floor(tmp_path):
+    payload = _round_counts(_write_project(tmp_path, **_HALF_A_POINT_BELOW))
+
+    metrics, floors, _ = _evaluate(tmp_path, payload)
+
+    assert metrics.line_percent - floors.line == check_coverage.Decimal("0.5")
+    assert metrics.branch_percent - floors.branch == check_coverage.Decimal("0.5")
+    assert metrics.combined_percent - floors.combined == check_coverage.Decimal("0.5")
+
+
+@pytest.mark.parametrize(
+    ("floor", "value", "message"),
+    [
+        (
+            "line_floor",
+            "89.49",
+            "line 90.00000% is more than 0.5 points above its floor 89.49%: "
+            "raise the floor to 89.75 (tool.athena.coverage.line_floor in "
+            "pyproject.toml)",
+        ),
+        (
+            "branch_floor",
+            "69.49",
+            "branch 70.00000% is more than 0.5 points above its floor 69.49%: "
+            "raise the floor to 69.75 (tool.athena.coverage.branch_floor in "
+            "pyproject.toml)",
+        ),
+        (
+            "combined_floor",
+            "79.49",
+            "combined 80.00000% is more than 0.5 points above its floor 79.49%: "
+            "raise the floor to 79.75 (tool.athena.coverage.combined_floor in "
+            "pyproject.toml)",
+        ),
+    ],
+)
+def test_ratchet_fails_each_outgrown_floor_with_the_floor_to_paste(
+    tmp_path, floor, value, message
+):
+    # Gains are locked in: a floor more than half a point under the measurement
+    # fails, and the message names the number to write instead of making the
+    # contributor work it out.
+    payload = _round_counts(
+        _write_project(tmp_path, **{**_HALF_A_POINT_BELOW, floor: value})
+    )
+
+    with pytest.raises(check_coverage.CoverageFloorError) as failed:
+        _evaluate(tmp_path, payload)
+
+    assert failed.value.failures == (message,)
+
+
+def test_ratchet_rounds_the_suggested_floor_down_to_two_decimals(tmp_path):
+    # 87.142857...% combined: measured minus 0.25 is 86.892857..., so 86.89.
+    payload = _write_project(tmp_path, combined_floor="86.00")
+
+    with pytest.raises(
+        check_coverage.CoverageFloorError, match=r"raise the floor to 86\.89 "
+    ):
+        _evaluate(tmp_path, payload)
+
+
+def test_pasting_the_suggested_floor_passes_locally_and_on_ci(tmp_path):
+    # The rule the message follows. A local run, and CI's four combined shards
+    # (measured up to about 0.09 points higher), must both pass after one paste.
+    for hundred_thousandths in range(9_000_000, 9_500_000, 997):
+        measured = check_coverage.Decimal(hundred_thousandths) / 100_000
+        floor = check_coverage.suggested_floor(measured)
+        assert floor == floor.quantize(check_coverage.Decimal("0.01"))
+        assert check_coverage.Decimal("0.25") <= measured - floor
+        assert measured - floor < check_coverage.Decimal("0.26")
+        ci = measured + check_coverage.Decimal("0.09")
+        assert ci - floor <= check_coverage.RATCHET_SLACK
+
+    measured = check_coverage.Decimal(80)
+    payload = _round_counts(
+        _write_project(
+            tmp_path,
+            line_floor=str(check_coverage.suggested_floor(measured + 10)),
+            branch_floor=str(check_coverage.suggested_floor(measured - 10)),
+            combined_floor=str(check_coverage.suggested_floor(measured)),
+        )
+    )
+    _evaluate(tmp_path, payload)
+
+
+def test_cli_reports_the_measurement_and_each_failed_floor(tmp_path, capsys):
+    payload = _round_counts(
+        _write_project(tmp_path, line_floor="89.49", branch_floor="70.01")
+    )
+    report = tmp_path / "coverage.json"
+    report.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = check_coverage.main([str(report), "--repo-root", str(tmp_path)])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    # scripts/gate.py reads these lines into its receipt, pass or fail.
+    assert "Line coverage: 90/100 = 90.00000% (floor 89.49%)" in captured.out
+    assert "Branch coverage: 70/100 = 70.00000% (floor 70.01%)" in captured.out
+    assert "Combined coverage: 160/200 = 80.00000% (floor 87.14%)" in captured.out
+    assert [line for line in captured.out.splitlines() if "floor failed" in line] == [
+        "Coverage floor failed: line 90.00000% is more than 0.5 points above its "
+        "floor 89.49%: raise the floor to 89.75 "
+        "(tool.athena.coverage.line_floor in pyproject.toml)",
+        "Coverage floor failed: branch 70.00000% < 70.01%",
+        "Coverage floor failed: combined 80.00000% < 87.14%",
+    ]
+    assert "coverage gate failed: coverage floor failed: line" in captured.err
+
+
+def test_gate_reports_an_outgrown_floor_as_a_failed_coverage_stage(tmp_path, capsys):
+    # The product gate's coverage stage runs this checker through coverage.sh; a
+    # ratchet failure must fail that stage and put the paste-ready number in the
+    # receipt, not only in scrolled-past output.
+    gate_spec = importlib.util.spec_from_file_location(
+        "athena_gate_for_coverage_ratchet", _SCRIPT.parent / "gate.py"
+    )
+    assert gate_spec is not None and gate_spec.loader is not None
+    gate = importlib.util.module_from_spec(gate_spec)
+    sys.modules[gate_spec.name] = gate
+    gate_spec.loader.exec_module(gate)
+    payload = _round_counts(
+        _write_project(tmp_path, **{**_HALF_A_POINT_BELOW, "branch_floor": "60.25"})
+    )
+    report = tmp_path / "coverage.json"
+    report.write_text(json.dumps(payload), encoding="utf-8")
+    checker = gate.Stage(
+        "coverage",
+        (sys.executable, str(_SCRIPT), str(report), "--repo-root", str(tmp_path)),
+        False,
+        (),
+        (),
+        measure_memory=True,
+    )
+    outcome = gate._run_stage(checker)
+    capsys.readouterr()
+
+    record: dict = {}
+    code = gate.run_profile(
+        "product",
+        lambda stage: outcome if stage.name == "coverage" else True,
+        record=record,
+    )
+
+    capsys.readouterr()
+    assert code == 1
+    assert record["failed_stage"] == "coverage"
+    assert record["verdict"] == "GATE FAILED: coverage"
+    assert (
+        "COVERAGE FLOOR FAILED: branch 70.00000% is more than 0.5 points above its "
+        "floor 60.25%: raise the floor to 69.75 "
+        "(tool.athena.coverage.branch_floor in pyproject.toml)"
+    ) in record["receipt"]
+    assert record["coverage"]["branch"] == {
+        "covered": 70,
+        "total": 100,
+        "percent": 70.0,
+        "floor": 60.25,
+    }
+
+
 def test_rejects_missing_runtime_file(tmp_path):
     payload = _write_project(tmp_path)
     payload["files"].pop("src/athena/demo.py")

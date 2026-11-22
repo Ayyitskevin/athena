@@ -247,7 +247,7 @@ def test_page_and_space_web_writes_require_visibility(tmp_path):
         # once the outsider is granted membership, the same edit 303s.
         from athena.core import access
 
-        access.add_space_member(conn, sid, 3, added_by=2)
+        access.add_space_member(conn, sid, 3, added_by=2, commit=True)
         assert (
             client.post(
                 f"/mentor/pages/{pgid}/edit",

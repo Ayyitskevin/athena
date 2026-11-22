@@ -227,7 +227,10 @@ def test_completion_semantics_cycle_reopen_attribution_and_mutable_state(
         agent_id = actors["agent"]["id"]
         project = _project(client, name="Delivery", key="DEL", actor_id=human_id)
         conn = db.connect(db_file)
-        assert statuses.add_status(conn, project["id"], "shipped", "done") is None
+        assert (
+            statuses.add_status(conn, project["id"], "shipped", "done", commit=True)
+            is None
+        )
 
         issue = _issue(
             client,
@@ -258,6 +261,7 @@ def test_completion_semantics_cycle_reopen_attribution_and_mutable_state(
             verb="claim_completed",
             target_kind="issue",
             target_id=issue["id"],
+            commit=True,
         )
         _stamp_latest(conn, issue["id"], "claim_completed", "2026-01-07 12:00:00")
 
@@ -273,7 +277,7 @@ def test_completion_semantics_cycle_reopen_attribution_and_mutable_state(
             "WHERE project_id = ? AND name = 'shipped'",
             (project["id"],),
         )
-        users.set_agent(conn, agent_id, False)
+        users.set_agent(conn, agent_id, False, commit=True)
         conn.commit()
 
         result = _metrics(
@@ -390,8 +394,14 @@ def test_done_to_done_is_not_a_completion_and_assignee_is_not_attribution(
         agent_id = actors["agent"]["id"]
         project = _project(client, name="Release", key="REL", actor_id=human_id)
         conn = db.connect(db_file)
-        assert statuses.add_status(conn, project["id"], "shipped", "done") is None
-        assert statuses.add_status(conn, project["id"], "verified", "done") is None
+        assert (
+            statuses.add_status(conn, project["id"], "shipped", "done", commit=True)
+            is None
+        )
+        assert (
+            statuses.add_status(conn, project["id"], "verified", "done", commit=True)
+            is None
+        )
 
         issue = _issue(
             client,
@@ -438,8 +448,13 @@ def test_same_name_cross_project_category_moves_complete_and_reopen(tmp_path):
         source = _project(client, name="Source", key="SRC")
         destination = _project(client, name="Destination", key="DST")
         conn = db.connect(db_file)
-        assert statuses.remove_status(conn, destination["id"], "open") is None
-        assert statuses.add_status(conn, destination["id"], "open", "done") is None
+        assert (
+            statuses.remove_status(conn, destination["id"], "open", commit=True) is None
+        )
+        assert (
+            statuses.add_status(conn, destination["id"], "open", "done", commit=True)
+            is None
+        )
 
         issue = _issue(
             client,
@@ -744,6 +759,7 @@ def test_project_filter_reports_visible_untyped_activity_scope(tmp_path):
             target_kind="issue",
             target_id=issue["id"],
             issue_project_ids={project["id"]},
+            commit=True,
         )
         _stamp_latest(conn, issue["id"], "changed_status", "2026-04-02 00:00:00")
 
@@ -1086,7 +1102,7 @@ def test_rest_web_tokens_mcp_client_and_private_headers_share_contract(tmp_path)
             },
         )
         assert paused_token.status_code == 201
-        users.set_paused(conn, actors["human"]["id"], True)
+        users.set_paused(conn, actors["human"]["id"], True, commit=True)
         paused_response = client.get(
             path,
             headers={"Authorization": f"Bearer {paused_token.json()['token']}"},
@@ -1140,7 +1156,7 @@ def test_browser_session_matches_member_private_project_visibility(tmp_path):
             "2026-06-03 00:00:00",
         )
         _stamp_latest(conn, private_issue["id"], "created", "2026-06-02 00:00:00")
-        users.set_password(conn, actors["outsider"]["id"], "pw")
+        users.set_password(conn, actors["outsider"]["id"], "pw", commit=True)
         conn.close()
 
         expected = _metrics(
@@ -1212,6 +1228,7 @@ def test_actual_metrics_query_uses_bounded_partial_time_index(tmp_path):
         email="planner@metrics.test",
         name="Planner",
         role="admin",
+        commit=True,
     )
     issue = issue_commands.create_issue(conn, actor=actor, title="History plan target")
     issue_commands.update_issue(conn, actor=actor, issue_id=issue["id"], status="done")
@@ -1517,6 +1534,7 @@ def test_upgrade_from_0054_preserves_legacy_and_types_only_new_commands(
         email="upgrade@metrics.test",
         name="Upgrade admin",
         role="admin",
+        commit=True,
     )
     legacy_issue_id = conn.execute(
         "INSERT INTO issues (title, created_by) VALUES ('Legacy issue', ?)",
@@ -1606,6 +1624,7 @@ def test_lifecycle_fact_constraints_and_predecessor_chain_are_append_only(
             verb="changed_status",
             target_kind="issue",
             target_id=issue["id"],
+            commit=True,
         )
         with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint"):
             conn.execute(
@@ -1624,6 +1643,7 @@ def test_lifecycle_fact_constraints_and_predecessor_chain_are_append_only(
             verb="changed_status",
             target_kind="issue",
             target_id=issue["id"],
+            commit=True,
         )
         with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint"):
             conn.execute(
@@ -1674,6 +1694,7 @@ def test_native_completion_after_untracked_source_import_has_no_guessed_cycle(
             title="Imported without native creation history",
             body="",
             created_by=1,
+            commit=True,
         )
         _set_status(client, imported_issue["id"], "done", actor_id=1)
         _stamp_latest(

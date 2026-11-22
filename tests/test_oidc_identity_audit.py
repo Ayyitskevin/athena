@@ -70,7 +70,9 @@ def test_first_login_link_is_audited_and_self_attributed(tmp_path):
 
 def test_command_link_records_event_in_same_transaction(tmp_path):
     conn = _conn(tmp_path)
-    uid = users.create_user(conn, email="a@e.com", name="A", password="pw")["id"]
+    uid = users.create_user(
+        conn, email="a@e.com", name="A", password="pw", commit=True
+    )["id"]
     link = oidc_commands.link_identity(
         conn, actor_id=uid, issuer=ISS, subject="sub-1", user_id=uid
     )
@@ -83,7 +85,9 @@ def test_command_link_records_event_in_same_transaction(tmp_path):
 
 def test_command_unlink_noop_records_nothing(tmp_path):
     conn = _conn(tmp_path)
-    uid = users.create_user(conn, email="a@e.com", name="A", password="pw")["id"]
+    uid = users.create_user(
+        conn, email="a@e.com", name="A", password="pw", commit=True
+    )["id"]
     # Nothing linked → nothing removed → no event.
     assert (
         oidc_commands.unlink_identity(conn, actor_id=uid, issuer=ISS, subject="ghost")
@@ -111,8 +115,10 @@ def test_web_unlink_is_audited_and_self_attributed(tmp_path):
     db_file = tmp_path / "web_unlink.db"
     with TestClient(create_app(db_file)) as client:
         conn = db.connect(db_file)
-        uid = users.create_user(conn, email="a@e.com", name="A", password="pw")["id"]
-        oidc.link_identity(conn, issuer=ISS, subject="s1", user_id=uid)
+        uid = users.create_user(
+            conn, email="a@e.com", name="A", password="pw", commit=True
+        )["id"]
+        oidc.link_identity(conn, issuer=ISS, subject="s1", user_id=uid, commit=True)
         conn.close()
         _login_as(client, db_file, uid)
 
@@ -142,12 +148,14 @@ def test_web_unlink_of_another_users_identity_records_nothing(tmp_path):
     with TestClient(create_app(db_file)) as client:
         conn = db.connect(db_file)
         attacker = users.create_user(
-            conn, email="att@e.com", name="Att", password="pw"
+            conn, email="att@e.com", name="Att", password="pw", commit=True
         )["id"]
-        victim = users.create_user(conn, email="vic@e.com", name="Vic", password="pw")[
-            "id"
-        ]
-        oidc.link_identity(conn, issuer=ISS, subject="victim-sub", user_id=victim)
+        victim = users.create_user(
+            conn, email="vic@e.com", name="Vic", password="pw", commit=True
+        )["id"]
+        oidc.link_identity(
+            conn, issuer=ISS, subject="victim-sub", user_id=victim, commit=True
+        )
         conn.close()
         _login_as(client, db_file, attacker)
 

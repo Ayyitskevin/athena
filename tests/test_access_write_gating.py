@@ -141,7 +141,7 @@ def test_issue_writes_require_visibility(tmp_path):
         # which needs only visibility — now succeeds. This proves the 404 was the
         # visibility gate, distinct from the modify gate.
         conn = db.connect(db_file)
-        access.add_project_member(conn, pid, 3, added_by=2)
+        access.add_project_member(conn, pid, 3, added_by=2, commit=True)
         assert (
             client.patch(
                 f"/issues/{iid}", json={"title": "y"}, headers=H_OUTSIDER
@@ -299,8 +299,8 @@ def test_container_writes_require_visibility_without_leak(tmp_path):
 
         # Membership grants visibility: the same writes now 403 (visible, not the
         # creator) — the earlier 404 was the visibility gate, not the creator gate.
-        access.add_project_member(conn, pid, 3, added_by=2)
-        access.add_space_member(conn, sid, 3, added_by=2)
+        access.add_project_member(conn, pid, 3, added_by=2, commit=True)
+        access.add_space_member(conn, sid, 3, added_by=2, commit=True)
         assert (
             client.patch(
                 f"/projects/{pid}", json={"name": "x"}, headers=H_OUTSIDER
@@ -345,7 +345,7 @@ def test_sprint_writes_require_visibility_without_leak(tmp_path):
         # A member who CAN see the project but isn't its creator gets the honest 403 —
         # sprint management stays creator-only, and they already know it exists.
         conn = db.connect(db_file)
-        access.add_project_member(conn, pid, 3, added_by=2)
+        access.add_project_member(conn, pid, 3, added_by=2, commit=True)
         assert (
             client.post(
                 f"/projects/{pid}/sprints", json={"name": "S2"}, headers=H_OUTSIDER
@@ -405,7 +405,7 @@ def test_page_writes_require_visibility(tmp_path):
         )
         # Mentor is a shared wiki: a MEMBER (who can see it) may edit — membership opens
         # the write to 200, not just past the 404 (unlike issues, no per-row modify lock).
-        access.add_space_member(conn, sid, 3, added_by=2)
+        access.add_space_member(conn, sid, 3, added_by=2, commit=True)
         assert (
             client.patch(
                 f"/pages/{pid}", json={"body": "member"}, headers=H_OUTSIDER

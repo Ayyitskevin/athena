@@ -128,7 +128,7 @@ def test_hub_opens_to_a_granted_member(tmp_path):
         _login(client, "o@e.com")
         assert "Hidden alpha" not in client.get("/aegis/labels/shared").text
 
-        access.add_project_member(conn, pp, 3, added_by=2)
-        access.add_space_member(conn, ps, 3, added_by=2)
+        access.add_project_member(conn, pp, 3, added_by=2, commit=True)
+        access.add_space_member(conn, ps, 3, added_by=2, commit=True)
         text = client.get("/aegis/labels/shared").text
         assert "Hidden alpha" in text and "Hidden gamma" in text

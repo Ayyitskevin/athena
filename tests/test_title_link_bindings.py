@@ -16,12 +16,14 @@ def seed(conn):
         "INSERT INTO users(email,name) VALUES ('owner@example.invalid','Owner')"
     )
     conn.commit()
-    return spaces.create_space(conn, key="OPS", name="Operations", created_by=1)["id"]
+    return spaces.create_space(
+        conn, key="OPS", name="Operations", created_by=1, commit=True
+    )["id"]
 
 
 def page(conn, space_id, title, body=""):
     return pages.create_page(
-        conn, space_id=space_id, title=title, body=body, created_by=1
+        conn, space_id=space_id, title=title, body=body, created_by=1, commit=True
     )["id"]
 
 
@@ -41,11 +43,15 @@ def test_native_identity_release_rebind_and_atomic_rollback(tmp_path):
         sp = seed(conn)
         original = page(conn, sp, "Runbook")
         source = issues.create_issue(
-            conn, title="Deploy", body="[[Runbook]] [[ RUNBOOK ]]", created_by=1
+            conn,
+            title="Deploy",
+            body="[[Runbook]] [[ RUNBOOK ]]",
+            created_by=1,
+            commit=True,
         )["id"]
-        pages.update_page(conn, original, title="New title", editor_id=1)
+        pages.update_page(conn, original, title="New title", editor_id=1, commit=True)
         namesake = page(conn, sp, "Runbook")
-        issues.update_issue(conn, source, body="follow [[Runbook]]")
+        issues.update_issue(conn, source, body="follow [[Runbook]]", commit=True)
         assert links.source_title_targets(conn, "issue", source) == {
             "runbook": original
         }
@@ -63,8 +69,8 @@ def test_native_identity_release_rebind_and_atomic_rollback(tmp_path):
         }
         assert edge_ids(conn, "issue", source) == {original}
 
-        issues.update_issue(conn, source, body="remove the token")
-        issues.update_issue(conn, source, body="[[Runbook]]")
+        issues.update_issue(conn, source, body="remove the token", commit=True)
+        issues.update_issue(conn, source, body="[[Runbook]]", commit=True)
         assert edge_ids(conn, "issue", source) == {namesake}
         conn.execute("DELETE FROM issues WHERE id=?", (source,))
         assert not links.stored_title_bindings(conn, "issue", source)
@@ -79,14 +85,20 @@ def test_normalization_reserved_tokens_and_retryable_forward_links(tmp_path):
         assert links.stored_title_bindings(conn, "page", source) == {}
         page(conn, sp, "äbc")
         good = page(conn, sp, "Äbc")
-        pages.update_page(conn, source, body="new text [[ÄBC]]", editor_id=1)
+        pages.update_page(
+            conn, source, body="new text [[ÄBC]]", editor_id=1, commit=True
+        )
         assert links.source_title_targets(conn, "page", source) == {"Äbc": good}
-        pages.set_archived(conn, good, True)
-        pages.update_page(conn, source, body="retained [[ Äbc ]]", editor_id=1)
+        pages.set_archived(conn, good, True, commit=True)
+        pages.update_page(
+            conn, source, body="retained [[ Äbc ]]", editor_id=1, commit=True
+        )
         assert edge_ids(conn, "page", source) == {good}
         assert pages.delete_page(conn, good)
         page(conn, sp, "Äbc")
-        pages.update_page(conn, source, body="dangling [[Äbc]]", editor_id=1)
+        pages.update_page(
+            conn, source, body="dangling [[Äbc]]", editor_id=1, commit=True
+        )
         assert edge_ids(conn, "page", source) == {good}
         assert links.source_title_targets(conn, "page", source) == {"Äbc": good}
         assert pages.delete_page(conn, source)
@@ -131,9 +143,9 @@ def test_upgrade_freezes_old_body_and_evidence_before_any_new_edits(
         sp = seed(conn)
         original = page(conn, sp, "Runbook")
         other = page(conn, sp, "Auxiliary")
-        source = issues.create_issue(conn, title="Old issue", body="", created_by=1)[
-            "id"
-        ]
+        source = issues.create_issue(
+            conn, title="Old issue", body="", created_by=1, commit=True
+        )["id"]
         body = f"[[Runbook]] [[Auxiliary]] [[Unknown]] [[page:{other}]]"
         conn.execute("UPDATE issues SET body=? WHERE id=?", (body, source))
         conn.executemany(
@@ -141,19 +153,19 @@ def test_upgrade_freezes_old_body_and_evidence_before_any_new_edits(
             [(source, original), (source, other)],
         )
         conn.commit()
-        pages.update_page(conn, original, title="Renamed", editor_id=1)
+        pages.update_page(conn, original, title="Renamed", editor_id=1, commit=True)
         page(conn, sp, "Runbook")
         conn.commit()
         monkeypatch.setattr(db, "MIGRATIONS_DIR", inventory)
         assert db.migrate(conn) == ["0084_title_link_bindings.sql"]
         # New names must not change the interpretation of pre-upgrade evidence.
-        pages.update_page(conn, original, title="Unknown", editor_id=1)
+        pages.update_page(conn, original, title="Unknown", editor_id=1, commit=True)
         before = conn.total_changes
         expected = {"runbook": original, "auxiliary": None, "unknown": None}
         assert links.source_title_targets(conn, "issue", source) == expected
         assert edge_ids(conn, "issue", source) == {original, other}
         assert conn.total_changes == before
-        issues.update_issue(conn, source, body="after edit " + body)
+        issues.update_issue(conn, source, body="after edit " + body, commit=True)
         assert links.stored_title_bindings(conn, "issue", source) == expected
         assert edge_ids(conn, "issue", source) == {original, other}
         assert (
@@ -170,11 +182,11 @@ def test_page_version_restore_keeps_retained_identity_and_resolves_reintroduced_
         sp = seed(conn)
         original = page(conn, sp, "Runbook")
         source = page(conn, sp, "Consumer", "v1 [[Runbook]]")
-        pages.update_page(conn, source, body="v2 [[Runbook]]", editor_id=1)
-        pages.update_page(conn, original, title="Renamed", editor_id=1)
+        pages.update_page(conn, source, body="v2 [[Runbook]]", editor_id=1, commit=True)
+        pages.update_page(conn, original, title="Renamed", editor_id=1, commit=True)
         namesake = page(conn, sp, "Runbook")
-        pages.restore_version(conn, source, 1, editor_id=1)
+        pages.restore_version(conn, source, 1, editor_id=1, commit=True)
         assert edge_ids(conn, "page", source) == {original}
-        pages.update_page(conn, source, body="cleared", editor_id=1)
-        pages.restore_version(conn, source, 1, editor_id=1)
+        pages.update_page(conn, source, body="cleared", editor_id=1, commit=True)
+        pages.restore_version(conn, source, 1, editor_id=1, commit=True)
         assert edge_ids(conn, "page", source) == {namesake}

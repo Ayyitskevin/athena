@@ -13,16 +13,26 @@ from athena.web.admin_agents import _agents_context
 def registry(tmp_path):
     conn = db.connect(tmp_path / "workers.db")
     db.migrate(conn)
-    admin = users.create_user(conn, email="op@example.invalid", name="Op", role="admin")
+    admin = users.create_user(
+        conn, email="op@example.invalid", name="Op", role="admin", commit=True
+    )
     agents = [
         users.create_user(
-            conn, email=f"a{i}@example.invalid", name=f"A{i}", is_agent=True
+            conn,
+            email=f"a{i}@example.invalid",
+            name=f"A{i}",
+            is_agent=True,
+            commit=True,
         )
         for i in range(2)
     ]
     creds = [
         tokens.create_token(
-            conn, user_id=a["id"], name="synthetic", scopes=["read", "issue:write"]
+            conn,
+            user_id=a["id"],
+            name="synthetic",
+            scopes=["read", "issue:write"],
+            commit=True,
         )["id"]
         for a in agents
     ]

@@ -194,6 +194,7 @@ def test_global_feed_pager_preserves_search_and_target_filters(tmp_path):
                     target_kind="issue",
                     target_id=iid,
                     detail="audit needle",
+                    commit=True,
                 )
         finally:
             conn.close()

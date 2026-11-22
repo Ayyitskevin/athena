@@ -49,6 +49,7 @@ def _schedule(
         action_params={"body": body},
         conditions=conditions,
         created_by=1,
+        commit=True,
     )
 
 
@@ -68,6 +69,7 @@ def _action_schedule(
         action_type=action_type,
         action_params=action_params,
         created_by=1,
+        commit=True,
     )
 
 
@@ -276,7 +278,7 @@ def test_disabled_rule_waits_and_reenable_resumes_bounded_work(tmp_path):
     conn = db.connect(db_file)
     rule = _schedule(conn, at="2030-04-01T00:00:00Z")
     actor_id = automation.system_actor_id(conn)
-    automation.set_enabled(conn, rule["id"], False)
+    automation.set_enabled(conn, rule["id"], False, commit=True)
     now = _now("2030-04-01T00:01:00Z")
     assert (
         automation.process_schedules(
@@ -290,7 +292,7 @@ def test_disabled_rule_waits_and_reenable_resumes_bounded_work(tmp_path):
     )
     assert automation.get_rule(conn, rule["id"])["schedule_status"] == "disabled"
 
-    automation.set_enabled(conn, rule["id"], True)
+    automation.set_enabled(conn, rule["id"], True, commit=True)
     assert (
         automation.process_schedules(
             conn, executor=lambda *_: None, actor_id=actor_id, now=now, max_actions=0
@@ -304,7 +306,7 @@ def test_disabled_rule_waits_and_reenable_resumes_bounded_work(tmp_path):
         == "pending"
     )
 
-    automation.set_enabled(conn, rule["id"], False)
+    automation.set_enabled(conn, rule["id"], False, commit=True)
     assert (
         automation.process_schedules(
             conn,
@@ -316,7 +318,7 @@ def test_disabled_rule_waits_and_reenable_resumes_bounded_work(tmp_path):
         )
         == 0
     )
-    automation.set_enabled(conn, rule["id"], True)
+    automation.set_enabled(conn, rule["id"], True, commit=True)
     assert (
         automation.process_schedules(
             conn, executor=lambda *_: None, actor_id=actor_id, now=now
@@ -797,6 +799,7 @@ def test_live_runner_retries_semantic_action_rejections_and_keeps_them_visible(
         created_by=1,
         trigger_type="schedule",
         schedule_at=due,
+        commit=True,
     )
     conn.close()
 

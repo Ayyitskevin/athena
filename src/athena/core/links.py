@@ -312,7 +312,7 @@ def sync_links(
     source_kind: str,
     source_id: int,
     body: str | None,
-    commit: bool = True,
+    commit: bool,
     new_source: bool = False,
 ) -> None:
     """Make the `links` rows for one source match its current body exactly.

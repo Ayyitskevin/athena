@@ -31,7 +31,9 @@ def _login_as(client, db_file, user_id):
 def _make_user(db_file, email, name, *, password=None):
     conn = db.connect(db_file)
     try:
-        return users.create_user(conn, email=email, name=name, password=password)["id"]
+        return users.create_user(
+            conn, email=email, name=name, password=password, commit=True
+        )["id"]
     finally:
         conn.close()
 
@@ -39,7 +41,9 @@ def _make_user(db_file, email, name, *, password=None):
 def _link(db_file, *, user_id, issuer=ISS, subject="sub-1"):
     conn = db.connect(db_file)
     try:
-        oidc.link_identity(conn, issuer=issuer, subject=subject, user_id=user_id)
+        oidc.link_identity(
+            conn, issuer=issuer, subject=subject, user_id=user_id, commit=True
+        )
     finally:
         conn.close()
 

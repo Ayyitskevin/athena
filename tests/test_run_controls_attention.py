@@ -15,36 +15,23 @@ from fastapi.testclient import TestClient
 
 from athena.aegis import fleet_attention
 from athena.core import db
-from athena.main import create_app
 
-H1 = {"X-Athena-Actor": "1"}
-
-
-def _app(tmp_path, name="controls_attention.db"):
-    return create_app(tmp_path / name), tmp_path / name
-
-
-def _bootstrap(client):
-    client.post("/users", json={"email": "a@e.com", "name": "Ann", "password": "pw"})
-
-
-def _agent(client, email="sol@e.com", name="Sol"):
-    return client.post(
-        "/users/onboard_agent",
-        json={"email": email, "name": name, "scopes": ["read", "issue:write"]},
-        headers=H1,
-    ).json()
+from support import (
+    ADMIN,
+    add_user,
+    bearer,
+    bootstrap,
+    login,
+    make_app,
+    onboard_agent,
+)
 
 
-def _bearer(onboarded):
-    return {"Authorization": f"Bearer {onboarded['token']['token']}"}
-
-
-def _bind_run(client, bearer, run_id):
+def _bind_run(client, agent, run_id):
     response = client.post(
         "/issues",
         json={"title": "tagged work"},
-        headers={**bearer, "X-Athena-Run": run_id},
+        headers=bearer(agent, run=run_id),
     )
     assert response.status_code == 201, response.text
 
@@ -53,7 +40,7 @@ def _create(client, run_id, kind="steer", payload="use approach B"):
     response = client.post(
         "/run-controls",
         json={"run_id": run_id, "kind": kind, "payload": payload},
-        headers=H1,
+        headers=ADMIN,
     )
     assert response.status_code == 201, response.text
     return response.json()
@@ -66,12 +53,11 @@ def test_attention_card_counts_live_controls_with_the_pages_own_predicate(
     # with the page it links to. "Live" here is the page's own `open` filter —
     # settled controls leave the count immediately, and expiry (a read-time
     # derivation, never a stored state) removes a control without any write.
-    app, db_file = _app(tmp_path)
+    app, db_file = make_app(tmp_path, "controls_attention.db")
     with TestClient(app) as client:
-        _bootstrap(client)
-        sol = _agent(client)
-        bearer = _bearer(sol)
-        _bind_run(client, bearer, "goal-1")
+        bootstrap(client)
+        sol = onboard_agent(client)
+        _bind_run(client, sol, "goal-1")
         steer = _create(client, "goal-1", kind="steer")
         _create(client, "goal-1", kind="request_cancel", payload="wind down")
 
@@ -87,7 +73,7 @@ def test_attention_card_counts_live_controls_with_the_pages_own_predicate(
         done = client.post(
             f"/run-controls/{steer['id']}/complete",
             json={"summary": "steered as asked"},
-            headers=bearer,
+            headers=bearer(sol),
         )
         assert done.status_code == 200, done.text
         conn = db.connect(db_file)
@@ -109,17 +95,13 @@ def test_admin_page_lists_controls_and_links_each_run(tmp_path):
     # Each row must lead back to the lineage page that owns creation and the
     # full settlement detail — this page renders the same command read the
     # API serves, and owns no data.
-    app, _ = _app(tmp_path, "controls_page.db")
+    app, _ = make_app(tmp_path, "controls_page.db")
     with TestClient(app) as client:
-        _bootstrap(client)
-        sol = _agent(client)
-        _bind_run(client, _bearer(sol), "goal-7")
+        bootstrap(client)
+        sol = onboard_agent(client)
+        _bind_run(client, sol, "goal-7")
         _create(client, "goal-7", payload="prefer the safe path")
-        client.post(
-            "/login",
-            data={"email": "a@e.com", "password": "pw"},
-            follow_redirects=False,
-        )
+        login(client, "a@e.com")
         page = client.get("/admin/run-controls")
         assert page.status_code == 200
         assert "goal-7" in page.text
@@ -145,37 +127,25 @@ def test_admin_page_is_operator_intelligence_only(tmp_path):
     # WHY: fleet-wide control traffic names runs, agents, and operator guidance
     # — the same bar as /admin/security. Members and anonymous readers get
     # refusals, and the dashboard card only renders for admins.
-    app, _ = _app(tmp_path, "controls_authz.db")
+    app, _ = make_app(tmp_path, "controls_authz.db")
     with TestClient(app) as client:
-        _bootstrap(client)
-        client.post(
-            "/users",
-            json={"email": "m@e.com", "name": "Mem", "password": "pw"},
-            headers=H1,
-        )
+        bootstrap(client)
+        add_user(client, "m@e.com", name="Mem")
         assert client.get("/admin/run-controls").status_code == 401
-        client.post(
-            "/login",
-            data={"email": "m@e.com", "password": "pw"},
-            follow_redirects=False,
-        )
+        login(client, "m@e.com")
         assert client.get("/admin/run-controls").status_code == 403
 
 
 def test_dashboard_card_names_the_signal_when_controls_wait(tmp_path):
     # WHY: steering by exception means the operator sees "something is asking"
     # from the dashboard without knowing the feature exists.
-    app, _ = _app(tmp_path, "controls_dash.db")
+    app, _ = make_app(tmp_path, "controls_dash.db")
     with TestClient(app) as client:
-        _bootstrap(client)
-        sol = _agent(client)
-        _bind_run(client, _bearer(sol), "goal-9")
+        bootstrap(client)
+        sol = onboard_agent(client)
+        _bind_run(client, sol, "goal-9")
         _create(client, "goal-9")
-        client.post(
-            "/login",
-            data={"email": "a@e.com", "password": "pw"},
-            follow_redirects=False,
-        )
+        login(client, "a@e.com")
         dashboard = client.get("/aegis/dashboard")
         assert dashboard.status_code == 200
         assert "Run controls awaiting an agent" in dashboard.text
@@ -187,27 +157,22 @@ def test_the_controls_page_does_not_link_a_run_with_no_lineage_page(tmp_path):
     # but has no lineage page — that page is built from activity events and
     # such a run has none. Linking anyway handed the operator a 404 from their
     # own cockpit (review finding). The id still shows; only the link is gone.
-    app, _ = _app(tmp_path, "controls_linkable.db")
+    app, _ = make_app(tmp_path, "controls_linkable.db")
     with TestClient(app) as client:
-        _bootstrap(client)
-        sol = _agent(client)
-        bearer = _bearer(sol)
+        bootstrap(client)
+        sol = onboard_agent(client)
         # Heartbeat only: no tagged write, so no activity events for this run.
         beat = client.put(
-            "/agent-runs/heartbeat", json={"run_id": "quiet-run"}, headers=bearer
+            "/agent-runs/heartbeat", json={"run_id": "quiet-run"}, headers=bearer(sol)
         )
         assert beat.status_code in (200, 201), beat.text
         assert _create(client, "quiet-run", payload="wrap up")
 
         # And one ordinary run that DOES have events, for contrast.
-        _bind_run(client, bearer, "loud-run")
+        _bind_run(client, sol, "loud-run")
         _create(client, "loud-run", payload="carry on")
 
-        client.post(
-            "/login",
-            data={"email": "a@e.com", "password": "pw"},
-            follow_redirects=False,
-        )
+        login(client, "a@e.com")
         page = client.get("/admin/run-controls")
         assert page.status_code == 200
         assert "quiet-run" in page.text

@@ -474,6 +474,7 @@ def test_doctor_deployment_mode_checks_exact_config_and_admin_recovery(
         name="Admin",
         password="password",
         role="admin",
+        commit=True,
     )
     conn.close()
     monkeypatch.setattr(config, "DB_PATH", source)
@@ -521,6 +522,7 @@ def test_doctor_deployment_mode_refuses_a_different_configured_database(
         name="Admin",
         password="password",
         role="admin",
+        commit=True,
     )
     conn.close()
     monkeypatch.setattr(config, "DB_PATH", configured)
@@ -699,6 +701,7 @@ def _record_activity(database, *, detail="synthetic audit event"):
             target_kind="issue",
             target_id=1,
             detail=detail,
+            commit=True,
         )
     finally:
         conn.close()
@@ -967,6 +970,7 @@ def test_deployment_doctor_refuses_bundle_database_before_any_check(
         name="Admin",
         password="password",
         role="admin",
+        commit=True,
     )
     conn.close()
     bundle_path = tmp_path / "bundle"
@@ -1284,6 +1288,7 @@ def test_recovery_bundle_keeps_pre_adoption_history_outside_chain_claim(tmp_path
         verb="created",
         target_kind="issue",
         target_id=1,
+        commit=True,
     )
     conn.close()
     bundle_path = tmp_path / "bundle"

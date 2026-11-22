@@ -33,6 +33,7 @@ def _record(conn, actor, kind, target, verb, *, run=None, parent=None, imported=
             target_kind=kind,
             target_id=target,
             imported_at=imported,
+            commit=True,
         )
     finally:
         run_context.reset_parent_run_id(parent_token)

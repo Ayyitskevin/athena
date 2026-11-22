@@ -102,8 +102,12 @@ def test_unit_verdict_words():
 def test_roster_joins_athena_and_flags_undeclared(tmp_path):
     conn = db.connect(tmp_path / "roster.db")
     db.migrate(conn)
-    users.create_user(conn, email="claude@agents.local", name="Claude", is_agent=True)
-    users.create_user(conn, email="stray@agents.local", name="Stray", is_agent=True)
+    users.create_user(
+        conn, email="claude@agents.local", name="Claude", is_agent=True, commit=True
+    )
+    users.create_user(
+        conn, email="stray@agents.local", name="Stray", is_agent=True, commit=True
+    )
     declared = (
         {
             "slug": "claude",
@@ -253,8 +257,12 @@ def test_drift_lines_cover_every_mismatch_and_only_mismatches(tmp_path):
     silence must not be spent as either health or drift."""
     conn = db.connect(tmp_path / "drift.db")
     db.migrate(conn)
-    users.create_user(conn, email="claude@agents.local", name="Claude", is_agent=True)
-    users.create_user(conn, email="kevin@e.com", name="Kevin", is_agent=False)
+    users.create_user(
+        conn, email="claude@agents.local", name="Claude", is_agent=True, commit=True
+    )
+    users.create_user(
+        conn, email="kevin@e.com", name="Kevin", is_agent=False, commit=True
+    )
 
     def probe(unit: str, scope: str) -> dict:
         if unit == "gone.service":

@@ -206,7 +206,7 @@ def _seed_supervision(
             conn, actor=sol_agent, issue_id=work_issue_id, status="done"
         )
     except approvals.ApprovalRequired as exc:
-        approval = approvals.open_request(
+        approval = approval_commands.open_request(
             conn,
             actor_id=exc.actor_id,
             action_kind=exc.action_kind,

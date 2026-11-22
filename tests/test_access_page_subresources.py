@@ -84,7 +84,7 @@ def test_page_subresource_404s_for_outsider_on_private_page(tmp_path, sub):
         assert client.get(url, headers=H_CREATOR).status_code == 200
         assert client.get(url, headers=H_ADMIN).status_code == 200
         # Membership opens it up.
-        access.add_space_member(db.connect(db_file), sid, 3, added_by=2)
+        access.add_space_member(db.connect(db_file), sid, 3, added_by=2, commit=True)
         assert client.get(url, headers=H_OUTSIDER).status_code == 200
 
 

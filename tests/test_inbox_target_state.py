@@ -100,6 +100,7 @@ def _complete_as_reader(db_file, issue_id):
         target_kind="issue",
         target_id=issue_id,
         detail="generation 1",
+        commit=True,
     )
     conn.commit()
 
@@ -189,6 +190,7 @@ def test_completion_is_per_reader_not_global(tmp_path):
             target_kind="issue",
             target_id=issue["id"],
             detail="generation 1",
+            commit=True,
         )
         conn.commit()
 
@@ -223,6 +225,7 @@ def test_imported_completion_does_not_mark_the_reader_as_completing(tmp_path):
             target_id=issue["id"],
             detail="imported generation 1",
             imported_at="2026-01-01 00:00:00",
+            commit=True,
         )
         conn.commit()
 

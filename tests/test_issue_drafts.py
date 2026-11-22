@@ -116,6 +116,7 @@ def test_two_authors_draft_the_same_issue_without_colliding(world):
                 title="Migrate",
                 body=text,
                 based_on="",
+                commit=True,
             )
         assert (
             issue_drafts.get_draft(conn, issue_id=world["issue"], owner_id=1)["body"]
@@ -203,6 +204,7 @@ def test_discarding_removes_only_that_authors_copy(world):
                 title="Migrate",
                 body=f"draft {owner}",
                 based_on="",
+                commit=True,
             )
     finally:
         conn.close()
@@ -307,6 +309,7 @@ def test_the_data_layer_refuses_oversized_drafts(world):
                 title="x" * (issue_drafts.MAX_TITLE_CHARS + 1),
                 body="",
                 based_on="",
+                commit=True,
             )
         with pytest.raises(issue_drafts.DraftTooLarge):
             issue_drafts.save_draft(
@@ -316,6 +319,7 @@ def test_the_data_layer_refuses_oversized_drafts(world):
                 title="t",
                 body="x" * (issue_drafts.MAX_BODY_CHARS + 1),
                 based_on="",
+                commit=True,
             )
     finally:
         conn.close()

@@ -22,35 +22,21 @@ from fastapi.testclient import TestClient
 from athena.core import db, sessions
 from athena.main import create_app
 
-H_ADMIN = {"X-Athena-Actor": "1"}
-H_CREATOR = {"X-Athena-Actor": "2"}
-H_OUTSIDER = {"X-Athena-Actor": "3"}
+from support import ADMIN, CREATOR, OUTSIDER, bootstrap_admin_creator_outsider
+
 BROWSER = {"Accept": "text/html"}
 SECRET = "Rotate the production signing key"
-
-
-def _bootstrap(client):
-    for email, name, role in (
-        ("admin@e.com", "Admin", "admin"),
-        ("c@e.com", "Creator", "member"),
-        ("o@e.com", "Outsider", "member"),
-    ):
-        client.post(
-            "/users",
-            json={"email": email, "name": name, "password": "pw", "role": role},
-            headers=H_ADMIN,
-        )
 
 
 def _private_project_with_an_issue(client, db_file):
     """A private project holding one issue whose title must never leak."""
     project_id = client.post(
-        "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+        "/projects", json={"name": "Secret", "key": "SEC"}, headers=CREATOR
     ).json()["id"]
     client.post(
         "/issues",
         json={"title": SECRET, "project_id": project_id},
-        headers=H_CREATOR,
+        headers=CREATOR,
     )
     conn = db.connect(db_file)
     try:
@@ -81,10 +67,10 @@ def test_rest_floor_is_hidden_from_an_outsider(tmp_path):
     db_file = tmp_path / "floor_rest.db"
     app = create_app(db_file)
     with TestClient(app) as client:
-        _bootstrap(client)
+        bootstrap_admin_creator_outsider(client)
         project_id = _private_project_with_an_issue(client, db_file)
 
-        refused = client.get(f"/projects/{project_id}/floor", headers=H_OUTSIDER)
+        refused = client.get(f"/projects/{project_id}/floor", headers=OUTSIDER)
         assert refused.status_code == 404, refused.text
         assert SECRET not in refused.text
 
@@ -96,10 +82,10 @@ def test_rest_floor_still_answers_the_people_who_may_see_it(tmp_path):
     db_file = tmp_path / "floor_allowed.db"
     app = create_app(db_file)
     with TestClient(app) as client:
-        _bootstrap(client)
+        bootstrap_admin_creator_outsider(client)
         project_id = _private_project_with_an_issue(client, db_file)
 
-        for headers in (H_CREATOR, H_ADMIN):
+        for headers in (CREATOR, ADMIN):
             allowed = client.get(f"/projects/{project_id}/floor", headers=headers)
             assert allowed.status_code == 200, allowed.text
             assert SECRET in allowed.text
@@ -112,7 +98,7 @@ def test_web_floor_and_floor_json_are_hidden_from_an_outsider(tmp_path):
     db_file = tmp_path / "floor_web.db"
     app = create_app(db_file)
     with TestClient(app) as client:
-        _bootstrap(client)
+        bootstrap_admin_creator_outsider(client)
         project_id = _private_project_with_an_issue(client, db_file)
         _session_for(client, db_file, 3)
 
@@ -131,7 +117,7 @@ def test_web_floor_answers_a_member_who_may_see_it(tmp_path):
     db_file = tmp_path / "floor_web_ok.db"
     app = create_app(db_file)
     with TestClient(app) as client:
-        _bootstrap(client)
+        bootstrap_admin_creator_outsider(client)
         project_id = _private_project_with_an_issue(client, db_file)
         _session_for(client, db_file, 2)
 

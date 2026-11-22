@@ -32,12 +32,7 @@ by recording login failures on a response background task, off the measured path
 
 from __future__ import annotations
 
-import logging
 import sqlite3
-
-from athena.core import activity
-
-_logger = logging.getLogger("athena")
 
 VERB_LOGIN_FAILED = "login_failed"
 VERB_LOGIN_THROTTLED = "login_throttled"
@@ -45,29 +40,6 @@ VERB_REVOKED_TOKEN_USED = "revoked_token_used"
 VERB_SCOPE_DENIED = "scope_denied"
 VERB_PAUSED_REFUSED = "paused_account_refused"
 VERB_REMOVED_REFUSED = "removed_account_refused"
-
-
-def record_failure(
-    conn: sqlite3.Connection,
-    *,
-    actor_id: int,
-    verb: str,
-    target_kind: str,
-    target_id: int,
-    detail: str = "",
-) -> None:
-    """Append one failure event, never letting the attempt block the refusal."""
-    try:
-        activity.record(
-            conn,
-            actor_id=actor_id,
-            verb=verb,
-            target_kind=target_kind,
-            target_id=target_id,
-            detail=detail,
-        )
-    except Exception:  # noqa: BLE001 — the refusal must go out regardless
-        _logger.exception("could not record auth failure event (%s)", verb)
 
 
 # The refusal verbs, as a closed set: a surface that lists "security signals" must

@@ -24,13 +24,15 @@ def _conn(tmp_path):
 
 
 def _user(conn, email="a@e.com", name="A"):
-    return users.create_user(conn, email=email, name=name)["id"]
+    return users.create_user(conn, email=email, name=name, commit=True)["id"]
 
 
 def test_link_then_resolve_to_user(tmp_path):
     conn = _conn(tmp_path)
     uid = _user(conn)
-    link = oidc.link_identity(conn, issuer=ISS, subject="sub-1", user_id=uid)
+    link = oidc.link_identity(
+        conn, issuer=ISS, subject="sub-1", user_id=uid, commit=True
+    )
     assert link["user_id"] == uid and link["created_at"]
 
     found = oidc.find_user_by_identity(conn, issuer=ISS, subject="sub-1")
@@ -54,9 +56,9 @@ def test_one_identity_maps_to_one_user(tmp_path):
     conn = _conn(tmp_path)
     u1 = _user(conn, "a@e.com", "A")
     u2 = _user(conn, "b@e.com", "B")
-    oidc.link_identity(conn, issuer=ISS, subject="sub-1", user_id=u1)
+    oidc.link_identity(conn, issuer=ISS, subject="sub-1", user_id=u1, commit=True)
     with pytest.raises(sqlite3.IntegrityError):
-        oidc.link_identity(conn, issuer=ISS, subject="sub-1", user_id=u2)
+        oidc.link_identity(conn, issuer=ISS, subject="sub-1", user_id=u2, commit=True)
     conn.close()
 
 
@@ -66,8 +68,8 @@ def test_same_subject_distinct_across_issuers(tmp_path):
     u1 = _user(conn, "a@e.com", "A")
     u2 = _user(conn, "b@e.com", "B")
     other = "https://other-idp.example.com"
-    oidc.link_identity(conn, issuer=ISS, subject="shared", user_id=u1)
-    oidc.link_identity(conn, issuer=other, subject="shared", user_id=u2)
+    oidc.link_identity(conn, issuer=ISS, subject="shared", user_id=u1, commit=True)
+    oidc.link_identity(conn, issuer=other, subject="shared", user_id=u2, commit=True)
 
     assert oidc.find_user_by_identity(conn, issuer=ISS, subject="shared")["id"] == u1
     assert oidc.find_user_by_identity(conn, issuer=other, subject="shared")["id"] == u2
@@ -77,18 +79,18 @@ def test_same_subject_distinct_across_issuers(tmp_path):
 def test_list_and_unlink_identities(tmp_path):
     conn = _conn(tmp_path)
     uid = _user(conn)
-    oidc.link_identity(conn, issuer=ISS, subject="sub-1", user_id=uid)
+    oidc.link_identity(conn, issuer=ISS, subject="sub-1", user_id=uid, commit=True)
     oidc.link_identity(
-        conn, issuer="https://other.example.com", subject="x", user_id=uid
+        conn, issuer="https://other.example.com", subject="x", user_id=uid, commit=True
     )
 
     listed = oidc.list_identities(conn, uid)
     assert {i["issuer"] for i in listed} == {ISS, "https://other.example.com"}
 
-    assert oidc.unlink_identity(conn, issuer=ISS, subject="sub-1") is True
+    assert oidc.unlink_identity(conn, issuer=ISS, subject="sub-1", commit=True) is True
     assert oidc.find_user_by_identity(conn, issuer=ISS, subject="sub-1") is None
     # Unlinking what isn't there is a clean False (the caller can 404).
-    assert oidc.unlink_identity(conn, issuer=ISS, subject="sub-1") is False
+    assert oidc.unlink_identity(conn, issuer=ISS, subject="sub-1", commit=True) is False
     # The other link and the user row are untouched.
     assert len(oidc.list_identities(conn, uid)) == 1
     assert users.get_user(conn, uid) is not None
@@ -99,5 +101,5 @@ def test_link_to_missing_user_is_refused(tmp_path):
     # WHY: a link must point at a real account — the FK refuses an orphan.
     conn = _conn(tmp_path)
     with pytest.raises(sqlite3.IntegrityError):
-        oidc.link_identity(conn, issuer=ISS, subject="sub-1", user_id=999)
+        oidc.link_identity(conn, issuer=ISS, subject="sub-1", user_id=999, commit=True)
     conn.close()

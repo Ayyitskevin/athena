@@ -243,6 +243,34 @@ def feed(tmp_path, monkeypatch):
     assert event_wait.SLOTS.active == 0  # nothing leaked past the requests
 
 
+@pytest.fixture
+def parked(monkeypatch) -> threading.Event:
+    """Set once a waiter has polled, found nothing, and gone to sleep: it is parked.
+
+    The route's own wait runs unchanged; only its sleep is wrapped, so a test can
+    wait for the moment a waiter is parked instead of guessing at it with the clock.
+    """
+    signal = threading.Event()
+    real_wait = event_wait.wait_for_events
+
+    async def sleep_parked(seconds: float) -> None:
+        signal.set()
+        await asyncio.sleep(seconds)
+
+    async def wait_for_events(poll, **options):
+        return await real_wait(poll, **options, sleep=sleep_parked)
+
+    monkeypatch.setattr(event_wait, "wait_for_events", wait_for_events)
+    return signal
+
+
+def _until_parked(parked: threading.Event) -> None:
+    assert parked.wait(timeout=5), (
+        "the waiter never parked: GET /events?wait= did not poll and go to sleep "
+        "within 5 s"
+    )
+
+
 def _get_in_thread(
     client: TestClient, url: str, headers: dict
 ) -> tuple[threading.Thread, list]:
@@ -277,10 +305,10 @@ def test_wait_above_the_cap_is_refused_like_any_other_bound(feed):
     assert too_long.status_code == 422
 
 
-def test_a_waiter_wakes_for_a_visible_event_written_by_another_connection(feed):
+def test_a_waiter_wakes_for_a_visible_event_written_by_another_connection(feed, parked):
     client, baseline = feed["client"], feed["baseline"]
     thread, box = _get_in_thread(client, f"/events?after={baseline}&wait=5", ADMIN)
-    time.sleep(0.25)
+    _until_parked(parked)
     assert not box  # still parked
     event_id = activity.record(
         feed["writer"],
@@ -288,6 +316,7 @@ def test_a_waiter_wakes_for_a_visible_event_written_by_another_connection(feed):
         verb="noted",
         target_kind="issue",
         target_id=feed["public_issue"],
+        commit=True,
     )["id"]
     thread.join(timeout=5)
     assert box, "the waiter never returned"
@@ -301,19 +330,20 @@ def test_a_waiter_wakes_for_a_visible_event_written_by_another_connection(feed):
     assert 0 < body["wait"]["elapsed_seconds"] < 2 and took < 2
 
 
-def test_a_waiter_does_not_wake_for_an_event_it_may_not_see(feed):
+def test_a_waiter_does_not_wake_for_an_event_it_may_not_see(feed, parked):
     client, baseline = feed["client"], feed["baseline"]
     agent_headers = feed["agent_headers"]
     thread, box = _get_in_thread(
         client, f"/events?after={baseline}&wait=1", agent_headers
     )
-    time.sleep(0.2)
+    _until_parked(parked)
     hidden_event = activity.record(
         feed["writer"],
         actor_id=1,
         verb="noted",
         target_kind="issue",
         target_id=feed["hidden_issue"],
+        commit=True,
     )["id"]
     thread.join(timeout=5)
     assert box, "the waiter never returned"
@@ -328,13 +358,15 @@ def test_a_waiter_does_not_wake_for_an_event_it_may_not_see(feed):
     assert control["wait"]["outcome"] == "event"
 
 
-def test_past_the_waiter_cap_the_answer_is_immediate_and_labelled(feed, monkeypatch):
+def test_past_the_waiter_cap_the_answer_is_immediate_and_labelled(
+    feed, parked, monkeypatch
+):
     client, baseline = feed["client"], feed["baseline"]
     monkeypatch.setattr(event_wait, "SLOTS", event_wait.WaiterSlots(1))
-    parked, parked_box = _get_in_thread(
+    waiter, waiter_box = _get_in_thread(
         client, f"/events?after={baseline}&wait=5", ADMIN
     )
-    time.sleep(0.25)
+    _until_parked(parked)
     assert event_wait.SLOTS.active == 1
     started = time.monotonic()
     degraded = client.get(f"/events?after={baseline}&wait=5", headers=ADMIN)
@@ -352,9 +384,10 @@ def test_past_the_waiter_cap_the_answer_is_immediate_and_labelled(feed, monkeypa
         verb="noted",
         target_kind="issue",
         target_id=feed["public_issue"],
+        commit=True,
     )
-    parked.join(timeout=5)
-    assert parked_box and parked_box[0][0].json()["wait"]["outcome"] == "event"
+    waiter.join(timeout=5)
+    assert waiter_box and waiter_box[0][0].json()["wait"]["outcome"] == "event"
     assert event_wait.SLOTS.active == 0
 
 

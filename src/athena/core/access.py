@@ -49,7 +49,7 @@ def add_project_member(
     user_id: int,
     added_by: int | None,
     *,
-    commit: bool = True,
+    commit: bool,
 ) -> bool:
     """Grant a user read access to a (private) project. Idempotent: re-adding the same
     pair is a no-op (composite PK + OR IGNORE), returning False so the caller records
@@ -68,7 +68,7 @@ def add_project_member(
 
 
 def remove_project_member(
-    conn: sqlite3.Connection, project_id: int, user_id: int, *, commit: bool = True
+    conn: sqlite3.Connection, project_id: int, user_id: int, *, commit: bool
 ) -> bool:
     """Revoke a user's membership. Returns True if a row was removed, False if the
     user wasn't a member (so the caller can 404). ``commit=False`` composes this
@@ -115,7 +115,7 @@ def add_space_member(
     user_id: int,
     added_by: int | None,
     *,
-    commit: bool = True,
+    commit: bool,
 ) -> bool:
     """Grant a user read access to a (private) space. Idempotent, like its project
     twin; returns True only on a real change. ``commit=False`` composes this inside the
@@ -131,7 +131,7 @@ def add_space_member(
 
 
 def remove_space_member(
-    conn: sqlite3.Connection, space_id: int, user_id: int, *, commit: bool = True
+    conn: sqlite3.Connection, space_id: int, user_id: int, *, commit: bool
 ) -> bool:
     """Revoke a user's space membership. Returns True if a row was removed.
     ``commit=False`` composes this inside the audited space-access command's

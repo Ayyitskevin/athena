@@ -147,7 +147,11 @@ def second_token(path, agent, scopes=("read", "issue:write")):
     conn = db.connect(path)
     try:
         token = tokens.create_token(
-            conn, user_id=agent["user"]["id"], name="Other credential", scopes=scopes
+            conn,
+            user_id=agent["user"]["id"],
+            name="Other credential",
+            scopes=scopes,
+            commit=True,
         )
     finally:
         conn.close()

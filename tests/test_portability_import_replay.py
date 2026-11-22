@@ -57,7 +57,7 @@ def _project_bundle(tmp_path):
     member = _user(source, "member@example.com", "Member")
     bot = _user(source, "bot@example.com", "Bot", is_agent=True)
     ext_space = spaces.create_space(
-        source, key="EXT", name="External", created_by=owner
+        source, key="EXT", name="External", created_by=owner, commit=True
     )
     ext_page = pages.create_page(
         source,
@@ -65,6 +65,7 @@ def _project_bundle(tmp_path):
         title="External",
         body="external",
         created_by=owner,
+        commit=True,
     )
     project = projects.create_project(
         source,
@@ -72,16 +73,20 @@ def _project_bundle(tmp_path):
         key="RPL",
         created_by=owner,
         description="import source",
+        commit=True,
     )
-    projects.set_blocked_close_policy(source, project["id"], enabled=True)
-    access.add_project_member(source, project["id"], member, owner)
-    sprint = sprints.create_sprint(source, project_id=project["id"], name="Launch")
+    projects.set_blocked_close_policy(source, project["id"], enabled=True, commit=True)
+    access.add_project_member(source, project["id"], member, owner, commit=True)
+    sprint = sprints.create_sprint(
+        source, project_id=project["id"], name="Launch", commit=True
+    )
     parent = issues.create_issue(
         source,
         title="Parent",
         body="placeholder",
         created_by=owner,
         project_id=project["id"],
+        commit=True,
     )
     child = issues.create_issue(
         source,
@@ -89,17 +94,23 @@ def _project_bundle(tmp_path):
         body="child body",
         created_by=member,
         project_id=project["id"],
+        commit=True,
     )
     issues.update_issue(
         source,
         parent["id"],
         body=f"See [[issue:{child['id']}]] and [[page:{ext_page['id']}]]",
+        commit=True,
     )
-    issues.set_assignee(source, parent["id"], member)
-    issues.set_parent(source, child["id"], parent["id"])
-    issues.set_sprint(source, child["id"], sprint["id"])
+    issues.set_assignee(source, parent["id"], member, commit=True)
+    issues.set_parent(source, child["id"], parent["id"], commit=True)
+    issues.set_sprint(source, child["id"], sprint["id"], commit=True)
     issue_comments.add_comment(
-        source, issue_id=parent["id"], author_id=member, body="portable comment"
+        source,
+        issue_id=parent["id"],
+        author_id=member,
+        body="portable comment",
+        commit=True,
     )
     source.execute(
         "INSERT INTO issue_contributors (issue_id, user_id, added_by) VALUES (?, ?, ?)",
@@ -111,8 +122,8 @@ def _project_bundle(tmp_path):
         (parent["id"], child["id"], "blocks", owner),
     )
     source.commit()
-    bug = labels.create_label(source, name="bug", color="#ff0000")
-    labels.add_label_to_issue(source, parent["id"], bug["id"])
+    bug = labels.create_label(source, name="bug", color="#ff0000", commit=True)
+    labels.add_label_to_issue(source, parent["id"], bug["id"], commit=True)
     _attachment(
         source,
         target_kind="issue",
@@ -126,6 +137,7 @@ def _project_bundle(tmp_path):
         verb="created",
         target_kind="project",
         target_id=project["id"],
+        commit=True,
     )
     source.execute(
         "INSERT INTO activity "
@@ -152,7 +164,7 @@ def _prepare_project_target(path):
     target = _connect(path)
     extra = _user(target, "extra@example.com", "Extra")
     existing = projects.create_project(
-        target, name="Existing", key="EX", created_by=extra
+        target, name="Existing", key="EX", created_by=extra, commit=True
     )
     issues.create_issue(
         target,
@@ -160,11 +172,12 @@ def _prepare_project_target(path):
         body="target id shifter",
         created_by=extra,
         project_id=existing["id"],
+        commit=True,
     )
     owner = _user(target, "owner@example.com", "Owner", role="admin")
     member = _user(target, "member@example.com", "Member")
     bot = _user(target, "bot@example.com", "Bot", is_agent=True)
-    labels.create_label(target, name="bug", color="#ff0000")
+    labels.create_label(target, name="bug", color="#ff0000", commit=True)
     return target, owner, member, bot
 
 
@@ -176,22 +189,23 @@ def test_project_import_allocates_past_deleted_reserved_ids(tmp_path):
     target = _connect(tmp_path / "target-after-delete.db")
     extra = _user(target, "extra@example.com", "Extra")
     deleted = projects.create_project(
-        target, name="Deleted", key="DEL", created_by=extra
+        target, name="Deleted", key="DEL", created_by=extra, commit=True
     )
     deleted_issue = issues.create_issue(
         target,
         title="Deleted highest issue",
         body="",
         created_by=extra,
+        commit=True,
     )
     target.execute("DELETE FROM issues WHERE id = ?", (deleted_issue["id"],))
     target.commit()
-    assert projects.delete_project(target, deleted["id"])
+    assert projects.delete_project(target, deleted["id"], commit=True)
 
     owner = _user(target, "owner@example.com", "Owner", role="admin")
     member = _user(target, "member@example.com", "Member")
     bot = _user(target, "bot@example.com", "Bot", is_agent=True)
-    labels.create_label(target, name="bug", color="#ff0000")
+    labels.create_label(target, name="bug", color="#ff0000", commit=True)
     manifest = portability.build_import_manifest(target, bundle)
 
     result = portability.replay_import_manifest(target, bundle, manifest)
@@ -414,22 +428,28 @@ def test_space_import_replays_manifest_and_rewrites_page_refs(tmp_path):
     source = _connect(tmp_path / "source-space.db")
     owner = _user(source, "owner@example.com", "Owner", role="admin")
     member = _user(source, "member@example.com", "Member")
-    project = projects.create_project(source, name="Aegis", key="AEG", created_by=owner)
+    project = projects.create_project(
+        source, name="Aegis", key="AEG", created_by=owner, commit=True
+    )
     issue = issues.create_issue(
         source,
         title="External issue",
         body="outside",
         created_by=owner,
         project_id=project["id"],
+        commit=True,
     )
-    space = spaces.create_space(source, key="DOC", name="Docs", created_by=owner)
-    access.add_space_member(source, space["id"], member, owner)
+    space = spaces.create_space(
+        source, key="DOC", name="Docs", created_by=owner, commit=True
+    )
+    access.add_space_member(source, space["id"], member, owner, commit=True)
     parent = pages.create_page(
         source,
         space_id=space["id"],
         title="Parent",
         body="parent",
         created_by=owner,
+        commit=True,
     )
     child = pages.create_page(
         source,
@@ -438,18 +458,20 @@ def test_space_import_replays_manifest_and_rewrites_page_refs(tmp_path):
         parent_id=parent["id"],
         body=f"See [[page:{parent['id']}]] and [[issue:{issue['id']}]]",
         created_by=member,
+        commit=True,
     )
     pages.update_page(
         source,
         parent["id"],
         editor_id=member,
         body=f"Parent references [[page:{child['id']}]]",
+        commit=True,
     )
     page_comments.add_comment(
-        source, page_id=child["id"], author_id=owner, body="page comment"
+        source, page_id=child["id"], author_id=owner, body="page comment", commit=True
     )
-    kb = labels.create_label(source, name="kb", color="#00ff00")
-    labels.add_label_to_page(source, child["id"], kb["id"])
+    kb = labels.create_label(source, name="kb", color="#00ff00", commit=True)
+    labels.add_label_to_page(source, child["id"], kb["id"], commit=True)
     _attachment(
         source,
         target_kind="page",
@@ -463,13 +485,14 @@ def test_space_import_replays_manifest_and_rewrites_page_refs(tmp_path):
         verb="created",
         target_kind="space",
         target_id=space["id"],
+        commit=True,
     )
     bundle = portability.export_bundle(source, "space", space["id"])
     source.close()
 
     target = _connect(tmp_path / "target-space.db")
     extra = _user(target, "extra@example.com", "Extra")
-    spaces.create_space(target, key="OLD", name="Old", created_by=extra)
+    spaces.create_space(target, key="OLD", name="Old", created_by=extra, commit=True)
     _user(target, "owner@example.com", "Owner", role="admin")
     _user(target, "member@example.com", "Member")
     manifest = portability.build_import_manifest(target, bundle)

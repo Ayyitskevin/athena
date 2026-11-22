@@ -37,7 +37,7 @@ def _seed_user(conn):
 
 
 def _space(conn):
-    return spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    return spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
 
 
 # --- unit: the index follows writes, across both kinds ----------------------
@@ -47,7 +47,11 @@ def test_create_issue_makes_it_findable(tmp_path):
     conn = _migrated_conn(tmp_path / "ci.db")
     _seed_user(conn)
     iss = issues.create_issue(
-        conn, title="Build the board", body="kanban columns please", created_by=1
+        conn,
+        title="Build the board",
+        body="kanban columns please",
+        created_by=1,
+        commit=True,
     )
     hits = search.search(conn, "kanban")
     assert [(h["kind"], h["source_id"]) for h in hits] == [("issue", iss["id"])]
@@ -60,7 +64,11 @@ def test_search_spans_issues_and_pages_in_one_query(tmp_path):
     _seed_user(conn)
     sp = _space(conn)
     iss = issues.create_issue(
-        conn, title="Deploy pipeline", body="the release deploy steps", created_by=1
+        conn,
+        title="Deploy pipeline",
+        body="the release deploy steps",
+        created_by=1,
+        commit=True,
     )
     pg = pages.create_page(
         conn,
@@ -68,6 +76,7 @@ def test_search_spans_issues_and_pages_in_one_query(tmp_path):
         title="Deploy runbook",
         body="how we deploy",
         created_by=1,
+        commit=True,
     )
     hits = search.search(conn, "deploy")
     found = {(h["kind"], h["source_id"]) for h in hits}
@@ -85,9 +94,14 @@ def test_title_hit_outranks_body_only_hit(tmp_path):
         title="random thing",
         body="we should migrate the database soon",
         created_by=1,
+        commit=True,
     )
     title_hit = issues.create_issue(
-        conn, title="Database migration plan", body="unrelated text", created_by=1
+        conn,
+        title="Database migration plan",
+        body="unrelated text",
+        created_by=1,
+        commit=True,
     )
     hits = search.search(conn, "database")
     assert [h["source_id"] for h in hits][0] == title_hit["id"]
@@ -99,8 +113,10 @@ def test_prefix_and_term_anding(tmp_path):
     # a second word narrows (AND), it does not widen.
     conn = _migrated_conn(tmp_path / "prefix.db")
     _seed_user(conn)
-    a = issues.create_issue(conn, title="design the schema", body="", created_by=1)
-    issues.create_issue(conn, title="schema only", body="", created_by=1)
+    a = issues.create_issue(
+        conn, title="design the schema", body="", created_by=1, commit=True
+    )
+    issues.create_issue(conn, title="schema only", body="", created_by=1, commit=True)
     # Prefix: "desig" finds "design".
     assert [h["source_id"] for h in search.search(conn, "desig")] == [a["id"]]
     # AND: both terms must appear, so only the first issue qualifies.
@@ -113,10 +129,12 @@ def test_edit_reindexes_title_and_body(tmp_path):
     conn = _migrated_conn(tmp_path / "edit.db")
     _seed_user(conn)
     iss = issues.create_issue(
-        conn, title="placeholder", body="contains zebra here", created_by=1
+        conn, title="placeholder", body="contains zebra here", created_by=1, commit=True
     )
     assert [h["source_id"] for h in search.search(conn, "zebra")] == [iss["id"]]
-    issues.update_issue(conn, iss["id"], title="Aardvark report", body="no animals now")
+    issues.update_issue(
+        conn, iss["id"], title="Aardvark report", body="no animals now", commit=True
+    )
     # Old body word is gone from the index...
     assert search.search(conn, "zebra") == []
     # ...and the new title is searchable.
@@ -133,9 +151,12 @@ def test_page_edit_reindexes(tmp_path):
         title="Notes",
         body="initial griffin content",
         created_by=1,
+        commit=True,
     )
     assert [h["source_id"] for h in search.search(conn, "griffin")] == [pg["id"]]
-    pages.update_page(conn, pg["id"], editor_id=1, body="rewritten phoenix content")
+    pages.update_page(
+        conn, pg["id"], editor_id=1, body="rewritten phoenix content", commit=True
+    )
     assert search.search(conn, "griffin") == []
     assert [h["source_id"] for h in search.search(conn, "phoenix")] == [pg["id"]]
 
@@ -144,9 +165,16 @@ def test_kind_filter_narrows_to_one_module(tmp_path):
     conn = _migrated_conn(tmp_path / "kind.db")
     _seed_user(conn)
     sp = _space(conn)
-    iss = issues.create_issue(conn, title="shared word alpha", body="", created_by=1)
+    iss = issues.create_issue(
+        conn, title="shared word alpha", body="", created_by=1, commit=True
+    )
     pg = pages.create_page(
-        conn, space_id=sp["id"], title="shared word alpha", body="", created_by=1
+        conn,
+        space_id=sp["id"],
+        title="shared word alpha",
+        body="",
+        created_by=1,
+        commit=True,
     )
     assert [h["source_id"] for h in search.search(conn, "alpha", kind="issue")] == [
         iss["id"]
@@ -160,7 +188,7 @@ def test_blank_query_returns_nothing(tmp_path):
     # WHY: an empty search box shows nothing, it does not dump the whole table.
     conn = _migrated_conn(tmp_path / "blank.db")
     _seed_user(conn)
-    issues.create_issue(conn, title="something", body="", created_by=1)
+    issues.create_issue(conn, title="something", body="", created_by=1, commit=True)
     assert search.search(conn, "") == []
     assert search.search(conn, "   ") == []
 
@@ -172,7 +200,11 @@ def test_query_operators_are_treated_as_literal_text(tmp_path):
     conn = _migrated_conn(tmp_path / "inj.db")
     _seed_user(conn)
     iss = issues.create_issue(
-        conn, title="set up the laptop", body="onboarding steps", created_by=1
+        conn,
+        title="set up the laptop",
+        body="onboarding steps",
+        created_by=1,
+        commit=True,
     )
     # `set:up(` would be a syntax error / column-filter if passed raw; here it is
     # just the tokens "set" and "up".
@@ -185,7 +217,9 @@ def test_query_operators_are_treated_as_literal_text(tmp_path):
 def test_snippet_highlights_the_match(tmp_path):
     conn = _migrated_conn(tmp_path / "snip.db")
     _seed_user(conn)
-    issues.create_issue(conn, title="t", body="the quick brown fox jumps", created_by=1)
+    issues.create_issue(
+        conn, title="t", body="the quick brown fox jumps", created_by=1, commit=True
+    )
     hit = search.search(conn, "brown")[0]
     assert "[brown]" in hit["snippet"]
 
@@ -220,11 +254,18 @@ def test_issue_hit_carries_key_and_status(tmp_path):
     # and status so the searcher can triage from the results list without opening it.
     conn = _migrated_conn(tmp_path / "ctx.db")
     _seed_user(conn)
-    proj = projects.create_project(conn, name="Web", key="WEB", created_by=1)
-    iss = issues.create_issue(
-        conn, title="zephyr handling", body="", created_by=1, project_id=proj["id"]
+    proj = projects.create_project(
+        conn, name="Web", key="WEB", created_by=1, commit=True
     )
-    issues.update_issue(conn, iss["id"], status="done")
+    iss = issues.create_issue(
+        conn,
+        title="zephyr handling",
+        body="",
+        created_by=1,
+        project_id=proj["id"],
+        commit=True,
+    )
+    issues.update_issue(conn, iss["id"], status="done", commit=True)
     hit = search.search(conn, "zephyr")[0]
     assert hit["key"] == "WEB-1"
     assert hit["status"] == "done"
@@ -235,7 +276,9 @@ def test_backlog_issue_hit_has_null_key(tmp_path):
     # than inventing one, and status is still present.
     conn = _migrated_conn(tmp_path / "blkey.db")
     _seed_user(conn)
-    issues.create_issue(conn, title="orphan unicorn", body="", created_by=1)
+    issues.create_issue(
+        conn, title="orphan unicorn", body="", created_by=1, commit=True
+    )
     hit = search.search(conn, "unicorn")[0]
     assert hit["key"] is None
     assert hit["status"] == "open"
@@ -246,9 +289,14 @@ def test_page_hit_carries_space_key(tmp_path):
     # different spaces are distinguishable from the results list.
     conn = _migrated_conn(tmp_path / "pgctx.db")
     _seed_user(conn)
-    sp = spaces.create_space(conn, key="OPS", name="Ops", created_by=1)
+    sp = spaces.create_space(conn, key="OPS", name="Ops", created_by=1, commit=True)
     pages.create_page(
-        conn, space_id=sp["id"], title="kraken runbook", body="", created_by=1
+        conn,
+        space_id=sp["id"],
+        title="kraken runbook",
+        body="",
+        created_by=1,
+        commit=True,
     )
     hit = search.search(conn, "kraken")[0]
     assert hit["space_key"] == "OPS"
@@ -262,7 +310,9 @@ def test_offset_pages_the_ranked_set(tmp_path):
     _seed_user(conn)
     # Five issues all matching "lantern"; title hits, so a stable bm25 order.
     made = [
-        issues.create_issue(conn, title=f"lantern {i}", body="", created_by=1)["id"]
+        issues.create_issue(
+            conn, title=f"lantern {i}", body="", created_by=1, commit=True
+        )["id"]
         for i in range(5)
     ]
     first_two = [
@@ -282,7 +332,7 @@ def test_offset_stays_inside_sqlite_integer_range(tmp_path):
     # callers before binding so an oversized page cannot become an OverflowError.
     conn = _migrated_conn(tmp_path / "offset-bound.db")
     _seed_user(conn)
-    issues.create_issue(conn, title="lantern", body="", created_by=1)
+    issues.create_issue(conn, title="lantern", body="", created_by=1, commit=True)
 
     assert (
         search.search(

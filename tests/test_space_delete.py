@@ -35,14 +35,14 @@ def _seed_user(conn, email="a@e.com", name="A"):
 def test_delete_space_removes_the_row(tmp_path):
     conn = _migrated_conn(tmp_path / "del.db")
     _seed_user(conn)
-    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
-    assert spaces.delete_space(conn, sp["id"]) is True
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
+    assert spaces.delete_space(conn, sp["id"], commit=True) is True
     assert spaces.get_space(conn, sp["id"]) is None
 
 
 def test_delete_missing_space_returns_false(tmp_path):
     conn = _migrated_conn(tmp_path / "delm.db")
-    assert spaces.delete_space(conn, 999) is False
+    assert spaces.delete_space(conn, 999, commit=True) is False
 
 
 def test_count_pages_in_space_counts_at_any_depth(tmp_path):
@@ -50,10 +50,10 @@ def test_count_pages_in_space_counts_at_any_depth(tmp_path):
     # ones — a nested page is still data that would be orphaned by a cascade.
     conn = _migrated_conn(tmp_path / "cnt.db")
     _seed_user(conn)
-    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1, commit=True)
     assert pages.count_pages_in_space(conn, sp["id"]) == 0
     parent = pages.create_page(
-        conn, space_id=sp["id"], title="Parent", body="", created_by=1
+        conn, space_id=sp["id"], title="Parent", body="", created_by=1, commit=True
     )
     pages.create_page(
         conn,
@@ -62,12 +62,18 @@ def test_count_pages_in_space_counts_at_any_depth(tmp_path):
         body="",
         parent_id=parent["id"],
         created_by=1,
+        commit=True,
     )
     assert pages.count_pages_in_space(conn, sp["id"]) == 2
     # a page in ANOTHER space doesn't count toward this one
-    other = spaces.create_space(conn, key="OPS", name="Ops", created_by=1)
+    other = spaces.create_space(conn, key="OPS", name="Ops", created_by=1, commit=True)
     pages.create_page(
-        conn, space_id=other["id"], title="Elsewhere", body="", created_by=1
+        conn,
+        space_id=other["id"],
+        title="Elsewhere",
+        body="",
+        created_by=1,
+        commit=True,
     )
     assert pages.count_pages_in_space(conn, sp["id"]) == 2
 

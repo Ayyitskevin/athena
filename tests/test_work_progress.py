@@ -238,7 +238,7 @@ def test_a_recorded_answer_clears_only_its_own_request(tmp_path):
         conn = db.connect(db_file)
         # The asker is an agent, not the operator: nobody decides their own ask.
         asker = users.create_user(
-            conn, email="asker@agents.local", name="Asker", is_agent=True
+            conn, email="asker@agents.local", name="Asker", is_agent=True, commit=True
         )["id"]
         conn.execute(
             "INSERT INTO approval_requests (action_kind, target_kind, target_id, "

@@ -13,6 +13,9 @@ Every refusal (any 4xx or 5xx JSON body) carries a `code` beside its `detail`, f
 one registry. Branch on `code`, never on the `detail` text. Over MCP a refused call
 returns that same object with `isError` true, and `next` names the call that resolves
 it where one exists. The codes are listed in [AGENT_API.md](AGENT_API.md#refusal-codes).
+`GET /openapi-agent.json` is the REST surface your token can call, without the browser
+routes `/openapi.json` also lists, and it declares per operation the bearer scheme,
+`Idempotency-Key`, `If-Match` and `ETag`, the run headers and this refusal body.
 A failure that never reached Athena (a bad argument, say) is the same object, with
 `status_code` null and an MCP-side code such as `invalid_arguments`.
 Write bodies refuse a field they do not declare (422 `validation_error`), so a

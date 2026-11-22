@@ -85,9 +85,13 @@ def test_revoke_all_tokens_for_user_revokes_live_only_and_is_idempotent(tmp_path
 
     conn = db.connect(db_path)
     # First call revokes both of the agent's live tokens.
-    assert tokens.revoke_all_tokens_for_user(conn, user_id=agent["id"]) == 2
+    assert (
+        tokens.revoke_all_tokens_for_user(conn, user_id=agent["id"], commit=True) == 2
+    )
     # Idempotent: a second call finds nothing live to revoke.
-    assert tokens.revoke_all_tokens_for_user(conn, user_id=agent["id"]) == 0
+    assert (
+        tokens.revoke_all_tokens_for_user(conn, user_id=agent["id"], commit=True) == 0
+    )
     # The agent's tokens are all revoked; the other user's is untouched.
     assert all(t["revoked_at"] for t in tokens.list_tokens(conn, agent["id"]))
     assert all(t["revoked_at"] is None for t in tokens.list_tokens(conn, other["id"]))
@@ -103,7 +107,7 @@ def test_revoke_all_sessions_removes_every_row(tmp_path):
     a = sessions.create_session(conn, agent["id"])
     sessions.create_session(conn, agent["id"])
     assert sessions.resolve_session(conn, a) is not None
-    assert sessions.revoke_all_sessions(conn, agent["id"]) == 2
+    assert sessions.revoke_all_sessions(conn, agent["id"], commit=True) == 2
     assert sessions.resolve_session(conn, a) is None
 
 

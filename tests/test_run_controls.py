@@ -537,7 +537,11 @@ def test_revoked_and_paused_principals_fail_closed(tmp_path):
         mint = db.connect(db_file)
         try:
             renewed = tokens.create_token(
-                mint, user_id=agent_id, name="renewed", scopes=["issue:write"]
+                mint,
+                user_id=agent_id,
+                name="renewed",
+                scopes=["issue:write"],
+                commit=True,
             )
         finally:
             mint.close()
@@ -1635,7 +1639,7 @@ def test_settlement_requires_a_write_scope_not_just_the_right_identity(tmp_path)
         mint = db.connect(db_file)
         try:
             readonly = tokens.create_token(
-                mint, user_id=sol["user"]["id"], name="ro", scopes=["read"]
+                mint, user_id=sol["user"]["id"], name="ro", scopes=["read"], commit=True
             )
         finally:
             mint.close()

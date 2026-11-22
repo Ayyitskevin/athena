@@ -59,9 +59,16 @@ def test_create_and_get_page_round_trip(tmp_path):
     conn = _migrated_conn(tmp_path / "p.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    space = spaces.create_space(conn, key="ENG", name="Engineering", created_by=1)
+    space = spaces.create_space(
+        conn, key="ENG", name="Engineering", created_by=1, commit=True
+    )
     made = pages.create_page(
-        conn, space_id=space["id"], title="Runbook", body="steps", created_by=1
+        conn,
+        space_id=space["id"],
+        title="Runbook",
+        body="steps",
+        created_by=1,
+        commit=True,
     )
     got = pages.get_page(conn, made["id"])
     assert got["title"] == "Runbook"
@@ -74,9 +81,15 @@ def test_list_pages_in_space_is_alphabetical(tmp_path):
     conn = _migrated_conn(tmp_path / "pl.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    space = spaces.create_space(conn, key="ENG", name="Engineering", created_by=1)
-    pages.create_page(conn, space_id=space["id"], title="Zebra", created_by=1)
-    pages.create_page(conn, space_id=space["id"], title="apple", created_by=1)
+    space = spaces.create_space(
+        conn, key="ENG", name="Engineering", created_by=1, commit=True
+    )
+    pages.create_page(
+        conn, space_id=space["id"], title="Zebra", created_by=1, commit=True
+    )
+    pages.create_page(
+        conn, space_id=space["id"], title="apple", created_by=1, commit=True
+    )
     assert [p["title"] for p in pages.list_pages_in_space(conn, space["id"])] == [
         "apple",
         "Zebra",
@@ -87,10 +100,19 @@ def test_child_page_records_its_parent(tmp_path):
     conn = _migrated_conn(tmp_path / "tree.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    space = spaces.create_space(conn, key="ENG", name="Engineering", created_by=1)
-    parent = pages.create_page(conn, space_id=space["id"], title="Parent", created_by=1)
+    space = spaces.create_space(
+        conn, key="ENG", name="Engineering", created_by=1, commit=True
+    )
+    parent = pages.create_page(
+        conn, space_id=space["id"], title="Parent", created_by=1, commit=True
+    )
     child = pages.create_page(
-        conn, space_id=space["id"], title="Child", parent_id=parent["id"], created_by=1
+        conn,
+        space_id=space["id"],
+        title="Child",
+        parent_id=parent["id"],
+        created_by=1,
+        commit=True,
     )
     assert child["parent_id"] == parent["id"]
 

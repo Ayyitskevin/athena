@@ -262,8 +262,8 @@ def test_switching_accounts_invalidates_the_first_account_session(tmp_path):
     with TestClient(app):
         pass
     seed = db.connect(tmp_path / "switch.db")
-    users.create_user(seed, email="a@e.com", name="A", password="pwA")
-    users.create_user(seed, email="b@e.com", name="B", password="pwB")
+    users.create_user(seed, email="a@e.com", name="A", password="pwA", commit=True)
+    users.create_user(seed, email="b@e.com", name="B", password="pwB", commit=True)
     seed.close()
 
     with TestClient(app) as client:

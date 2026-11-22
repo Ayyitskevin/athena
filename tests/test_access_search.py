@@ -117,8 +117,8 @@ def test_rest_cross_kind_search_gates_both_kinds(tmp_path):
         }
 
         # Granting membership on both private containers reveals the hidden hits.
-        access.add_project_member(conn, pp, 3, added_by=2)
-        access.add_space_member(conn, ps, 3, added_by=2)
+        access.add_project_member(conn, pp, 3, added_by=2, commit=True)
+        access.add_space_member(conn, ps, 3, added_by=2, commit=True)
         assert titles(H_OUTSIDER) == {
             "Zephyr alpha",
             "Zephyr beta",

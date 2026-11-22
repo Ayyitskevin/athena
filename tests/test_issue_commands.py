@@ -234,7 +234,7 @@ def test_set_assignee_default_commit_failure_rolls_back_and_cleans_connection(
     conn.execute("INSERT INTO deferred_child (parent_id) VALUES (999)")
 
     with pytest.raises(sqlite3.IntegrityError):
-        issues.set_assignee(conn, issue["id"], 2)
+        issues.set_assignee(conn, issue["id"], 2, commit=True)
 
     assert not conn.in_transaction
     assert issues.get_issue(conn, issue["id"])["assignee_id"] is None
@@ -267,6 +267,7 @@ def test_assignee_recorder_default_commit_failure_rolls_back_every_effect(
             issue_id=issue["id"],
             before=None,
             after=2,
+            commit=True,
         )
 
     assert not conn.in_transaction
@@ -781,6 +782,7 @@ def test_custom_done_status_survives_web_blocker_confirmation(tmp_path):
             to_id=target["id"],
             relation="blocks",
             created_by=1,
+            commit=True,
         ) == (None, True)
         conn.close()
 
@@ -904,14 +906,16 @@ def test_project_move_clears_sprint_remaps_status_and_replays_history(tmp_path):
     # sprint-clear detail must still be sufficient for lifecycle time travel.
     conn, actor = _command_conn(tmp_path / "project-move.db")
     source = projects.create_project(
-        conn, name="Source", key="SRC", created_by=actor["id"]
+        conn, name="Source", key="SRC", created_by=actor["id"], commit=True
     )
     destination = projects.create_project(
-        conn, name="Destination", key="DST", created_by=actor["id"]
+        conn, name="Destination", key="DST", created_by=actor["id"], commit=True
     )
-    assert statuses.add_status(conn, source["id"], "review", "doing") is None
+    assert (
+        statuses.add_status(conn, source["id"], "review", "doing", commit=True) is None
+    )
     source_sprint = sprints.create_sprint(
-        conn, project_id=source["id"], name="Source Sprint"
+        conn, project_id=source["id"], name="Source Sprint", commit=True
     )
     issue = issue_commands.create_issue(
         conn,
@@ -1022,17 +1026,19 @@ def test_combined_relationship_update_orders_events_and_same_project_is_noop(tmp
     # project and land after the project move, while audit ordering remains stable.
     conn, actor = _command_conn(tmp_path / "combined-relationships.db")
     source = projects.create_project(
-        conn, name="Source", key="SRC", created_by=actor["id"]
+        conn, name="Source", key="SRC", created_by=actor["id"], commit=True
     )
     destination = projects.create_project(
-        conn, name="Destination", key="DST", created_by=actor["id"]
+        conn, name="Destination", key="DST", created_by=actor["id"], commit=True
     )
-    assert statuses.add_status(conn, destination["id"], "qa", "doing") is None
+    assert (
+        statuses.add_status(conn, destination["id"], "qa", "doing", commit=True) is None
+    )
     source_sprint = sprints.create_sprint(
-        conn, project_id=source["id"], name="Source Sprint"
+        conn, project_id=source["id"], name="Source Sprint", commit=True
     )
     destination_sprint = sprints.create_sprint(
-        conn, project_id=destination["id"], name="Destination Sprint"
+        conn, project_id=destination["id"], name="Destination Sprint", commit=True
     )
     issue = issue_commands.create_issue(
         conn, actor=actor, title="Before", body="old", project_id=source["id"]
@@ -1124,14 +1130,16 @@ def test_relationship_audit_failure_rolls_back_key_counter_and_sprint_clear(
     # including the destination sequence counter, must return to its old value.
     conn, actor = _command_conn(tmp_path / "relationship-rollback.db")
     source = projects.create_project(
-        conn, name="Source", key="SRC", created_by=actor["id"]
+        conn, name="Source", key="SRC", created_by=actor["id"], commit=True
     )
     destination = projects.create_project(
-        conn, name="Destination", key="DST", created_by=actor["id"]
+        conn, name="Destination", key="DST", created_by=actor["id"], commit=True
     )
-    assert statuses.add_status(conn, source["id"], "review", "doing") is None
+    assert (
+        statuses.add_status(conn, source["id"], "review", "doing", commit=True) is None
+    )
     source_sprint = sprints.create_sprint(
-        conn, project_id=source["id"], name="Source Sprint"
+        conn, project_id=source["id"], name="Source Sprint", commit=True
     )
     issue = issue_commands.create_issue(
         conn,
@@ -1197,13 +1205,13 @@ def test_relationship_setters_roll_back_when_commit_finalization_fails(
     # setters own that finalization and must restore both row and sequence state.
     conn, actor = _command_conn(tmp_path / f"{operation}-setter-commit.db")
     source = projects.create_project(
-        conn, name="Source", key="SRC", created_by=actor["id"]
+        conn, name="Source", key="SRC", created_by=actor["id"], commit=True
     )
     destination = projects.create_project(
-        conn, name="Destination", key="DST", created_by=actor["id"]
+        conn, name="Destination", key="DST", created_by=actor["id"], commit=True
     )
     source_sprint = sprints.create_sprint(
-        conn, project_id=source["id"], name="Source Sprint"
+        conn, project_id=source["id"], name="Source Sprint", commit=True
     )
     issue = issue_commands.create_issue(
         conn, actor=actor, title="Deferred setter", project_id=source["id"]
@@ -1221,9 +1229,9 @@ def test_relationship_setters_roll_back_when_commit_finalization_fails(
 
     with pytest.raises(sqlite3.IntegrityError):
         if operation == "sprint":
-            issues.set_sprint(conn, issue["id"], None)
+            issues.set_sprint(conn, issue["id"], None, commit=True)
         else:
-            issues.set_project(conn, issue["id"], destination["id"])
+            issues.set_project(conn, issue["id"], destination["id"], commit=True)
 
     unchanged = issues.get_issue(conn, issue["id"])
     assert (
@@ -1257,13 +1265,13 @@ def test_relationship_recorders_roll_back_when_commit_finalization_fails(
     # row cannot remain visible when finalizing its transaction fails.
     conn, actor = _command_conn(tmp_path / f"{recorder}-recorder-commit.db")
     source = projects.create_project(
-        conn, name="Source", key="SRC", created_by=actor["id"]
+        conn, name="Source", key="SRC", created_by=actor["id"], commit=True
     )
     destination = projects.create_project(
-        conn, name="Destination", key="DST", created_by=actor["id"]
+        conn, name="Destination", key="DST", created_by=actor["id"], commit=True
     )
     source_sprint = sprints.create_sprint(
-        conn, project_id=source["id"], name="Source Sprint"
+        conn, project_id=source["id"], name="Source Sprint", commit=True
     )
     issue = issue_commands.create_issue(
         conn, actor=actor, title="Deferred audit", project_id=source["id"]
@@ -1280,6 +1288,7 @@ def test_relationship_recorders_roll_back_when_commit_finalization_fails(
                 issue_id=issue["id"],
                 before=source_sprint["id"],
                 after=None,
+                commit=True,
             )
         else:
             issue_activity.record_project_change(
@@ -1288,6 +1297,7 @@ def test_relationship_recorders_roll_back_when_commit_finalization_fails(
                 issue_id=issue["id"],
                 before=source["id"],
                 after=destination["id"],
+                commit=True,
             )
 
     assert (

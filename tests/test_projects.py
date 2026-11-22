@@ -72,7 +72,12 @@ def test_create_and_get_project_round_trip(tmp_path):
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
     made = projects.create_project(
-        conn, name="Website", key="WEB", description="the redesign", created_by=1
+        conn,
+        name="Website",
+        key="WEB",
+        description="the redesign",
+        created_by=1,
+        commit=True,
     )
     got = projects.get_project(conn, made["id"])
     assert got["name"] == "Website"
@@ -84,7 +89,7 @@ def test_get_project_by_name_is_case_insensitive(tmp_path):
     conn = _migrated_conn(tmp_path / "pn.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    projects.create_project(conn, name="Mobile", key="MOB", created_by=1)
+    projects.create_project(conn, name="Mobile", key="MOB", created_by=1, commit=True)
     assert projects.get_project_by_name(conn, "mobile")["name"] == "Mobile"
 
 
@@ -92,8 +97,8 @@ def test_list_projects_is_alphabetical(tmp_path):
     conn = _migrated_conn(tmp_path / "pl.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    projects.create_project(conn, name="Zebra", key="ZEB", created_by=1)
-    projects.create_project(conn, name="apple", key="APP", created_by=1)
+    projects.create_project(conn, name="Zebra", key="ZEB", created_by=1, commit=True)
+    projects.create_project(conn, name="apple", key="APP", created_by=1, commit=True)
     assert [p["name"] for p in projects.list_projects(conn)] == ["apple", "Zebra"]
 
 
@@ -103,12 +108,14 @@ def test_set_project_sets_then_clears(tmp_path):
     conn = _migrated_conn(tmp_path / "sp.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    proj = projects.create_project(conn, name="Core", key="CORE", created_by=1)
-    issue = issues.create_issue(conn, title="t", body="", created_by=1)
-    moved = issues.set_project(conn, issue["id"], proj["id"])
+    proj = projects.create_project(
+        conn, name="Core", key="CORE", created_by=1, commit=True
+    )
+    issue = issues.create_issue(conn, title="t", body="", created_by=1, commit=True)
+    moved = issues.set_project(conn, issue["id"], proj["id"], commit=True)
     assert moved["project_id"] == proj["id"]
     assert moved["project_name"] == "Core"  # composed in via the LEFT JOIN
-    cleared = issues.set_project(conn, issue["id"], None)
+    cleared = issues.set_project(conn, issue["id"], None, commit=True)
     assert cleared["project_id"] is None
     assert cleared["project_name"] is None
 
@@ -456,11 +463,13 @@ def test_list_issues_backlog_only_unprojected(tmp_path):
     conn = _migrated_conn(tmp_path / "bl.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    proj = projects.create_project(conn, name="Core", key="CORE", created_by=1)
-    issues.create_issue(
-        conn, title="in core", body="", created_by=1, project_id=proj["id"]
+    proj = projects.create_project(
+        conn, name="Core", key="CORE", created_by=1, commit=True
     )
-    issues.create_issue(conn, title="loose one", body="", created_by=1)
+    issues.create_issue(
+        conn, title="in core", body="", created_by=1, project_id=proj["id"], commit=True
+    )
+    issues.create_issue(conn, title="loose one", body="", created_by=1, commit=True)
     backlog = [i["title"] for i in issues.list_issues(conn, backlog=True)]
     assert backlog == ["loose one"]
     # project_id=None (the default) does NOT filter — both issues come back.

@@ -17,9 +17,11 @@ After setup, `scripts/gate.sh` defaults to the `product` profile, including the
 pinned dependency set, types, and full-suite, full-source coverage. Explicit
 `scripts/gate.sh --profile product` selects the same checks.
 `scripts/gate.sh --profile quick` opts into fast, **partial** feedback without
-the dependency, type, or coverage stages. Both profiles report the
-commit, dirty state, Python and import path, stages run and omitted, and fail at
-the first failed stage. The script refuses an Athena import from another checkout.
+the dependency, type, or coverage stages; `--profile changed`, the inner loop
+described below, adds the type check and the tests your change reaches. Every
+profile reports the commit, dirty state, Python and import path, stages run and
+omitted, and fails at the first failed stage. The script refuses an Athena
+import from another checkout.
 The product pass covers local product stages, not CI's container job or its
 release-candidate supply-chain job; obtain those results separately. CI shards
 coverage and combines evidence; `scripts/coverage.sh` runs and checks it locally.
@@ -32,10 +34,82 @@ The wrapper requires this checkout's executable `.venv/bin/python`, as created
 below, and refuses with a setup pointer if it is missing or broken. It does not
 require activating the environment.
 
+`--json <path>` also writes the receipt as JSON (a path relative to the
+checkout root, or absolute; standard output keeps the human receipt). Schema
+`athena-gate-receipt/1` carries the profile, commit, `dirty`, Python and import
+path, each stage's `result` (`passed`, `failed`, `unavailable` or `not_run`)
+and `seconds`, the `stages_run`, `stages_passed` and `not_run` lists, `tests`
+(pytest's closing counts) and `coverage` (line, branch and combined
+covered/total/percent/floor) when a test stage ran, `peak_memory`, for the
+changed profile its `selection`, `partial`, `passed`, `exit_code`, the
+`verdict` line, and `receipt`, the printed closing lines verbatim. The pull
+request template asks for this receipt, or its closing lines, as the PR's
+verification evidence.
+
+### The inner loop: `--profile changed`
+
+`scripts/gate.sh --profile changed [--base <ref>]` runs the quick stages, the
+type check, and the tests selected from your change, with the same
+`ATHENA_COVERAGE_WORKERS` pytest-xdist workers as the suite. The change is every
+path that differs between the merge base with `--base` (default `origin/main`)
+and the working tree, uncommitted and untracked files included. If `origin/main`
+is missing it falls back to local `main` and says so; with neither, or with no
+merge base (a shallow clone), it runs the full suite. A `--base` that is not a
+commit fails the gate. The receipt is **partial**: it ends in
+`CHANGED PROFILE PASS (PARTIAL; ...)`, never `PRODUCT GATE PASS`, the selected
+tests run without the coverage floors (a partial run cannot meet them), and the
+dependency and coverage stages are listed as not run. It names the base and
+merge-base commit, the changed paths, how many test files and tests were
+selected out of the total, which rule selected them, and every path that forced
+the full suite. Use it while you work; the product profile is still the
+condition of done.
+
+`scripts/select_tests.py` makes the selection statically (it parses files with
+`ast` and imports nothing), in a few seconds:
+
+- **Import graph.** Python modules under `src/`, `tests/` and `scripts/` are
+  nodes; imports anywhere in a file (relative ones resolved), the parent
+  packages an import runs, and strings in tests that name an `athena` module
+  (monkeypatch targets) are edges. A changed module selects every test that
+  reaches it; a changed test selects itself; a changed test helper selects the
+  tests that import it. The graph is **not** followed through the composition
+  roots `athena.main`, `athena.web` and `athena.web.router`: nearly every test
+  builds the app, so following them would select the full suite for any change.
+- **The map.** `TEST_MAP` in the same file names the tests for what is reached
+  without an import: `*_api.py` routers and `web/` modules over HTTP, MCP
+  `tools_*.py`, templates, static assets and field-guide pages. Most entries
+  match tests by file name. It applies to the changed path and to every module
+  the graph reaches. `tests/test_select_tests.py` fails when an entry stops
+  matching real files or a router, web module or tool has no mapped test.
+- **References.** A test whose strings name the changed path, its file name or
+  a directory containing it (a path built with `/` or `Path(...)`) is selected.
+  That covers documents, fixtures and scripts tests read. A document no test
+  names selects no tests, and the receipt says so.
+- **Full suite.** `pyproject.toml`, `constraints/`, any `conftest.py`,
+  `core/db.py`, migrations, the composition roots and the gate scripts select
+  the full suite. So does a path no rule maps, and a change that reaches a
+  module only a composition root imports and the map does not name (today
+  `athena.middleware`, which every request runs). The receipt names the path
+  and the reason.
+
+The blind spot: a test that reaches changed code only through the app (it
+imports `athena.main` and nothing that imports the changed module) is selected
+only if the map names it, and the map goes by test file names. A route used as
+setup by tests named for something else is the typical miss. The product
+profile, which runs everything, is what catches it.
+
 ## Development setup
 
 Athena supports Python 3.12 (`>=3.12,<3.13`). It is the only Python version
-verified in CI. From a clean checkout, run the required gate:
+verified in CI. `scripts/bootstrap.sh` prepares a fresh checkout in one step: it
+fetches full history (a shallow clone has no merge base for `--profile changed`)
+and builds `.venv` with exactly the first five commands below, skipping the
+install while `pyproject.toml`, the two constraints files and the script itself
+are unchanged since it last succeeded. A Claude Code cloud session runs it at
+start (`.claude/hooks/session-start.sh`); every other lane runs it by hand.
+`tests/test_bootstrap.py` holds the script to this block.
+
+From a clean checkout, run the required gate:
 
 ```bash
 python3.12 -m venv .venv
@@ -52,22 +126,40 @@ python3.12 -m venv .venv
 .venv/bin/python -m mypy src/athena
 .venv/bin/python scripts/check_import_contracts.py
 .venv/bin/python scripts/check_write_ownership.py
+.venv/bin/python scripts/check_transaction_commits.py
 .venv/bin/python scripts/check_imported_at_guards.py
 scripts/coverage.sh
 ```
 
 The constraints file is the exact verified Linux/Python 3.12 CI graph. The
 freeze diff rejects dependency drift; `pip check` rejects incompatible
-installed metadata. The three `check_*` scripts fail the build on doctrinal
+installed metadata. The four `check_*` scripts fail the build on doctrinal
 drift the tests cannot see: `check_import_contracts.py` keeps the layer
 direction (`web → aegis|mentor → core`), `check_write_ownership.py` keeps
-transports from writing except through command modules and the designated
-writers named in it, and `check_imported_at_guards.py` pins every native-only
-activity reader to its `imported_at IS NULL` guard (and FORGE.md's guard
-table to the checker, via `tests/test_imported_at_guards.py`).
+transports (every module that defines a router or registers routes or
+exception handlers, plus `web/` and `mcp/`) from writing except through
+command modules and the designated writers named in it,
+`check_transaction_commits.py` fails on a call inside a `db.transaction`
+block that commits (a writer whose `commit` is not `False` there, or one that
+commits whatever it is passed), and `check_imported_at_guards.py` pins every
+native-only activity reader to its `imported_at IS NULL` guard (and FORGE.md's
+guard table to the checker, via `tests/test_imported_at_guards.py`). Readers are
+declared beside their code, in the `imported_at_guards.toml` of their package
+(`src/athena/aegis/`, `src/athena/core/`): a new read of the activity table adds
+a `[[guarded]]` entry (the pattern its function must carry, and why) or an
+`[[exempt]]` entry (why foreign history is safe there) to that file, whose
+header describes both.
 `scripts/coverage.sh` runs the complete test suite with
 full-source branch coverage, writes evidence outside the checkout, and enforces
-the floors configured in `pyproject.toml`. It runs `ATHENA_COVERAGE_WORKERS`
+the floors configured in `pyproject.toml`. The floors are a ratchet:
+`scripts/check_coverage.py` also fails when line, branch or combined coverage is
+more than half a point above its floor, with "raise the floor to X" where X is
+the measurement minus 0.25, rounded down to two decimals. Paste X into
+`[tool.athena.coverage]` in the same change; it sits below both a local run and
+CI's combined shards (which measure up to about 0.09 points higher), so one
+paste passes both. Floors only rise, and the gate receipt carries the failure
+line. The changed profile measures no coverage, so neither floors nor ratchet
+apply to it. It runs `ATHENA_COVERAGE_WORKERS`
 pytest-xdist workers (default 4). At the default the suite needs about
 1.5 GiB (1.40 GiB measured on 2026-11-22) of memory;
 set fewer workers on a smaller machine. The gate receipt reports the coverage
@@ -315,13 +407,43 @@ login, and starts Athena. It refuses to overwrite an existing path.
 1. Branch from current `main` using `kevin/<topic>`, `codex/<topic>`,
    `claude/<topic>`, or `grok/<topic>`.
 2. Keep one logical change in the branch.
-3. Add tests that explain the invariant being protected.
-4. Run the complete required local gate above.
-5. Open a pull request using the repository template. State the user-visible
-   outcome, boundaries, verification, and any AI assistance.
+3. Add tests that explain the invariant being protected. Start them from
+   `tests/support.py` (the first user, more accounts, agents, tokens of a given
+   scope set, clients that act as an account, the activity trail) rather than
+   declaring another `_bootstrap`; `tests/test_suite_conventions.py` fails if the
+   count of files that do rises, or if a test waits with `time.sleep`.
+4. If the change is notable to a reader of the changelog, add a fragment under
+   `changelog.d/` (see [Changelog entries](#changelog-entries)); do not edit
+   `CHANGELOG.md` by hand.
+5. Run the complete required local gate above.
+6. Open a pull request using the repository template. State the user-visible
+   outcome, boundaries, verification (the gate receipt), and any AI assistance.
 
 Never push directly to `main`. Do not rewrite another contributor's branch or
 hide unrelated work in a formatting or dependency update.
+
+### Changelog entries
+
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+A pull request does not edit its `[Unreleased]` section, which parallel pull
+requests used to conflict on: it adds one file per entry to `changelog.d/`,
+named `<slug>.<category>.md`. The slug is the branch's topic in lowercase
+letters, digits and hyphens (add `-2` for a second entry); the category is one
+of `added`, `changed`, `deprecated`, `removed`, `fixed` or `security`. The file
+holds the entry exactly as it will read: one bullet in the house style
+(`- **A bold sentence.**` and then the detail), every further line and paragraph
+indented by two spaces. `changelog.d/README.md` has an example.
+`tests/test_changelog_fragments.py` validates every fragment, so the gate fails
+on a malformed one; `.venv/bin/python scripts/changelog_fragments.py check` runs
+the same check alone.
+
+The fragments are assembled before a milestone heading is cut, or whenever the
+section should be read whole, in a pull request of its own:
+`scripts/changelog_fragments.py assemble --dry-run` prints the change, and
+`assemble` writes it and deletes the assembled fragments. Each entry goes to the
+top of the first `### <Category>` heading under `[Unreleased]`, or under a new
+heading at the top of the section; the existing text is never rewritten or
+reordered.
 
 ### Bumping the version
 

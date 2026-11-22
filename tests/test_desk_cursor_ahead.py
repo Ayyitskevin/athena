@@ -213,7 +213,12 @@ def test_repair_clamps_a_poisoned_cursor_and_keeps_the_trigger(
         _human(conn, 2, role="member")
         for n in range(3):
             activity.record(
-                conn, actor_id=1, verb="noted", target_kind="user", target_id=n + 1
+                conn,
+                actor_id=1,
+                verb="noted",
+                target_kind="user",
+                target_id=n + 1,
+                commit=True,
             )
         newest = conn.execute("SELECT MAX(id) FROM activity").fetchone()[0]
         conn.executemany(
@@ -245,7 +250,12 @@ def test_repair_clamps_a_poisoned_cursor_and_keeps_the_trigger(
         actor = users.get_user(conn, 1)
         for n in range(2):
             activity.record(
-                conn, actor_id=1, verb="noted", target_kind="user", target_id=n + 1
+                conn,
+                actor_id=1,
+                verb="noted",
+                target_kind="user",
+                target_id=n + 1,
+                commit=True,
             )
         board = desk.build_desk(conn, actor=actor)
         assert board["signals"]["events_since_cursor"] == 2

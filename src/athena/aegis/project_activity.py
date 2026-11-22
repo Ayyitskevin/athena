@@ -30,7 +30,7 @@ def record_project_created(
     project_id: int,
     name: str,
     key: str,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A project (workspace container) was created — the trail's first record that
     it exists and who made it. Detail carries the name and issue-key prefix.
@@ -52,7 +52,7 @@ def record_project_edited(
     actor_id: int,
     project_id: int,
     changes: str,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A project's name/key/description was edited. Detail summarizes what changed
     so a rename (ATH -> OPS) is legible in the feed. ``commit=False`` lets the
@@ -75,7 +75,7 @@ def record_project_deleted(
     project_id: int,
     name: str,
     key: str,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A project was deleted. The event OUTLIVES its target (activity.target_id has
     no FK), so the detail preserves the name/key the vanished container had.
@@ -99,7 +99,7 @@ def record_project_visibility_changed(
     project_id: int,
     name: str,
     visibility: str,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A project was made private or public. The verb encodes the direction so the
     feed reads at a glance; the detail names the project. The caller only records this
@@ -123,7 +123,7 @@ def record_project_member_added(
     actor_id: int,
     project_id: int,
     member_name: str,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A user was granted access to a private project. The detail is the member's name
     so the feed reads "granted <name>"; recorded only on a real change (a re-add of an
@@ -146,7 +146,7 @@ def record_project_member_removed(
     actor_id: int,
     project_id: int,
     member_name: str,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """A user's access to a private project was revoked. The detail is the member's
     name (preserved here even though the membership row is gone), recorded only when a
@@ -168,7 +168,7 @@ def record_project_blocked_close_policy_changed(
     actor_id: int,
     project_id: int,
     enabled: bool,
-    commit: bool = True,
+    commit: bool,
 ) -> None:
     """Record a human governance change without naming any blocked issue.
 

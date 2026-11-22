@@ -71,11 +71,13 @@ def test_assign_sets_assignee_and_delegates(tmp_path):
     conn = db.connect(tmp_path / "assign.db")
     db.migrate(conn)
     admin = users.create_user(
-        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE
+        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE, commit=True
     )
-    users.create_user(conn, email="grok@agents.local", name="Grok", is_agent=True)
+    users.create_user(
+        conn, email="grok@agents.local", name="Grok", is_agent=True, commit=True
+    )
     issue = issues.create_issue(
-        conn, title="slice", body="do it", created_by=admin["id"]
+        conn, title="slice", body="do it", created_by=admin["id"], commit=True
     )
     result = fleet_assign_commands.assign_issue_to_seat(
         conn,
@@ -96,9 +98,11 @@ def test_assign_unknown_seat_and_operator(tmp_path):
     conn = db.connect(tmp_path / "bad-seat.db")
     db.migrate(conn)
     admin = users.create_user(
-        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE
+        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE, commit=True
     )
-    issue = issues.create_issue(conn, title="x", body="", created_by=admin["id"])
+    issue = issues.create_issue(
+        conn, title="x", body="", created_by=admin["id"], commit=True
+    )
     try:
         fleet_assign_commands.assign_issue_to_seat(
             conn, actor=admin, issue_id=issue["id"], seat_slug="nope", radio=_radio
@@ -313,11 +317,13 @@ def test_assign_records_a_radioed_receipt_on_the_issue(tmp_path):
     conn = db.connect(tmp_path / "receipt.db")
     db.migrate(conn)
     admin = users.create_user(
-        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE
+        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE, commit=True
     )
-    users.create_user(conn, email="grok@agents.local", name="Grok", is_agent=True)
+    users.create_user(
+        conn, email="grok@agents.local", name="Grok", is_agent=True, commit=True
+    )
     issue = issues.create_issue(
-        conn, title="slice", body="do it", created_by=admin["id"]
+        conn, title="slice", body="do it", created_by=admin["id"], commit=True
     )
     permalink = f"buzz://message?id={_EVENT_ID}&channel=command-deck"
 
@@ -361,10 +367,14 @@ def test_assign_without_a_usable_receipt_records_no_event(tmp_path):
     conn = db.connect(tmp_path / "no-receipt.db")
     db.migrate(conn)
     admin = users.create_user(
-        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE
+        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE, commit=True
     )
-    users.create_user(conn, email="grok@agents.local", name="Grok", is_agent=True)
-    issue = issues.create_issue(conn, title="slice", body="", created_by=admin["id"])
+    users.create_user(
+        conn, email="grok@agents.local", name="Grok", is_agent=True, commit=True
+    )
+    issue = issues.create_issue(
+        conn, title="slice", body="", created_by=admin["id"], commit=True
+    )
 
     for ping in (
         {"status": "sent", "detail": "posted", "event_id": None, "permalink": None},

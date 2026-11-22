@@ -11,7 +11,7 @@ The contract these pin: a response that reports the write was NOT applied is
 never a receipt. The key is released exactly as for a 4xx, so the same request
 under the same key runs again; once the operator approves, that retry applies
 once and its applied result becomes the receipt. The pending ask itself stays
-idempotent through `approvals.open_request`, so retrying while waiting never
+idempotent through `approval_commands.open_request`, so retrying while waiting never
 opens a second request.
 """
 

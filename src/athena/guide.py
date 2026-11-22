@@ -120,7 +120,7 @@ def seed_field_guide(conn: sqlite3.Connection, *, author_id: int) -> dict:
     # Reuse the operator's existing 'playbook' label if there is one — a second
     # label with the same meaning would split every playbook query in half.
     label = labels.get_label_by_name(conn, PLAYBOOK_LABEL) or labels.create_label(
-        conn, name=PLAYBOOK_LABEL
+        conn, name=PLAYBOOK_LABEL, commit=True
     )
 
     created: list[dict] = []

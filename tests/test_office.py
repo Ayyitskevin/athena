@@ -22,12 +22,14 @@ def test_standing_office_points_at_next_delegation(tmp_path):
     conn = db.connect(tmp_path / "office-stand.db")
     db.migrate(conn)
     admin = users.create_user(
-        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE
+        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE, commit=True
     )
     grok = users.create_user(
-        conn, email="grok@agents.local", name="Grok", is_agent=True
+        conn, email="grok@agents.local", name="Grok", is_agent=True, commit=True
     )
-    issue = issues.create_issue(conn, title="sit", body="", created_by=admin["id"])
+    issue = issues.create_issue(
+        conn, title="sit", body="", created_by=admin["id"], commit=True
+    )
     packet = office.build_office(
         conn,
         actor=grok,
@@ -50,12 +52,14 @@ def test_one_active_lease_is_the_chair(tmp_path):
     conn = db.connect(tmp_path / "office-sit.db")
     db.migrate(conn)
     admin = users.create_user(
-        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE
+        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE, commit=True
     )
     grok = users.create_user(
-        conn, email="grok@agents.local", name="Grok", is_agent=True
+        conn, email="grok@agents.local", name="Grok", is_agent=True, commit=True
     )
-    issue = issues.create_issue(conn, title="chair", body="", created_by=admin["id"])
+    issue = issues.create_issue(
+        conn, title="chair", body="", created_by=admin["id"], commit=True
+    )
     issue_commands.add_contributor(
         conn,
         actor=admin,

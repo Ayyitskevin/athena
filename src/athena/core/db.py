@@ -64,6 +64,34 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+class TransactionEndedEarly(RuntimeError):
+    """Something committed or rolled back underneath a ``transaction`` block.
+
+    The block's work is no longer one atomic unit: whatever ran before that commit
+    has landed on its own. This is a programming error (a writer called without
+    ``commit=False``), never a user-facing refusal.
+    """
+
+
+# The outer form plants this savepoint right after BEGIN. COMMIT and ROLLBACK
+# release every savepoint, so if it is gone at exit something ended the
+# transaction early, even when a later write reopened an implicit one.
+_GUARD_SAVEPOINT = "athena_transaction_guard"
+
+
+def _guard_lost(conn: sqlite3.Connection) -> bool:
+    """Release the guard savepoint; True when it no longer exists."""
+    if not conn.in_transaction:
+        return True
+    try:
+        conn.execute(f"RELEASE SAVEPOINT {_GUARD_SAVEPOINT}")
+    except sqlite3.OperationalError as exc:
+        if "no such savepoint" in str(exc):
+            return True
+        raise
+    return False
+
+
 @contextmanager
 def transaction(conn: sqlite3.Connection, *, immediate: bool = False) -> Iterator[None]:
     """Run a group of writes as one atomic unit.
@@ -82,6 +110,11 @@ def transaction(conn: sqlite3.Connection, *, immediate: bool = False) -> Iterato
 
     Functions called inside this context must not commit independently; their
     transaction-aware variants receive ``commit=False`` from the command owner.
+    The outer form enforces that at exit: if anything inside committed or rolled
+    back (``scripts/check_transaction_commits.py`` finds the static cases), the
+    uncommitted remainder is rolled back and ``TransactionEndedEarly`` is raised.
+    When the block is already failing, its own exception propagates unchanged
+    and only gains a note saying the transaction had ended early.
     """
     nested = conn.in_transaction
     savepoint = "athena_command"
@@ -90,12 +123,30 @@ def transaction(conn: sqlite3.Connection, *, immediate: bool = False) -> Iterato
     else:
         conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
     try:
+        if not nested:
+            conn.execute(f"SAVEPOINT {_GUARD_SAVEPOINT}")
         yield
         if nested:
             conn.execute(f"RELEASE SAVEPOINT {savepoint}")
         else:
+            if _guard_lost(conn):
+                raise TransactionEndedEarly(
+                    "a commit or rollback inside db.transaction ended its "
+                    "transaction before the block did: the work before that point "
+                    "was committed or discarded on its own, and the rest has been "
+                    "rolled back. Pass commit=False to the writer that committed."
+                )
             conn.commit()
-    except BaseException:
+    except BaseException as exc:
+        if not nested and not isinstance(exc, TransactionEndedEarly):
+            # Probe only to explain; the block's own exception is what propagates.
+            with suppress(sqlite3.Error):
+                if _guard_lost(conn):
+                    exc.add_note(
+                        "db.transaction: something inside this block committed or "
+                        "rolled back before it failed; work before that point may "
+                        "have been committed on its own."
+                    )
         if nested and conn.in_transaction:
             try:
                 conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")

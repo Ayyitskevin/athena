@@ -43,7 +43,7 @@ def _tagged(conn, *, run, parent, fork, verb="created"):
     fork_token = run_context.set_forked_from_event_id(fork)
     try:
         return activity.record(
-            conn, actor_id=1, verb=verb, target_kind="issue", target_id=1
+            conn, actor_id=1, verb=verb, target_kind="issue", target_id=1, commit=True
         )
     finally:
         run_context.reset_forked_from_event_id(fork_token)
@@ -64,7 +64,12 @@ def test_record_stamps_fork_point_within_scope(tmp_path):
     assert tagged["forked_from_event_id"] == seed["id"]
 
     untagged = activity.record(
-        conn, actor_id=1, verb="commented", target_kind="issue", target_id=1
+        conn,
+        actor_id=1,
+        verb="commented",
+        target_kind="issue",
+        target_id=1,
+        commit=True,
     )
     assert untagged["forked_from_event_id"] is None
     conn.close()
@@ -106,7 +111,7 @@ def test_untagged_trigger_keeps_a_real_fork_point_without_a_parent_run(tmp_path)
     conn = _migrated_conn(tmp_path / "untagged-trigger.db")
     _user(conn)
     trigger = activity.record(
-        conn, actor_id=1, verb="created", target_kind="issue", target_id=1
+        conn, actor_id=1, verb="created", target_kind="issue", target_id=1, commit=True
     )
     assert trigger["run_id"] is None
 

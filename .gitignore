@@ -20,6 +20,7 @@ venv*/
 # Secrets & local config — NEVER commit these
 .env
 *.env
+.claude/settings.local.json
 
 # Local data (SQLite db + write-ahead-log files)
 *.db

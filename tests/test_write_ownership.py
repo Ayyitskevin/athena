@@ -606,3 +606,83 @@ def test_malformed_python_fails_loudly(tmp_path):
 
     assert result.returncode == 1
     assert "cannot parse" in result.stderr
+
+
+# --- B5: a transport is whatever puts handlers on the HTTP surface -----------
+#
+# WHY: the old test matched only web/*, mcp/* and *_api.py by name, so
+# aegis/api.py, mentor/api.py and main.py were unchecked and a raw
+# `DELETE FROM activity` added to aegis/api.py passed. The name a module happens
+# to have must not decide whether the doctrine applies to it.
+
+_WRITER = (
+    "def purge_issue(conn, issue_id):\n"
+    "    conn.execute('DELETE FROM issues WHERE id = ?', (issue_id,))\n"
+)
+
+
+@pytest.mark.parametrize(
+    "registration",
+    [
+        "from fastapi import APIRouter\nrouter = APIRouter()\n",
+        "import fastapi\nrouter = fastapi.APIRouter(prefix='/x')\n",
+        "def install(app):\n    app.add_exception_handler(ValueError, handler)\n",
+        "def install(app, routes):\n    app.include_router(routes)\n",
+        "def install(app):\n    @app.post('/purge')\n    def route():\n        return None\n",
+    ],
+    ids=["router", "router-attribute", "exception-handler", "include-router", "route"],
+)
+@pytest.mark.parametrize(
+    ("body", "kind"),
+    [
+        (
+            "def handler(conn, request, exc):\n"
+            "    conn.execute('DELETE FROM activity WHERE id = ?', (1,))\n",
+            "direct-write-sql",
+        ),
+        (
+            "from athena.core import issues\n"
+            "def handler(conn, request, exc):\n"
+            "    issues.purge_issue(conn, 1)\n",
+            "data-module-write",
+        ),
+    ],
+    ids=["raw-sql", "data-module-writer"],
+)
+def test_a_module_that_registers_routes_is_a_transport_whatever_its_name(
+    tmp_path, registration, body, kind
+):
+    # `aegis.routes` matches none of the old names. Without the registration it
+    # is an ordinary internal module and the same write is allowed there.
+    control = _package(
+        tmp_path / "control",
+        {"core.issues": _WRITER, "aegis.routes": body},
+    )
+    assert _run(control).returncode == 0, _run(control).stderr
+
+    result = _run(
+        _package(
+            tmp_path / "bad",
+            {"core.issues": _WRITER, "aegis.routes": registration + body},
+        )
+    )
+
+    assert result.returncode == 1
+    assert kind in result.stderr
+    assert "athena.aegis.routes" in result.stderr
+
+
+def test_a_raw_activity_delete_in_aegis_api_fails(tmp_path):
+    # The exact baseline hole named in the review.
+    source = (
+        "from fastapi import APIRouter\n"
+        "router = APIRouter()\n"
+        "def purge(conn):\n"
+        "    conn.execute('DELETE FROM activity')\n"
+    )
+
+    result = _run(_package(tmp_path, {"aegis.api": source}))
+
+    assert result.returncode == 1
+    assert "direct-write-sql" in result.stderr
+    assert "src/athena/aegis/api.py" in result.stderr

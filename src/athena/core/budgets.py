@@ -33,7 +33,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 import sqlite3
 
-from athena.core import activity
 from athena.core._util import utc_now
 
 WINDOWS: dict[str, timedelta] = {
@@ -164,7 +163,8 @@ def charge(conn: sqlite3.Connection, actor: dict | None, *, cost: int = 1) -> No
 
     No-ops for an unbudgeted actor (the default), so metering is strictly opt-in.
     Raises :class:`BudgetExhausted` when the window's limit is already reached; the
-    caller records the refusal after the rollback (see :func:`record_exhaustion`).
+    caller records the refusal after the rollback (see
+    ``budget_commands.record_exhaustion``).
     """
     if actor is None:
         return
@@ -181,23 +181,4 @@ def charge(conn: sqlite3.Connection, actor: dict | None, *, cost: int = 1) -> No
         "UPDATE agent_budgets SET action_used = ?, window_started_at = ?, "
         "updated_at = datetime('now') WHERE user_id = ?",
         (budget.action_used + cost, budget.window_started_at, actor["id"]),
-    )
-
-
-def record_exhaustion(conn: sqlite3.Connection, *, actor_id: int, detail: str) -> None:
-    """Put a refused write on the trail, AFTER its transaction rolled back.
-
-    The refusal is exactly the "steer by exception" signal the operator wants — an
-    agent hitting its ceiling is a decision to make, not noise. It cannot be
-    recorded inside the command, because that transaction is unwinding; this runs
-    on the now-free connection in its own transaction. Best-effort by construction:
-    the write was already refused, so a failure to log must not mask that.
-    """
-    activity.record(
-        conn,
-        actor_id=actor_id,
-        verb=VERB_BUDGET_EXHAUSTED,
-        target_kind="user",
-        target_id=actor_id,
-        detail=detail,
     )

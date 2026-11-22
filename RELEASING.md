@@ -26,6 +26,14 @@ While Athena is pre-1.0 the version line is `0.1.0aN`. A heading in the CHANGELO
 is a **milestone**, not a release; it becomes a release only once a matching tag
 exists, and `## [Unreleased]` stays until you tag.
 
+Entries arrive as fragments under `changelog.d/`, not as edits to the CHANGELOG.
+Before the version-bump commit, fold them in and commit the result with it:
+
+```bash
+.venv/bin/python scripts/changelog_fragments.py assemble --dry-run   # read it
+.venv/bin/python scripts/changelog_fragments.py assemble
+```
+
 ## Order
 
 **1. Land everything.** The tag must point at a commit already on `main`. The

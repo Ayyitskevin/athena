@@ -347,6 +347,7 @@ def test_imported_history_cannot_be_undone(tmp_path):
             target_kind="issue",
             target_id=issue["id"],
             imported_at="2026-01-01 00:00:00",
+            commit=True,
         )
         conn.close()
 

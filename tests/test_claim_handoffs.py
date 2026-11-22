@@ -52,6 +52,7 @@ def _delegated_issue(conn):
         title="generation-fenced work",
         body="continue safely",
         created_by=1,
+        commit=True,
     )
     for user_id in (2, 3):
         issue_commands.add_contributor(
@@ -141,8 +142,12 @@ def test_upgrade_from_0056_preserves_leases_and_enforces_generations(
     conn = db.connect(tmp_path / "upgrade.db")
     assert db.migrate(conn)[-1] == "0056_api_tokens_live_user_index.sql"
     _seed_users(conn)
-    issue_a = issues.create_issue(conn, title="legacy A", body="", created_by=1)
-    issue_b = issues.create_issue(conn, title="legacy B", body="", created_by=1)
+    issue_a = issues.create_issue(
+        conn, title="legacy A", body="", created_by=1, commit=True
+    )
+    issue_b = issues.create_issue(
+        conn, title="legacy B", body="", created_by=1, commit=True
+    )
     legacy_rows = [
         (issue_a["id"], 2, "2025-01-02 03:04:05", "2025-01-02 04:04:05"),
         (issue_b["id"], 3, "2025-02-03 04:05:06", "2099-02-03 05:05:06"),
@@ -217,10 +222,12 @@ def test_upgrade_from_0056_preserves_leases_and_enforces_generations(
         )
     conn.rollback()
 
-    replacement = leases.upsert_lease(conn, issue_a["id"], 3, 600)
+    replacement = leases.upsert_lease(conn, issue_a["id"], 3, 600, commit=True)
     assert replacement["generation"] != generations[0]
     assert replacement["holder_id"] == 3
-    assert leases.delete_lease(conn, issue_a["id"], generations[0]) is False
+    assert (
+        leases.delete_lease(conn, issue_a["id"], generations[0], commit=True) is False
+    )
     assert (
         leases.get_lease(conn, issue_a["id"])["generation"] == replacement["generation"]
     )
@@ -246,6 +253,7 @@ def test_handoff_database_binds_audit_payload_and_is_durable(tmp_path):
             f"generation {generation}; handoff {wrong_actor_token}; "
             "blocked: Which recovery path should be used?"
         ),
+        commit=True,
     )
     with pytest.raises(sqlite3.IntegrityError, match="matching native claim yield"):
         _raw_handoff_insert(
@@ -268,6 +276,7 @@ def test_handoff_database_binds_audit_payload_and_is_durable(tmp_path):
             f"generation {generation}; handoff {'c' * 32}; "
             "blocked: a different question"
         ),
+        commit=True,
     )
     with pytest.raises(sqlite3.IntegrityError, match="matching native claim yield"):
         _raw_handoff_insert(
@@ -329,6 +338,7 @@ def test_handoff_database_binds_audit_payload_and_is_durable(tmp_path):
             f"generation {replacement['generation']}; handoff {second_token}; "
             f"capacity: {second_question}"
         ),
+        commit=True,
     )
     with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed"):
         _raw_handoff_insert(
@@ -349,6 +359,7 @@ def test_handoff_database_binds_audit_payload_and_is_durable(tmp_path):
         target_kind="issue",
         target_id=issue["id"],
         detail=(f"handoff {'e' * 32}; generation {replacement['generation']}"),
+        commit=True,
     )
     with pytest.raises(sqlite3.IntegrityError, match="matching native handoff resume"):
         conn.execute(
@@ -386,6 +397,7 @@ def test_handoff_database_binds_audit_payload_and_is_durable(tmp_path):
             f"generation {evidence_lease['generation']}; handoff {evidence_token}; "
             "blocked: Which recovery path should be used?"
         ),
+        commit=True,
     )
     with pytest.raises(sqlite3.IntegrityError, match="valid claim handoff evidence"):
         _raw_handoff_insert(
@@ -417,6 +429,7 @@ def test_handoff_database_binds_audit_payload_and_is_durable(tmp_path):
                 f"generation {evidence_lease['generation']}; handoff {token}; "
                 f"blocked: {question}"
             ),
+            commit=True,
         )
         with pytest.raises(sqlite3.IntegrityError):
             _raw_handoff_insert(

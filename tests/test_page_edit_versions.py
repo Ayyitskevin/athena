@@ -44,10 +44,15 @@ def _space_with_page(conn, *, title="Runbook", body="v1 text", created_by=1):
     conn.execute("INSERT INTO users (email, name) VALUES ('b@e.com', 'B')")
     conn.commit()
     space = spaces.create_space(
-        conn, key="ENG", name="Engineering", created_by=created_by
+        conn, key="ENG", name="Engineering", created_by=created_by, commit=True
     )
     page = pages.create_page(
-        conn, space_id=space["id"], title=title, body=body, created_by=created_by
+        conn,
+        space_id=space["id"],
+        title=title,
+        body=body,
+        created_by=created_by,
+        commit=True,
     )
     return page
 
@@ -58,7 +63,9 @@ def _space_with_page(conn, *, title="Runbook", body="v1 text", created_by=1):
 def test_edit_changes_the_live_page(tmp_path):
     conn = _migrated_conn(tmp_path / "e.db")
     page = _space_with_page(conn)
-    updated = pages.update_page(conn, page["id"], editor_id=1, body="v2 text")
+    updated = pages.update_page(
+        conn, page["id"], editor_id=1, body="v2 text", commit=True
+    )
     assert updated["body"] == "v2 text"
     assert updated["title"] == "Runbook"  # untouched field stays
     assert pages.get_page(conn, page["id"])["body"] == "v2 text"
@@ -67,7 +74,7 @@ def test_edit_changes_the_live_page(tmp_path):
 def test_edit_snapshots_the_prior_content_as_version_one(tmp_path):
     conn = _migrated_conn(tmp_path / "v1.db")
     page = _space_with_page(conn, title="Runbook", body="v1 text")
-    pages.update_page(conn, page["id"], editor_id=1, body="v2 text")
+    pages.update_page(conn, page["id"], editor_id=1, body="v2 text", commit=True)
     history = pages.list_page_versions(conn, page["id"])
     assert len(history) == 1
     assert history[0]["version"] == 1
@@ -79,8 +86,8 @@ def test_edit_snapshots_the_prior_content_as_version_one(tmp_path):
 def test_versions_are_dense_and_newest_first(tmp_path):
     conn = _migrated_conn(tmp_path / "vN.db")
     page = _space_with_page(conn, body="v1")
-    pages.update_page(conn, page["id"], editor_id=1, body="v2")
-    pages.update_page(conn, page["id"], editor_id=1, body="v3")
+    pages.update_page(conn, page["id"], editor_id=1, body="v2", commit=True)
+    pages.update_page(conn, page["id"], editor_id=1, body="v3", commit=True)
     history = pages.list_page_versions(conn, page["id"])
     # Two edits => two superseded revisions (v1 and v2); the live row holds v3.
     assert [h["version"] for h in history] == [2, 1]
@@ -93,7 +100,7 @@ def test_each_version_keeps_its_own_author(tmp_path):
     conn = _migrated_conn(tmp_path / "blame.db")
     page = _space_with_page(conn, created_by=1)  # user 1 = Ann
     pages.update_page(
-        conn, page["id"], editor_id=2, body="bob's rewrite"
+        conn, page["id"], editor_id=2, body="bob's rewrite", commit=True
     )  # user 2 = Bob
     history = pages.list_page_versions(conn, page["id"])
     assert history[0]["edited_by"] == 1  # the superseded original was Ann's
@@ -114,7 +121,9 @@ def test_each_version_keeps_its_authoring_run(tmp_path):
     assert pages.get_page(conn, page["id"])["run_id"] == "run-alpha"
 
     tok2 = run_context.set_run_id("run-beta")
-    pages.update_page(conn, page["id"], editor_id=1, body="v2")  # edit under run-beta
+    pages.update_page(
+        conn, page["id"], editor_id=1, body="v2", commit=True
+    )  # edit under run-beta
     run_context.reset_run_id(tok2)
 
     history = pages.list_page_versions(conn, page["id"])
@@ -131,7 +140,7 @@ def test_human_write_records_no_run(tmp_path):
     conn = _migrated_conn(tmp_path / "human.db")
     page = _space_with_page(conn, body="v1")  # no run context set
     assert pages.get_page(conn, page["id"])["run_id"] is None
-    pages.update_page(conn, page["id"], editor_id=1, body="v2")
+    pages.update_page(conn, page["id"], editor_id=1, body="v2", commit=True)
     assert pages.list_page_versions(conn, page["id"])[0]["run_id"] is None
 
 
@@ -159,7 +168,7 @@ def test_version_run_id_surfaced_over_rest(tmp_path):
 def test_no_changing_fields_cuts_no_version(tmp_path):
     conn = _migrated_conn(tmp_path / "noop.db")
     page = _space_with_page(conn)
-    same = pages.update_page(conn, page["id"], editor_id=1)
+    same = pages.update_page(conn, page["id"], editor_id=1, commit=True)
     assert same["id"] == page["id"]
     assert pages.list_page_versions(conn, page["id"]) == []
 
@@ -172,7 +181,7 @@ def test_never_edited_page_has_no_versions(tmp_path):
 
 def test_update_unknown_page_returns_none(tmp_path):
     conn = _migrated_conn(tmp_path / "miss.db")
-    assert pages.update_page(conn, 999, editor_id=1, body="x") is None
+    assert pages.update_page(conn, 999, editor_id=1, body="x", commit=True) is None
 
 
 def test_concurrent_edits_do_not_collide_on_version(tmp_path):
@@ -192,7 +201,9 @@ def test_concurrent_edits_do_not_collide_on_version(tmp_path):
         conn = db.connect(db_file)
         try:
             barrier.wait()  # both threads enter update_page together
-            pages.update_page(conn, page["id"], editor_id=editor_id, body=body)
+            pages.update_page(
+                conn, page["id"], editor_id=editor_id, body=body, commit=True
+            )
         except Exception as exc:  # noqa: BLE001 — the test asserts there are none
             errors.append(exc)
         finally:
@@ -223,7 +234,9 @@ def test_failed_update_rolls_back_the_version_snapshot(tmp_path):
     conn = _migrated_conn(tmp_path / "rollback.db")
     page = _space_with_page(conn, body="v1 text")  # users 1 and 2 exist; 999 does not
     with pytest.raises(sqlite3.IntegrityError):
-        pages.update_page(conn, page["id"], editor_id=999, body="never lands")
+        pages.update_page(
+            conn, page["id"], editor_id=999, body="never lands", commit=True
+        )
     assert pages.list_page_versions(conn, page["id"]) == []  # no orphan snapshot
     assert pages.get_page(conn, page["id"])["body"] == "v1 text"  # live row untouched
 

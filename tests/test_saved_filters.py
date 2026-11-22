@@ -394,7 +394,9 @@ def test_web_summary_hides_a_private_project_name(tmp_path):
         "INSERT INTO users (email, name, role) VALUES ('o@e.com', 'Outsider', 'member')"
     )
     conn.commit()
-    proj = projects.create_project(conn, name="Acquisition", key="ACQ", created_by=2)
+    proj = projects.create_project(
+        conn, name="Acquisition", key="ACQ", created_by=2, commit=True
+    )
     conn.execute(
         "UPDATE projects SET visibility = 'private' WHERE id = ?", (proj["id"],)
     )

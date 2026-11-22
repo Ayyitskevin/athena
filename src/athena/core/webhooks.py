@@ -245,7 +245,7 @@ def create_webhook(
     created_by: int,
     event_kind: str | None = None,
     start_cursor: int = 0,
-    commit: bool = True,
+    commit: bool,
 ) -> dict:
     """Register a webhook. Generates and returns a one-time `secret` (stored so we
     can sign, never shown again by the read paths). start_cursor is normally the
@@ -279,7 +279,7 @@ def get_webhook(conn: sqlite3.Connection, webhook_id: int) -> dict | None:
 
 
 def set_webhook_active(
-    conn: sqlite3.Connection, webhook_id: int, active: bool, *, commit: bool = True
+    conn: sqlite3.Connection, webhook_id: int, active: bool, *, commit: bool
 ) -> dict | None:
     """Pause (active=False) or resume (active=True) a webhook WITHOUT losing its
     cursor — so a paused endpoint resumes exactly where it left off rather than
@@ -305,7 +305,7 @@ def set_webhook_active(
 
 
 def reset_cursor(
-    conn: sqlite3.Connection, webhook_id: int, cursor: int, *, commit: bool = True
+    conn: sqlite3.Connection, webhook_id: int, cursor: int, *, commit: bool
 ) -> dict | None:
     """Point a webhook's delivery cursor at `cursor` and return the updated row.
 
@@ -319,9 +319,7 @@ def reset_cursor(
     return get_webhook(conn, webhook_id)
 
 
-def delete_webhook(
-    conn: sqlite3.Connection, webhook_id: int, *, commit: bool = True
-) -> bool:
+def delete_webhook(conn: sqlite3.Connection, webhook_id: int, *, commit: bool) -> bool:
     """Delete a webhook. Returns True if one was removed, False if there was no such
     row. ``commit=False`` lets an audited command fold the delete and its activity
     event into one transaction."""

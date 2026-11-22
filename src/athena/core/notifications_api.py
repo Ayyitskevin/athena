@@ -114,7 +114,11 @@ def add_watch(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     notifications.watch(
-        conn, actor["id"], _validate_kind(payload.target_kind), payload.target_id
+        conn,
+        actor["id"],
+        _validate_kind(payload.target_kind),
+        payload.target_id,
+        commit=True,
     )
 
 

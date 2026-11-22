@@ -143,7 +143,7 @@ def test_project_delete_confirm_keeps_name_out_of_inline_javascript(tmp_path):
         )
         client.post("/login", data={"email": "a@example.com", "password": "secret"})
         conn = db.connect(db_file)
-        projects.create_project(conn, name=payload, key="X", created_by=1)
+        projects.create_project(conn, name=payload, key="X", created_by=1, commit=True)
         conn.close()
 
         response = client.get("/aegis/projects/1/edit")
@@ -172,7 +172,7 @@ def test_space_delete_confirm_keeps_name_out_of_inline_javascript(tmp_path):
         )
         client.post("/login", data={"email": "a@example.com", "password": "secret"})
         conn = db.connect(db_file)
-        spaces.create_space(conn, key="X", name=payload, created_by=1)
+        spaces.create_space(conn, key="X", name=payload, created_by=1, commit=True)
         conn.close()
 
         response = client.get("/mentor/spaces/1")
