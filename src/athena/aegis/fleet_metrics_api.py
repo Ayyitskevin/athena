@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from athena.aegis import fleet_metrics
 from athena.core import identity, tokens
 from athena.core.deps import get_conn
+from athena.core.refusals import Refusal, code_of
 
 
 router = APIRouter(prefix="/fleet", tags=["aegis"])
@@ -114,10 +115,11 @@ def _query_from_request(request: Request) -> fleet_metrics.FleetMetricsQuery:
     try:
         return fleet_metrics.parse_query_pairs(list(request.query_params.multi_items()))
     except fleet_metrics.FleetMetricsError as exc:
-        raise HTTPException(
+        raise Refusal(
             status_code=422,
             detail=exc.detail,
             headers=_PRIVATE_HEADERS,
+            code="validation_error",
         ) from exc
 
 
@@ -133,16 +135,18 @@ def _fleet_metrics_actor(
     except HTTPException as exc:
         headers = dict(exc.headers or {})
         headers.update(_PRIVATE_HEADERS)
-        raise HTTPException(
+        raise Refusal(
             status_code=exc.status_code,
             detail=exc.detail,
             headers=headers,
+            code=code_of(exc),
         ) from exc
     if actor is None and (authorization is not None or x_athena_actor is not None):
-        raise HTTPException(
+        raise Refusal(
             status_code=401,
             detail="invalid or revoked authentication credential",
             headers=_PRIVATE_HEADERS,
+            code="unauthenticated",
         )
     return actor
 
@@ -176,9 +180,10 @@ def show_fleet_metrics(
     try:
         return fleet_metrics.build_fleet_metrics(conn, query, actor=actor)
     except fleet_metrics.FleetMetricsError as exc:
-        status_code = 404 if exc.kind == "not_found" else 422
-        raise HTTPException(
-            status_code=status_code,
+        not_found = exc.kind == "not_found"
+        raise Refusal(
+            status_code=404 if not_found else 422,
             detail=exc.detail,
             headers=_PRIVATE_HEADERS,
+            code="not_found" if not_found else "validation_error",
         ) from exc

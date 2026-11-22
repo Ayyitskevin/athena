@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from athena.core import webhook_commands, webhooks
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/webhooks", tags=["core"])
 
@@ -27,6 +28,13 @@ STATUS_BY_KIND: dict[str, int] = {
     "conflict": 409,
     "forbidden": 403,
     "unauthorized": 401,
+}
+CODE_BY_KIND: dict[str, str] = {
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "conflict": "conflict",
+    "forbidden": "forbidden",
+    "unauthorized": "unauthenticated",
 }
 
 
@@ -80,7 +88,7 @@ def create(
     url = payload.url.strip()
     ok, reason = webhooks.is_safe_url(url)
     if not ok:
-        raise HTTPException(status_code=422, detail=reason)
+        raise Refusal(status_code=422, detail=reason, code="validation_error")
     event_kind = (payload.event_kind or "").strip() or None
     # The command owns the registration, its atomic 'registered_webhook' audit event,
     # AND the "start at tip" cursor (only future events, never the backlog), so a new
@@ -98,7 +106,7 @@ def show(
 ) -> dict:
     webhook = webhooks.get_webhook(conn, webhook_id)
     if webhook is None:
-        raise HTTPException(status_code=404, detail="no such webhook")
+        raise Refusal(status_code=404, detail="no such webhook", code="not_found")
     return webhook
 
 
@@ -117,8 +125,10 @@ def update(
             conn, actor_id=actor["id"], webhook_id=webhook_id, active=payload.active
         )
     except webhook_commands.WebhookCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -132,4 +142,4 @@ def remove(
     if not webhook_commands.delete_webhook(
         conn, actor_id=actor["id"], webhook_id=webhook_id
     ):
-        raise HTTPException(status_code=404, detail="no such webhook")
+        raise Refusal(status_code=404, detail="no such webhook", code="not_found")

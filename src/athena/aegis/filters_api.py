@@ -15,7 +15,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 
 from athena.aegis import api, issues, saved_filters
@@ -23,6 +23,7 @@ from athena.core import access
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, personal_write_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/filters", tags=["aegis"])
 
@@ -83,10 +84,12 @@ def _clean_criteria(payload: FilterCriteria) -> dict:
             payload.model_dump(exclude_none=True)
         )
     except saved_filters.InvalidFilterCriteria as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise Refusal(
+            status_code=422, detail=str(exc), code="validation_error"
+        ) from exc
     reason = saved_filters.validate_criteria(criteria)
     if reason is not None:
-        raise HTTPException(status_code=422, detail=reason)
+        raise Refusal(status_code=422, detail=reason, code="validation_error")
     return criteria
 
 
@@ -96,7 +99,7 @@ def _owned_filter_or_404(conn: sqlite3.Connection, filter_id: int, actor: dict) 
     another's saved queries."""
     flt = saved_filters.get_filter(conn, filter_id)
     if flt is None or flt["owner_id"] != actor["id"]:
-        raise HTTPException(status_code=404, detail="no such filter")
+        raise Refusal(status_code=404, detail="no such filter", code="not_found")
     return flt
 
 
@@ -108,15 +111,19 @@ def create(
 ) -> dict:
     name = payload.name.strip()
     if not name:
-        raise HTTPException(status_code=422, detail="filter name is required")
+        raise Refusal(
+            status_code=422, detail="filter name is required", code="validation_error"
+        )
     criteria = _clean_criteria(payload.criteria)
     try:
         return saved_filters.create_filter(
             conn, owner_id=actor["id"], name=name, criteria=criteria
         )
     except sqlite3.IntegrityError as exc:
-        raise HTTPException(
-            status_code=409, detail="you already have a filter with that name"
+        raise Refusal(
+            status_code=409,
+            detail="you already have a filter with that name",
+            code="conflict",
         ) from exc
 
 
@@ -146,10 +153,16 @@ def update(
 ) -> dict:
     fields = payload.model_dump(exclude_unset=True)
     if not fields:
-        raise HTTPException(status_code=422, detail="no fields to update")
+        raise Refusal(
+            status_code=422, detail="no fields to update", code="validation_error"
+        )
     name = payload.name.strip() if payload.name is not None else None
     if name is not None and not name:
-        raise HTTPException(status_code=422, detail="filter name cannot be empty")
+        raise Refusal(
+            status_code=422,
+            detail="filter name cannot be empty",
+            code="validation_error",
+        )
     criteria = (
         _clean_criteria(payload.criteria) if payload.criteria is not None else None
     )
@@ -161,11 +174,13 @@ def update(
             conn, filter_id, owner_id=actor["id"], name=name, criteria=criteria
         )
     except sqlite3.IntegrityError as exc:
-        raise HTTPException(
-            status_code=409, detail="you already have a filter with that name"
+        raise Refusal(
+            status_code=409,
+            detail="you already have a filter with that name",
+            code="conflict",
         ) from exc
     if updated is None:
-        raise HTTPException(status_code=404, detail="no such filter")
+        raise Refusal(status_code=404, detail="no such filter", code="not_found")
     return updated
 
 
@@ -176,7 +191,7 @@ def delete(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     if not saved_filters.delete_filter(conn, filter_id, owner_id=actor["id"]):
-        raise HTTPException(status_code=404, detail="no such filter")
+        raise Refusal(status_code=404, detail="no such filter", code="not_found")
 
 
 @router.get("/{filter_id}/issues", response_model=list[api.IssueOut])

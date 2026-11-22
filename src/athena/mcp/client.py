@@ -16,6 +16,7 @@ import re
 
 import httpx
 
+from athena.core import refusal_codes
 from athena.core.coordination_roots import RootError, parse_selector
 
 
@@ -34,6 +35,7 @@ class AthenaError(RuntimeError):
         code: str | None = None,
         retry_after: str | None = None,
         current_etag: str | None = None,
+        body: dict[str, Any] | None = None,
     ) -> None:
         self.method = method
         self.path = path
@@ -42,6 +44,7 @@ class AthenaError(RuntimeError):
         self.code = code
         self.retry_after = retry_after
         self.current_etag = current_etag
+        self.body = body
         if message is None and None not in (method, path, status_code):
             message = f"{method} {path} -> {status_code}: {detail}"
         if message is None:
@@ -66,11 +69,37 @@ class AthenaError(RuntimeError):
             "current_etag": self.current_etag,
         }
 
+    def refusal(self) -> dict[str, Any]:
+        """The refusal as an agent receives it over MCP: ONE JSON object.
+
+        It is the REST body unchanged (``detail``, ``code`` and any extra
+        fields), plus ``status_code``, the ``Retry-After`` and ``ETag`` headers
+        when the response carried them, and ``next`` when the registry names
+        the call that resolves this code."""
+        payload: dict[str, Any] = (
+            dict(self.body) if self.body is not None else {"detail": self.detail}
+        )
+        if payload.get("detail") is None:
+            payload["detail"] = str(self)
+        if self.code is not None:
+            payload.setdefault("code", self.code)
+        payload["status_code"] = self.status_code
+        if self.retry_after is not None:
+            payload["retry_after"] = self.retry_after
+        if self.current_etag is not None:
+            payload["current_etag"] = self.current_etag
+        next_call = refusal_codes.next_call(self.code)
+        if next_call is not None:
+            payload["next"] = next_call
+        return payload
+
 
 # The run-identity headers RunContextMiddleware reads on every request. Managed as
 # a set so set_run can replace the whole identity atomically (stale parent/fork
 # headers from a previous run must never leak into the next one).
 _RUN_HEADERS = ("X-Athena-Run", "X-Athena-Parent-Run", "X-Athena-Fork-From-Event")
+# The 202 a gated write answers with (core/approvals.py names the same code).
+_APPROVAL_REQUIRED = "approval_required"
 
 
 class AthenaClient:
@@ -167,6 +196,7 @@ class AthenaClient:
                 code=code if isinstance(payload, dict) else None,
                 retry_after=response.headers.get("Retry-After"),
                 current_etag=response.headers.get("ETag"),
+                body=payload if isinstance(payload, dict) else None,
             )
         if response.status_code == 204 or not response.content:
             return None
@@ -174,6 +204,15 @@ class AthenaClient:
         etag = response.headers.get("ETag")
         if isinstance(result, dict) and etag is not None:
             result["_etag"] = etag
+        if (
+            response.status_code == 202
+            and isinstance(result, dict)
+            and result.get("code") == _APPROVAL_REQUIRED
+        ):
+            # Accepted as an ask, not applied: say so in fields, and name the
+            # call that waits for the operator's decision.
+            result["applied"] = False
+            result["next"] = refusal_codes.next_call(_APPROVAL_REQUIRED)
         return result
 
     def _mutate(

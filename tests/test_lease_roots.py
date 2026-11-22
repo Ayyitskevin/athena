@@ -633,7 +633,8 @@ def test_hidden_issue_still_blocks_but_denial_does_not_disclose(client):
     denied = claim(client, public, paths=["docs"], coordination_root=root("alias"))
     assert denied.status_code == 409
     assert denied.json() == {
-        "detail": "declared paths conflict with another active lease"
+        "detail": "declared paths conflict with another active lease",
+        "code": "conflict",
     }
     assert (
         claim(client, public, paths=["docs"], coordination_root=root("two")).status_code

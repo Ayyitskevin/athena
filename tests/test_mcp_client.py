@@ -1714,7 +1714,7 @@ def test_client_replays_one_logical_mutation_and_surfaces_mismatch(tmp_path):
         with pytest.raises(AthenaError) as invalid:
             ath.create_issue(title="invalid key", idempotency_key="")
         assert invalid.value.status_code == 400
-        assert invalid.value.code is None
+        assert invalid.value.code == "idempotency_key_invalid"
         assert "1-255 visible ASCII" in invalid.value.detail
     finally:
         tc.__exit__(None, None, None)
@@ -1750,7 +1750,7 @@ def test_error_surfaces_status_and_detail(tmp_path):
         assert error.status_code == 404
         assert error.method == "GET"
         assert error.path == "/issues/99999"
-        assert error.code is None
+        assert error.code == "not_found"
         assert error.retry_after is None
     finally:
         tc.__exit__(None, None, None)

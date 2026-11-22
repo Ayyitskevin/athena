@@ -15,13 +15,14 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 
 from athena.core import token_commands, tokens
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, token_management_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/tokens", tags=["core"])
 
@@ -31,6 +32,13 @@ STATUS_BY_KIND: dict[str, int] = {
     "conflict": 409,
     "forbidden": 403,
     "unauthorized": 401,
+}
+CODE_BY_KIND: dict[str, str] = {
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "conflict": "conflict",
+    "forbidden": "forbidden",
+    "unauthorized": "unauthenticated",
 }
 
 TokenScope = Literal["read", "issue:write", "docs:write", "admin"]
@@ -73,8 +81,10 @@ def create(
             conn, actor_id=actor["id"], name=payload.name, scopes=payload.scopes
         )
     except token_commands.TokenCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -95,5 +105,5 @@ def revoke(
 ) -> Response:
     # The command owns the revoke AND its atomic 'revoked_token' audit event.
     if not token_commands.revoke_token(conn, actor_id=actor["id"], token_id=token_id):
-        raise HTTPException(status_code=404, detail="no such live token")
+        raise Refusal(status_code=404, detail="no such live token", code="not_found")
     return Response(status_code=204)

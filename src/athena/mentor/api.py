@@ -13,7 +13,6 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
-    HTTPException,
     Request,
     Response,
     UploadFile,
@@ -47,6 +46,7 @@ from athena.mentor import (
     space_commands,
     spaces,
 )
+from athena.core.refusals import Refusal
 
 spaces_router = APIRouter(prefix="/spaces", tags=["mentor"])
 
@@ -57,6 +57,13 @@ STATUS_BY_KIND: dict[str, int] = {
     "forbidden": 403,
     "unauthorized": 401,
 }
+CODE_BY_KIND: dict[str, str] = {
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "conflict": "conflict",
+    "forbidden": "forbidden",
+    "unauthorized": "unauthenticated",
+}
 # A page belongs to a space, so create/list live under /spaces/{id}/pages
 # (a sub-resource, like comments under an issue). A single page is addressable on
 # its own canonical URL via this top-level router, like GET /issues/{id}.
@@ -64,6 +71,13 @@ pages_router = APIRouter(prefix="/pages", tags=["mentor"])
 # The agent's notebook: find-or-create on an explicit call. The desk shows it;
 # reading the desk never creates it.
 notebook_router = APIRouter(prefix="/desk", tags=["mentor"])
+
+
+_NOTEBOOK_STATUS_BY_KIND: dict[str, int] = {"forbidden": 403, "conflict": 409}
+_NOTEBOOK_CODE_BY_KIND: dict[str, str] = {
+    "forbidden": "forbidden",
+    "conflict": "conflict",
+}
 
 
 @notebook_router.post("/notebook")
@@ -78,8 +92,11 @@ def open_notebook(
     try:
         page, created = notebook_commands.ensure_agent_notebook(conn, actor=actor)
     except notebook_commands.NotebookCommandError as exc:
-        status = {"forbidden": 403, "conflict": 409}.get(exc.kind, 400)
-        raise HTTPException(status_code=status, detail=exc.detail) from exc
+        raise Refusal(
+            status_code=_NOTEBOOK_STATUS_BY_KIND.get(exc.kind, 400),
+            detail=exc.detail,
+            code=_NOTEBOOK_CODE_BY_KIND.get(exc.kind, "bad_request"),
+        ) from exc
     response.status_code = 201 if created else 200
     return {"page": _tagged_page(conn, page, response), "created": created}
 
@@ -278,6 +295,14 @@ _PAGE_COMMAND_STATUS = {
     "precondition_too_large": 431,
     "precondition_failed": 412,
 }
+_PAGE_COMMAND_CODE = {
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "conflict": "conflict",
+    "invalid_precondition": "invalid_if_match",
+    "precondition_too_large": "if_match_too_large",
+    "precondition_failed": "precondition_failed",
+}
 
 
 def page_command_status(exc: page_commands.PageCommandError) -> int:
@@ -288,6 +313,11 @@ def page_command_status(exc: page_commands.PageCommandError) -> int:
     translate, so `mentor/page_undo.py` reuses this one mapping instead of keeping
     a second that could drift."""
     return _PAGE_COMMAND_STATUS[exc.kind]
+
+
+def page_command_code(exc: page_commands.PageCommandError) -> str:
+    """The refusal code beside ``page_command_status``, from the same kind."""
+    return _PAGE_COMMAND_CODE[exc.kind]
 
 
 def _page_command_error_response(exc: page_commands.PageCommandError) -> JSONResponse:
@@ -302,7 +332,11 @@ def _page_command_error_response(exc: page_commands.PageCommandError) -> JSONRes
             content={"detail": exc.detail, "code": code},
             headers=headers,
         )
-    raise HTTPException(status_code=page_command_status(exc), detail=exc.detail)
+    raise Refusal(
+        status_code=page_command_status(exc),
+        detail=exc.detail,
+        code=page_command_code(exc),
+    )
 
 
 @spaces_router.get("", response_model=list[SpaceOut])
@@ -328,11 +362,17 @@ def create_space(
     key = payload.key.strip().upper()
     name = payload.name.strip()
     if not key:
-        raise HTTPException(status_code=422, detail="space key is required")
+        raise Refusal(
+            status_code=422, detail="space key is required", code="validation_error"
+        )
     if not name:
-        raise HTTPException(status_code=422, detail="space name is required")
+        raise Refusal(
+            status_code=422, detail="space name is required", code="validation_error"
+        )
     if spaces.get_space_by_key(conn, key) is not None:
-        raise HTTPException(status_code=409, detail="space key already exists")
+        raise Refusal(
+            status_code=409, detail="space key already exists", code="conflict"
+        )
     # The command owns the atomic insert AND its 'space_created' event.
     return space_commands.create_space(
         conn,
@@ -353,7 +393,7 @@ def show_space(
     # A private space the caller can't see is a 404, indistinguishable from a missing
     # one, so visibility never leaks through existence.
     if space is None or not access.can_see_space(conn, actor, space_id):
-        raise HTTPException(status_code=404, detail="no such space")
+        raise Refusal(status_code=404, detail="no such space", code="not_found")
     return space
 
 
@@ -370,24 +410,34 @@ def edit_space(
     # the caller: you can't edit a space you can't see.
     before = spaces.get_space(conn, space_id)
     if before is None or not access.can_see_space(conn, actor, space_id):
-        raise HTTPException(status_code=404, detail="no such space")
+        raise Refusal(status_code=404, detail="no such space", code="not_found")
     sent = payload.model_dump(exclude_unset=True)
     if not sent:
-        raise HTTPException(status_code=422, detail="no fields to update")
+        raise Refusal(
+            status_code=422, detail="no fields to update", code="validation_error"
+        )
     # Normalize + validate exactly as create does: key uppercased and non-empty,
     # name non-empty. Only the fields the client actually sent are touched.
     key = payload.key.strip().upper() if payload.key is not None else None
     name = payload.name.strip() if payload.name is not None else None
     if key is not None and not key:
-        raise HTTPException(status_code=422, detail="space key cannot be empty")
+        raise Refusal(
+            status_code=422, detail="space key cannot be empty", code="validation_error"
+        )
     if name is not None and not name:
-        raise HTTPException(status_code=422, detail="space name cannot be empty")
+        raise Refusal(
+            status_code=422,
+            detail="space name cannot be empty",
+            code="validation_error",
+        )
     # A key change must not collide with a DIFFERENT space (key is UNIQUE). Checked
     # here for a clean 409 instead of letting the IntegrityError surface as a 500.
     if key is not None:
         clash = spaces.get_space_by_key(conn, key)
         if clash is not None and clash["id"] != space_id:
-            raise HTTPException(status_code=409, detail="space key already exists")
+            raise Refusal(
+                status_code=409, detail="space key already exists", code="conflict"
+            )
     # The command owns the atomic update AND its 'space_edited' event (a no-op change
     # records nothing). A space that vanished in a race is a 404.
     try:
@@ -400,8 +450,10 @@ def edit_space(
             description=payload.description,
         )
     except space_commands.SpaceCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -418,7 +470,7 @@ def _space_for_write(conn: sqlite3.Connection, space_id: int, actor: dict) -> di
     with PATCH on the same space, which already 404s)."""
     space = spaces.get_space(conn, space_id)
     if space is None:
-        raise HTTPException(status_code=404, detail="no such space")
+        raise Refusal(status_code=404, detail="no such space", code="not_found")
     reason = access.container_write_reason(
         conn,
         actor,
@@ -427,10 +479,12 @@ def _space_for_write(conn: sqlite3.Connection, space_id: int, actor: dict) -> di
         created_by=space["created_by"],
     )
     if reason == "not_visible":
-        raise HTTPException(status_code=404, detail="no such space")
+        raise Refusal(status_code=404, detail="no such space", code="not_found")
     if reason == "not_owner":
-        raise HTTPException(
-            status_code=403, detail="only the space creator may delete it"
+        raise Refusal(
+            status_code=403,
+            detail="only the space creator may delete it",
+            code="forbidden",
         )
     return space
 
@@ -447,7 +501,9 @@ def delete_space(
     # first. 409, mirroring project-delete-on-issues and page-delete-on-children —
     # a delete must not silently wipe a documentation tree.
     if pages.count_pages_in_space(conn, space_id) > 0:
-        raise HTTPException(status_code=409, detail="delete or move its pages first")
+        raise Refusal(
+            status_code=409, detail="delete or move its pages first", code="conflict"
+        )
     # The command owns the atomic delete AND its 'space_deleted' event.
     space_commands.delete_space(
         conn, actor_id=actor["id"], space_id=space_id, name=space["name"]
@@ -471,11 +527,12 @@ def _space_for_privacy(conn: sqlite3.Connection, space_id: int, actor: dict) -> 
     matching the web twin _authorize_space_manage and the read-side list_space_members."""
     space = spaces.get_space(conn, space_id)
     if space is None or not access.can_see_space(conn, actor, space_id):
-        raise HTTPException(status_code=404, detail="no such space")
+        raise Refusal(status_code=404, detail="no such space", code="not_found")
     if space["created_by"] != actor["id"] and not is_admin(actor):
-        raise HTTPException(
+        raise Refusal(
             status_code=403,
             detail="only the space creator or an admin may manage access",
+            code="forbidden",
         )
     return space
 
@@ -491,8 +548,10 @@ def set_space_visibility(
     space = _space_for_privacy(conn, space_id, actor)
     visibility = payload.visibility.strip().lower()
     if visibility not in ("public", "private"):
-        raise HTTPException(
-            status_code=422, detail="visibility must be 'public' or 'private'"
+        raise Refusal(
+            status_code=422,
+            detail="visibility must be 'public' or 'private'",
+            code="validation_error",
         )
     if visibility == space["visibility"]:
         return space  # no-op set-to-same — no write, no event
@@ -503,8 +562,10 @@ def set_space_visibility(
             conn, actor_id=actor["id"], space_id=space_id, visibility=visibility
         )
     except space_commands.SpaceCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -518,7 +579,7 @@ def list_space_members(
     # its members. A private space the caller can't see is a 404.
     space = spaces.get_space(conn, space_id)
     if space is None or not access.can_see_space(conn, actor, space_id):
-        raise HTTPException(status_code=404, detail="no such space")
+        raise Refusal(status_code=404, detail="no such space", code="not_found")
     return access.list_space_members(conn, space_id)
 
 
@@ -536,7 +597,7 @@ def add_space_member(
     _space_for_privacy(conn, space_id, actor)
     member = users.get_user(conn, payload.user_id)
     if member is None:
-        raise HTTPException(status_code=422, detail="no such user")
+        raise Refusal(status_code=422, detail="no such user", code="validation_error")
     # The command owns the atomic grant AND its 'space_member_added' event (idempotent —
     # a re-add records nothing).
     space_commands.add_space_member(
@@ -568,7 +629,7 @@ def remove_space_member(
         user_id=user_id,
         member_name=member["name"] if member else str(user_id),
     ):
-        raise HTTPException(status_code=404, detail="user is not a member")
+        raise Refusal(status_code=404, detail="user is not a member", code="not_found")
     return access.list_space_members(conn, space_id)
 
 
@@ -587,15 +648,19 @@ def create_page(
     # (404 if the space is missing OR private to the caller).
     title = payload.title.strip()
     if not title:
-        raise HTTPException(status_code=422, detail="page title is required")
+        raise Refusal(
+            status_code=422, detail="page title is required", code="validation_error"
+        )
     # A parent (if given) must be a real page IN THIS SAME SPACE — a tree can't
     # span spaces. Checked here because the FK can express "is a page" but not
     # "is a page in this space".
     if payload.parent_id is not None:
         parent = pages.get_page(conn, payload.parent_id)
         if parent is None or parent["space_id"] != space_id:
-            raise HTTPException(
-                status_code=422, detail="parent must be a page in this space"
+            raise Refusal(
+                status_code=422,
+                detail="parent must be a page in this space",
+                code="validation_error",
             )
     # The command owns the atomic insert AND its 'page_created' event (auto-watch +
     # mentions), so a page and its activity footprint land together.
@@ -609,8 +674,10 @@ def create_page(
             parent_id=payload.parent_id,
         )
     except page_commands.PageCommandError as exc:
-        raise HTTPException(
-            status_code=page_command_status(exc), detail=exc.detail
+        raise Refusal(
+            status_code=page_command_status(exc),
+            detail=exc.detail,
+            code=page_command_code(exc),
         ) from exc
     return _with_labels(conn, page)
 
@@ -629,7 +696,7 @@ def list_pages(
     if spaces.get_space(conn, space_id) is None or not access.can_see_space(
         conn, actor, space_id
     ):
-        raise HTTPException(status_code=404, detail="no such space")
+        raise Refusal(status_code=404, detail="no such space", code="not_found")
     return _with_labels_many(
         conn,
         pages.list_pages_in_space(conn, space_id, include_archived=include_archived),
@@ -679,7 +746,7 @@ def _page_for_read(conn: sqlite3.Connection, page_id: int, actor: dict | None) -
     issue sub-resources funnel through theirs, so visibility can't be forgotten on one."""
     page = pages.get_page(conn, page_id)
     if page is None or not access.can_see_space(conn, actor, page["space_id"]):
-        raise HTTPException(status_code=404, detail="no such page")
+        raise Refusal(status_code=404, detail="no such page", code="not_found")
     return page
 
 
@@ -701,10 +768,14 @@ def edit_page(
     # title is rejected before the command runs.
     sent = payload.model_dump(exclude_unset=True)
     if not sent:
-        raise HTTPException(status_code=422, detail="no fields to update")
+        raise Refusal(
+            status_code=422, detail="no fields to update", code="validation_error"
+        )
     title = payload.title.strip() if payload.title is not None else None
     if title is not None and not title:
-        raise HTTPException(status_code=422, detail="title cannot be empty")
+        raise Refusal(
+            status_code=422, detail="title cannot be empty", code="validation_error"
+        )
     # The command owns the atomic snapshot+overwrite, its 'page_edited' audit event,
     # and the optional If-Match precondition (evaluated under the write lock, so a
     # stale editor gets a clean 412 instead of silently clobbering shared memory).
@@ -759,8 +830,10 @@ def delete_page(
     try:
         page_commands.delete_page(conn, actor=actor, page_id=page_id)
     except page_commands.PageCommandError as exc:
-        raise HTTPException(
-            status_code=page_command_status(exc), detail=exc.detail
+        raise Refusal(
+            status_code=page_command_status(exc),
+            detail=exc.detail,
+            code=page_command_code(exc),
         ) from exc
 
 
@@ -902,7 +975,11 @@ def link_page_mention(
     # like every other page edit, with the same event, version, and attribution.
     page = _page_for_read(conn, page_id, actor)
     if payload.target_kind not in ("issue", "page"):
-        raise HTTPException(status_code=422, detail="target_kind must be issue or page")
+        raise Refusal(
+            status_code=422,
+            detail="target_kind must be issue or page",
+            code="validation_error",
+        )
     # The target resolves through the caller's visible-read rule: a hidden target
     # has no mention text, so it is the same 404 as a missing one — never a 409
     # or a 200 that would confirm a private id, title, or key exists.
@@ -910,7 +987,7 @@ def link_page_mention(
         conn, payload.target_kind, payload.target_id, actor=actor
     )
     if not needle:
-        raise HTTPException(status_code=404, detail="no such link target")
+        raise Refusal(status_code=404, detail="no such link target", code="not_found")
     token = mentions.link_token(
         conn, payload.target_kind, payload.target_id, actor=actor
     )
@@ -918,8 +995,10 @@ def link_page_mention(
     if body is None:
         # The mention the caller acted on is no longer there — the body changed
         # under them. Refuse rather than edit something they did not see.
-        raise HTTPException(
-            status_code=409, detail="that mention is no longer in this page"
+        raise Refusal(
+            status_code=409,
+            detail="that mention is no longer in this page",
+            code="conflict",
         )
     try:
         return page_commands.edit_page(conn, actor=actor, page_id=page_id, body=body)
@@ -938,7 +1017,7 @@ def list_space_templates(
 ) -> list[dict]:
     # Template pages in this space — the pages carrying the `template` label.
     if not access.can_see_space(conn, actor, space_id):
-        raise HTTPException(status_code=404, detail="no such space")
+        raise Refusal(status_code=404, detail="no such space", code="not_found")
     return _with_labels_many(conn, page_templates.list_templates(conn, space_id))
 
 
@@ -952,7 +1031,9 @@ def create_page_from_template(
     # Space visibility is the command's check, inside its transaction.
     title = payload.title.strip()
     if not title:
-        raise HTTPException(status_code=422, detail="page title is required")
+        raise Refusal(
+            status_code=422, detail="page title is required", code="validation_error"
+        )
     try:
         return page_commands.create_page_from_template(
             conn,
@@ -981,8 +1062,10 @@ def open_daily_note(
             conn, actor=actor, space_id=space_id
         )
     except page_commands.PageCommandError as exc:
-        raise HTTPException(
-            status_code=page_command_status(exc), detail=exc.detail
+        raise Refusal(
+            status_code=page_command_status(exc),
+            detail=exc.detail,
+            code=page_command_code(exc),
         ) from exc
     response.status_code = 201 if created else 200
     return page
@@ -1006,7 +1089,9 @@ def add_page_comment(
     # authenticated actor, never a caller-supplied field.
     body = payload.body.strip()
     if not body:
-        raise HTTPException(status_code=422, detail="comment body is required")
+        raise Refusal(
+            status_code=422, detail="comment body is required", code="validation_error"
+        )
     # The command owns the insert AND its atomic 'page_commented' event (auto-watch +
     # mentions), so a page comment and its activity footprint land together.
     try:
@@ -1014,8 +1099,10 @@ def add_page_comment(
             conn, actor=actor, page_id=page_id, body=body
         )
     except page_comment_commands.PageCommentCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -1041,7 +1128,9 @@ def edit_page_comment(
 ) -> dict:
     body = payload.body.strip()
     if not body:
-        raise HTTPException(status_code=422, detail="comment body is required")
+        raise Refusal(
+            status_code=422, detail="comment body is required", code="validation_error"
+        )
     # The command owns the edit, its atomic 'page_comment_edited' event, AND the
     # gate: page visibility (404 hidden-as-missing) and author-ownership (403,
     # admins included — rewriting words is not moderation), checked inside its
@@ -1055,8 +1144,10 @@ def edit_page_comment(
             body=body,
         )
     except page_comment_commands.PageCommentCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -1074,10 +1165,12 @@ def delete_page_comment(
         if not page_comment_commands.delete_page_comment(
             conn, actor=actor, page_id=page_id, comment_id=comment_id
         ):
-            raise HTTPException(status_code=404, detail="no such comment")
+            raise Refusal(status_code=404, detail="no such comment", code="not_found")
     except page_comment_commands.PageCommentCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -1095,9 +1188,11 @@ def upload_page_attachment(
     _page_for_read(conn, page_id, actor)
     data = file.file.read()
     if not data:
-        raise HTTPException(status_code=422, detail="empty file")
+        raise Refusal(status_code=422, detail="empty file", code="validation_error")
     if len(data) > config.ATTACH_MAX_BYTES:
-        raise HTTPException(status_code=413, detail="attachment too large")
+        raise Refusal(
+            status_code=413, detail="attachment too large", code="payload_too_large"
+        )
     try:
         return attachment_commands.create_attachment(
             conn,
@@ -1110,8 +1205,10 @@ def upload_page_attachment(
             attach_dir=config.ATTACH_DIR,
         )
     except attachment_commands.AttachmentCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -1152,7 +1249,7 @@ def show_version(
     _page_for_read(conn, page_id, actor)
     snapshot = pages.get_page_version(conn, page_id, version)
     if snapshot is None:
-        raise HTTPException(status_code=404, detail="no such version")
+        raise Refusal(status_code=404, detail="no such version", code="not_found")
     return snapshot
 
 

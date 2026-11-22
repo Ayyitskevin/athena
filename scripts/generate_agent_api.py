@@ -10,7 +10,9 @@ token scope and which REST call it performs — from the code itself:
 - each tool's REST calls are read from the tool bodies in ``mcp/tools_*.py``
   (which ``AthenaClient`` methods it calls) joined to the HTTP verb + path
   literals in ``client.py``;
-- descriptions come from the registered FastMCP tools themselves.
+- descriptions come from the registered FastMCP tools themselves;
+- the refusal-code table comes from ``athena.core.refusal_codes``, the one
+  registry every REST refusal's ``code`` is drawn from.
 
 Usage:
     python scripts/generate_agent_api.py            # rewrite docs/AGENT_API.md
@@ -275,6 +277,7 @@ def render() -> str:
             lines.append(f"| `{name}` | {rest} | {summary} |")
         lines.append("")
 
+    lines += refusal_code_lines()
     lines += [
         "---",
         "",
@@ -285,6 +288,38 @@ def render() -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def refusal_code_lines() -> list[str]:
+    """The reference table of refusal codes, one row per registry entry."""
+    sys.path.insert(0, str(REPO / "src"))
+    from athena.core.refusal_codes import REFUSAL_CODES  # noqa: PLC0415
+
+    lines = [
+        "## Refusal codes",
+        "",
+        "Every 4xx and 5xx JSON body from a REST route carries a top-level `code`",
+        "from this registry (`core/refusal_codes.py`), beside an unchanged",
+        "`detail`. Branch on `code`, never on the `detail` text. Over MCP a",
+        "refused call returns the same object with `isError` true, plus",
+        "`status_code` and, where this table names one, `next`: the tool call",
+        "that resolves it. A 202 `approval_required` is not an error: it comes",
+        "back with `isError` false, `applied: false` and `next`.",
+        "",
+        "| Code | Status | Meaning | Next |",
+        "|---|---|---|---|",
+    ]
+    for entry in REFUSAL_CODES.values():
+        statuses = ", ".join(str(status) for status in entry.statuses)
+        meaning = entry.meaning.replace("|", "\\|")
+        follow = (
+            f"`{entry.next.tool}`: {entry.next.hint}".replace("|", "\\|")
+            if entry.next is not None
+            else ""
+        )
+        lines.append(f"| `{entry.code}` | {statuses} | {meaning} | {follow} |")
+    lines.append("")
+    return lines
 
 
 def main() -> int:

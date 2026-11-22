@@ -259,7 +259,7 @@ def test_command_owns_human_creator_or_admin_authorization_and_hides_private(
             },
         )
         assert hidden.status_code == 404
-        assert hidden.json() == {"detail": "no such project"}
+        assert hidden.json() == {"detail": "no such project", "code": "not_found"}
 
     assert len(_policy_events(db_file)) == 1
 

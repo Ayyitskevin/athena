@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends
 from pydantic import BaseModel
 
 from athena.aegis.api import LabelOut, labels_router
 from athena.core import label_commands, labels
 from athena.core.deps import get_conn
 from athena.core.identity import issue_write_actor, optional_actor
+from athena.core.refusals import Refusal
 
 # Adapter-owned translation of command-error kinds (the transport decides).
 STATUS_BY_KIND: dict[str, int] = {
@@ -24,6 +25,13 @@ STATUS_BY_KIND: dict[str, int] = {
     "conflict": 409,
     "forbidden": 403,
     "unauthorized": 401,
+}
+CODE_BY_KIND: dict[str, str] = {
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "conflict": "conflict",
+    "forbidden": "forbidden",
+    "unauthorized": "unauthenticated",
 }
 
 
@@ -53,6 +61,8 @@ def create_label(
             conn, actor=actor, name=payload.name, color=payload.color
         )
     except label_commands.LabelCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=exc.detail
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=exc.detail,
+            code=CODE_BY_KIND[exc.kind],
         ) from exc

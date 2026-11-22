@@ -47,6 +47,7 @@ from athena.aegis.rest_support import (
     issue_command_http_error,
     issue_for_read,
 )
+from athena.core.refusals import Refusal
 
 
 @router.post(
@@ -238,10 +239,11 @@ def claim_next_ready(
 ) -> dict | JSONResponse:
     """Select and acquire current ready work atomically for this account."""
     if "if-match" in request.headers:
-        raise HTTPException(
+        raise Refusal(
             status_code=422,
             detail="If-Match is not supported for ready pickup; use an explicit issue claim",
             headers=PRIVATE_LEASE_HEADERS,
+            code="validation_error",
         )
     response.headers.update(PRIVATE_LEASE_HEADERS)
     payload = payload or ReadyClaimIn()
@@ -393,7 +395,7 @@ def get_issue_lease(
     if issue is None or not access.can_see_project_or_backlog(
         conn, actor, issue["project_id"]
     ):
-        raise HTTPException(status_code=404, detail="no such issue")
+        raise Refusal(status_code=404, detail="no such issue", code="not_found")
     response.headers.update(PRIVATE_LEASE_HEADERS)
     lease = leases.get_lease(conn, issue_id)
     if lease is not None:

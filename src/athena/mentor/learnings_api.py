@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 
 from athena.core import access
@@ -25,6 +25,7 @@ from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import docs_write_actor
 from athena.mentor import run_learning_commands, run_learnings
+from athena.core.refusals import Refusal
 
 router = APIRouter(tags=["mentor"])
 
@@ -35,6 +36,13 @@ STATUS_BY_KIND: dict[str, int] = {
     "conflict": 409,
     "forbidden": 403,
     "unauthorized": 401,
+}
+CODE_BY_KIND: dict[str, str] = {
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "conflict": "conflict",
+    "forbidden": "forbidden",
+    "unauthorized": "unauthenticated",
 }
 
 
@@ -89,8 +97,10 @@ def record_learning(
         detail: object = exc.detail
         if exc.extra:
             detail = {"error": exc.detail, **exc.extra}
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=detail
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=detail,
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
     page = result["page"]
     return {
@@ -110,7 +120,7 @@ def read_runbook(
     """The issue's runbook page, or null when it has none yet — so a client can
     tell whether `space_id` is needed before promoting."""
     if not access.can_see_issue(conn, actor, issue_id):
-        raise HTTPException(status_code=404, detail="no such issue")
+        raise Refusal(status_code=404, detail="no such issue", code="not_found")
     page = run_learnings.get_runbook(conn, issue_id)
     if page is None or not access.can_see_page(conn, actor, int(page["id"])):
         return None

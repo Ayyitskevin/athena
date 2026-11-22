@@ -1196,7 +1196,11 @@ def test_hidden_and_missing_project_filters_are_identical(tmp_path):
         hidden = client.get(base + str(private["id"]), headers=outsider)
         missing = client.get(base + "999999", headers=outsider)
         assert hidden.status_code == missing.status_code == 404
-        assert hidden.json() == missing.json() == {"detail": "no such project"}
+        assert (
+            hidden.json()
+            == missing.json()
+            == {"detail": "no such project", "code": "not_found"}
+        )
         assert hidden.headers["cache-control"] == "private, no-store"
 
 

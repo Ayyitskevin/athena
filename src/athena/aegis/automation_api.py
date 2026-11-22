@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, StrictInt
 
 from athena.aegis import automation, automation_commands
 from athena.core.deps import get_conn
 from athena.core.ids import RowIdPath
 from athena.core.identity import admin_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/automation", tags=["aegis"])
 
@@ -33,6 +34,13 @@ STATUS_BY_KIND: dict[str, int] = {
     "conflict": 409,
     "forbidden": 403,
     "unauthorized": 401,
+}
+CODE_BY_KIND: dict[str, str] = {
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "conflict": "conflict",
+    "forbidden": "forbidden",
+    "unauthorized": "unauthenticated",
 }
 
 
@@ -122,8 +130,10 @@ def create(
             schedule_every_seconds=payload.schedule_every_seconds,
         )
     except automation_commands.AutomationCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -135,7 +145,7 @@ def show(
 ) -> dict:
     rule = automation.get_rule(conn, rule_id)
     if rule is None:
-        raise HTTPException(status_code=404, detail="no such rule")
+        raise Refusal(status_code=404, detail="no such rule", code="not_found")
     return rule
 
 
@@ -152,8 +162,10 @@ def update(
             conn, actor_id=actor["id"], rule_id=rule_id, enabled=payload.enabled
         )
     except automation_commands.AutomationCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -165,4 +177,4 @@ def remove(
 ) -> None:
     # The command records the deletion atomically (naming the rule going away).
     if not automation_commands.delete_rule(conn, actor_id=actor["id"], rule_id=rule_id):
-        raise HTTPException(status_code=404, detail="no such rule")
+        raise Refusal(status_code=404, detail="no such rule", code="not_found")

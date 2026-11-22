@@ -492,7 +492,11 @@ def test_http_visibility_revocation_read_token_validation_and_domain_immutabilit
         hidden = client.get(url, headers={"X-Athena-Actor": "2"})
         missing = client.get("/projects/999999/brief", headers={"X-Athena-Actor": "2"})
         assert hidden.status_code == missing.status_code == 404
-        assert hidden.json() == missing.json() == {"detail": "no such project"}
+        assert (
+            hidden.json()
+            == missing.json()
+            == {"detail": "no such project", "code": "not_found"}
+        )
         for response in (hidden, missing):
             assert response.headers["cache-control"] == "private, no-store"
             assert {"authorization", "x-athena-actor"} <= {

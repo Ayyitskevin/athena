@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -18,14 +18,16 @@ from athena.core import desk_cursors
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, personal_write_actor
 from athena.core.ids import MAX_SQLITE_INTEGER
+from athena.core.refusals import Refusal
 
 router = APIRouter(tags=["core"])
 
 
-def _refuse(exc: desk_commands.DeskCommandError) -> HTTPException:
-    return HTTPException(
+def _refuse(exc: desk_commands.DeskCommandError) -> Refusal:
+    return Refusal(
         status_code=desk_commands.STATUS_BY_KIND.get(exc.kind, 400),
         detail=exc.detail,
+        code=desk_commands.CODE_BY_KIND.get(exc.kind, "bad_request"),
     )
 
 

@@ -326,7 +326,11 @@ def test_readyz_rejects_checksum_drift_without_leaking_details(tmp_path, monkeyp
         response = client.get("/readyz")
 
     assert response.status_code == 503
-    assert response.json() == {"status": "error", "database": "unavailable"}
+    assert response.json() == {
+        "status": "error",
+        "database": "unavailable",
+        "code": "unavailable",
+    }
     assert migration.name not in response.text
 
 
@@ -357,7 +361,11 @@ def test_readyz_rejects_an_incomplete_applied_ledger(tmp_path, monkeypatch):
         response = client.get("/readyz")
 
     assert response.status_code == 503
-    assert response.json() == {"status": "error", "database": "unavailable"}
+    assert response.json() == {
+        "status": "error",
+        "database": "unavailable",
+        "code": "unavailable",
+    }
 
 
 def test_lifespan_closes_startup_connection_when_migration_check_raises(

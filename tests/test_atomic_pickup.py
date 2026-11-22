@@ -234,7 +234,11 @@ def test_hidden_and_missing_project_refuse_even_when_holding(setup):
     invisible = pickup(client, agent, {"project_id": hidden["id"]})
     missing = pickup(client, agent, {"project_id": 999999})
     assert invisible.status_code == missing.status_code == 404
-    assert invisible.json() == missing.json() == {"detail": "no such project"}
+    assert (
+        invisible.json()
+        == missing.json()
+        == {"detail": "no such project", "code": "not_found"}
+    )
     assert invisible.headers["cache-control"] == "private, no-store"
     assert invisible.headers["vary"] == "Authorization, X-Athena-Actor"
     assert counts(path) == (1, 1)

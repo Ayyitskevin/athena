@@ -18,12 +18,13 @@ import asyncio
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
 from athena.core import activity, event_wait
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/events", tags=["core"])
 
@@ -116,7 +117,9 @@ async def events(
     # A target id without its kind is ambiguous — reject that half-query, exactly
     # as the activity feed does.
     if target is not None and kind is None:
-        raise HTTPException(status_code=422, detail="target requires kind")
+        raise Refusal(
+            status_code=422, detail="target requires kind", code="validation_error"
+        )
 
     # Over-fetch by one to learn whether a further batch is waiting without a second
     # count query (the same trick the web activity feed uses), then trim it off.

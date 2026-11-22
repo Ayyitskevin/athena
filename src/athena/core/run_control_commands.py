@@ -112,6 +112,14 @@ STATUS_BY_KIND: dict[str, int] = {
     "conflict": 409,
     "capacity": 429,
 }
+CODE_BY_KIND: dict[str, str] = {
+    "unauthorized": "unauthenticated",
+    "forbidden": "forbidden",
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "conflict": "conflict",
+    "capacity": "capacity_reached",
+}
 
 
 def _admin(actor: dict | None) -> dict:

@@ -82,6 +82,14 @@ STATUS_BY_KIND: dict[str, int] = {
     "conflict": 409,
     "capacity": 429,
 }
+CODE_BY_KIND: dict[str, str] = {
+    "unauthorized": "unauthenticated",
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "forbidden": "forbidden",
+    "conflict": "conflict",
+    "capacity": "capacity_reached",
+}
 
 
 class PlaybookCommandError(Exception):

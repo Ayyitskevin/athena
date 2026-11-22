@@ -23,9 +23,11 @@ import json
 import os
 import secrets
 import sys
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import CallToolResult, TextContent
 from pydantic import AfterValidator, Field
 
 from athena.aegis import (
@@ -690,7 +692,46 @@ def build_server(
     register_admin_tools(tool, mutation_tool, client)
     register_work_tools(tool, mutation_tool, client)
     register_page_tools(tool, mutation_tool, client)
+    _answer_refusals_as_one_object(mcp)
     return mcp
+
+
+def _refused_by_athena(exc: BaseException) -> AthenaError | None:
+    """The REST refusal behind a tool failure, or None for any other failure
+    (bad arguments, a client-side check): those keep the SDK's error text."""
+    seen: BaseException | None = exc
+    while seen is not None:
+        if isinstance(seen, AthenaError):
+            return seen
+        seen = seen.__cause__
+    return None
+
+
+def _answer_refusals_as_one_object(mcp: FastMCP) -> None:
+    """Give a refused call one JSON object on the wire, with isError true.
+
+    FastMCP turns a tool exception into prose ("Error executing tool ...")
+    wrapping the REST metadata. A client instead gets ``AthenaError.refusal()``:
+    the REST body unchanged (``detail``, ``code`` and any extra fields), the
+    status, and ``next`` where the refusal registry names the resolving call.
+
+    This replaces only the protocol handler. ``FastMCP.call_tool``, which
+    embedding callers and tests use in-process, still raises ``ToolError``."""
+
+    async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
+        try:
+            return await mcp.call_tool(name, arguments)
+        except ToolError as exc:
+            refused = _refused_by_athena(exc)
+            if refused is None:
+                raise
+            text = json.dumps(refused.refusal(), ensure_ascii=False)
+            return CallToolResult(
+                content=[TextContent(type="text", text=text)], isError=True
+            )
+
+    # The same registration FastMCP makes for its own call_tool, replaced.
+    mcp._mcp_server.call_tool(validate_input=False)(call_tool)  # noqa: SLF001
 
 
 def main() -> None:

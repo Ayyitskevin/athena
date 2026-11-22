@@ -11,14 +11,28 @@ from __future__ import annotations
 import sqlite3
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, WithJsonSchema
 
 from athena.core import agent_run_commands
 from athena.core.deps import get_conn
 from athena.core.identity import personal_write_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/agent-runs", tags=["core"])
+
+_STATUS_BY_KIND: dict[str, int] = {
+    "unauthorized": 401,
+    "forbidden": 403,
+    "invalid": 422,
+    "capacity": 409,
+}
+_CODE_BY_KIND: dict[str, str] = {
+    "unauthorized": "unauthenticated",
+    "forbidden": "forbidden",
+    "invalid": "validation_error",
+    "capacity": "capacity_reached",
+}
 
 RunId = Annotated[
     Any,
@@ -81,10 +95,8 @@ def heartbeat_agent_run(
             usage=payload.usage,
         )
     except agent_run_commands.AgentRunCommandError as exc:
-        status_code = {
-            "unauthorized": 401,
-            "forbidden": 403,
-            "invalid": 422,
-            "capacity": 409,
-        }[exc.kind]
-        raise HTTPException(status_code=status_code, detail=exc.detail) from exc
+        raise Refusal(
+            status_code=_STATUS_BY_KIND[exc.kind],
+            detail=exc.detail,
+            code=_CODE_BY_KIND[exc.kind],
+        ) from exc

@@ -10,13 +10,14 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
 
 from athena.aegis import work_context
 from athena.aegis.review_queue_models import IssueReviewTracking, ReviewRequest
 from athena.core.deps import get_conn
 from athena.core.identity import optional_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/issues", tags=["aegis"])
 
@@ -337,10 +338,11 @@ def show_issue_work_context(
     payload = work_context.build_work_context(conn, ref, actor=actor, brief=brief)
     if payload is None:
         # A hidden issue is deliberately indistinguishable from a missing one.
-        raise HTTPException(
+        raise Refusal(
             status_code=404,
             detail="no such issue",
             headers=_PRIVATE_HEADERS,
+            code="not_found",
         )
     response.headers.update(_PRIVATE_HEADERS)
     response.headers["ETag"] = work_context.context_etag(payload)

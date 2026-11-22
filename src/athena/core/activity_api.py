@@ -12,13 +12,14 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
 
 from athena.core import activity, activity_chain, agents, run_replay, undo
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor, current_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/activity", tags=["core"])
 
@@ -245,9 +246,10 @@ def feed(
     # thing it is), so reject that half-query. target_kind alone is fine — it's a
     # valid feed filter ("all issue events").
     if target_id is not None and target_kind is None:
-        raise HTTPException(
+        raise Refusal(
             status_code=422,
             detail="target_id requires target_kind",
+            code="validation_error",
         )
     return activity.list_activity(
         conn,
@@ -292,7 +294,11 @@ def export_csv(
     # never disagree on what matches; only the representation (CSV) and the higher
     # row cap differ. Page the full trail by passing the oldest id back as before_id.
     if target_id is not None and target_kind is None:
-        raise HTTPException(status_code=422, detail="target_id requires target_kind")
+        raise Refusal(
+            status_code=422,
+            detail="target_id requires target_kind",
+            code="validation_error",
+        )
     rows = activity.list_activity(
         conn,
         target_kind=target_kind,
@@ -437,7 +443,7 @@ def run_lineage(
     # 404, indistinguishable from one that never existed.
     lineage = activity.run_lineage(conn, run_id, actor=actor)
     if lineage is None:
-        raise HTTPException(status_code=404, detail="no such run")
+        raise Refusal(status_code=404, detail="no such run", code="not_found")
     return lineage
 
 
@@ -452,9 +458,11 @@ def run_replay_artifact(
     try:
         artifact = run_replay.build_run_replay_artifact(conn, run_id, actor=actor)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise Refusal(
+            status_code=422, detail=str(exc), code="validation_error"
+        ) from exc
     if artifact is None:
-        raise HTTPException(status_code=404, detail="no such run")
+        raise Refusal(status_code=404, detail="no such run", code="not_found")
     return artifact
 
 
@@ -487,9 +495,11 @@ def run_fork_contract(
             actor=actor,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise Refusal(
+            status_code=422, detail=str(exc), code="validation_error"
+        ) from exc
     if contract is None:
-        raise HTTPException(status_code=404, detail="no such fork point")
+        raise Refusal(status_code=404, detail="no such fork point", code="not_found")
     return contract
 
 

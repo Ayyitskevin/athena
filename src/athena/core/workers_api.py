@@ -14,13 +14,14 @@ from __future__ import annotations
 import sqlite3
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, WithJsonSchema
 
 from athena.core import worker_commands
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/workers", tags=["core"])
 
@@ -80,9 +81,11 @@ class WorkerOut(BaseModel):
     kill_requested: bool
 
 
-def _refuse(exc: worker_commands.WorkerCommandError) -> HTTPException:
-    return HTTPException(
-        status_code=worker_commands.STATUS_BY_KIND[exc.kind], detail=exc.detail
+def _refuse(exc: worker_commands.WorkerCommandError) -> Refusal:
+    return Refusal(
+        status_code=worker_commands.STATUS_BY_KIND[exc.kind],
+        detail=exc.detail,
+        code=worker_commands.CODE_BY_KIND[exc.kind],
     )
 
 

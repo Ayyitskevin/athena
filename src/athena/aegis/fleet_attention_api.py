@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict
 
 from athena.aegis import fleet_attention
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/attention/ranking", tags=["aegis"])
 
@@ -108,7 +109,9 @@ def index(
         )
         result = fleet_attention.public_attention_ranking(conn, ranking, actor=actor)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise Refusal(
+            status_code=422, detail=str(exc), code="validation_error"
+        ) from exc
 
     return {
         "items": result["items"],

@@ -9,6 +9,11 @@ Calls are shown two ways: the MCP tool (what your client calls) and the REST req
 (what it sends). Both need `Authorization: Bearer <token>`. Send `X-Athena-Run: <run id>`
 on every write that belongs to one execution, so the trail groups them.
 
+Every refusal (any 4xx or 5xx JSON body) carries a `code` beside its `detail`, from
+one registry. Branch on `code`, never on the `detail` text. Over MCP a refused call
+returns that same object with `isError` true, and `next` names the call that resolves
+it where one exists. The codes are listed in [AGENT_API.md](AGENT_API.md#refusal-codes).
+
 ## 1. Orient with the desk
 
 MCP `my_desk()` · REST `GET /desk`

@@ -222,6 +222,62 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `set_automation_rule_enabled` | `PATCH /automation/rules/{rule_id}` | Arm or disarm an admin-only automation rule without deleting its … |
 | `verify_activity_chain` | `GET /activity/chain/verify` | Recompute a bounded window of the audit trail's hash chain (admin only). |
 
+## Refusal codes
+
+Every 4xx and 5xx JSON body from a REST route carries a top-level `code`
+from this registry (`core/refusal_codes.py`), beside an unchanged
+`detail`. Branch on `code`, never on the `detail` text. Over MCP a
+refused call returns the same object with `isError` true, plus
+`status_code` and, where this table names one, `next`: the tool call
+that resolves it. A 202 `approval_required` is not an error: it comes
+back with `isError` false, `applied: false` and `next`.
+
+| Code | Status | Meaning | Next |
+|---|---|---|---|
+| `bad_request` | 400 | The request is malformed outside its body schema; fix it and resend. |  |
+| `unauthenticated` | 401 | No valid credential: the token or actor is missing, unknown or revoked. Retrying with the same credential fails the same way. |  |
+| `forbidden` | 403 | Authenticated, but your role, ownership or the target's access rules do not allow this action. |  |
+| `scope_denied` | 403 | Your token lacks the scope this call needs (the detail names it); only an operator can issue a wider token. | `my_desk`: identity.scopes lists what this token may do; ask the operator |
+| `account_paused` | 403 | The operator paused or removed this account; every authenticated action is refused until it is resumed. Stop and report. |  |
+| `run_binding_conflict` | 403 | The run id on this write belongs to another actor's run; tag the write with a run of your own. |  |
+| `not_found` | 404 | The target does not exist or is not visible to you; the two are deliberately indistinguishable. |  |
+| `method_not_allowed` | 405 | The path exists but does not accept this HTTP method. |  |
+| `conflict` | 409 | The target's current state does not allow this action; read it again before deciding what to do. |  |
+| `payload_too_large` | 413 | The request body or upload exceeds the server's size limit. |  |
+| `validation_error` | 422 | The input failed validation; the detail says which part. Resending it unchanged fails the same way. |  |
+| `rate_limited` | 429 | Too many requests from this token or address; wait Retry-After seconds. |  |
+| `capacity_reached` | 409, 429 | A bounded server-side limit is reached (run check-ins, workers, run controls, playbook steps); the detail says which and how to stay within it. |  |
+| `internal_error` | 500 | The server failed while handling the request; whether a write applied is unknown. Read the target's state before retrying. |  |
+| `unavailable` | 503 | A dependency (the database, the idempotency store or an execution fleet) cannot answer now; retry later. |  |
+| `deployment_boundary` | 421, 503 | Refused before any Athena work: the Host or socket is not one this deployment serves. Check the base URL you were given. |  |
+| `precondition_required` | 428 | This write needs If-Match with the target's current ETag. | `get_issue`: pass its _etag as if_match (a page's _etag is on get_page) |
+| `invalid_if_match` | 400 | The If-Match value is not a valid entity tag; send one strong ETag. |  |
+| `if_match_too_large` | 431 | The If-Match header exceeds the parsing limit; send one ETag. |  |
+| `precondition_failed` | 412 | The target changed since the ETag you sent: read it again, merge your change into the current state, then retry. | `get_issue`: fresh _etag (a page's is on get_page); retry with it and a new idempotency_key |
+| `claim_held` | 409 | Another account holds this issue's active lease (the detail names the holder); do not work it. | `claim_next_ready`: take other ready work instead |
+| `claim_required` | 409 | This action needs your own active lease on the issue, and there is none: it lapsed, was released, or was never taken. | `get_issue_lease`: issue_id; if it is free, claim_issue takes it again |
+| `lease_generation_required` | 428 | You already hold this lease; a repeated claim is a renewal and needs your current generation (the detail names it). | `get_issue_lease`: issue_id; pass its generation |
+| `invalid_lease_generation` | 422 | The generation is not a 32-character lowercase hex token. | `get_issue_lease`: issue_id; pass its generation |
+| `lease_generation_mismatch` | 409 | The generation you sent is not the lease's current one: your possession lapsed or was replaced. | `get_issue_lease`: issue_id; if the lease is no longer yours, stop work on it |
+| `blocked_issue_close_policy` | 409 | The project refuses to close an issue that has open blockers; close or unlink the blockers first. | `get_issue_work_context`: dependencies.open_blockers lists them |
+| `cursor_ahead` | 422 | after_id is past the newest event you can see; the body carries latest_visible_event_id, the highest value you may pass. | `advance_desk_cursor`: after_id no higher than latest_visible_event_id |
+| `invalid_query` | 422 | The work query does not parse; detail.error says where. |  |
+| `approval_required` | 202 | The action is gated for you: it was NOT applied, and an operator decision is pending (the body carries the approval). | `wait_for_events`: kind=approval.target_kind, target=approval.target_id; once decided, repeat the call with the same idempotency_key |
+| `approval_rejected` | 409 | The operator rejected this gated action (the note is in the body); do not retry it. |  |
+| `agent_budget_exhausted` | 429 | Your account's write budget for this window is spent; nothing was applied. Wait Retry-After seconds. |  |
+| `idempotency_key_invalid` | 400 | Send exactly one Idempotency-Key of 1-255 visible ASCII characters. |  |
+| `idempotency_key_unsupported` | 400 | This endpoint does not take an Idempotency-Key; resend without one. |  |
+| `idempotency_mismatch` | 409 | This Idempotency-Key was already used for a different request; use a new key for a different call. |  |
+| `idempotency_in_progress` | 409 | A request with this Idempotency-Key is still running; retry the same call after Retry-After seconds. |  |
+| `idempotency_indeterminate` | 409 | The earlier request under this key ended with an unknown outcome; read the target's state before choosing a new key. |  |
+| `idempotency_authorization_changed` | 409 | Your authorization changed after this key was claimed, so its stored response cannot be replayed. |  |
+| `undo_event_not_found` | 404 | No activity event with that id is visible to you. |  |
+| `undo_not_reversible` | 401, 422 | This event's action has no inverse that undo may apply. |  |
+| `undo_already_reversed` | 409 | This event was already reversed; the detail names the reversal. |  |
+| `undo_imported_event` | 422 | An imported event records another system's history; it cannot be undone. |  |
+| `undo_no_effect` | 409 | The action's effect is no longer in force, so there is nothing to undo. |  |
+| `undo_refused_by_command` | 400, 401, 403, 404, 409, 412, 422, 428, 431 | Undo is possible, but the inverse command refused it for you or for now; the status and detail are that command's. |  |
+
 ---
 
 *140 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

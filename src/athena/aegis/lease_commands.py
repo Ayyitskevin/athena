@@ -42,6 +42,11 @@ from athena.core import coordination_roots, db, identity, reported_usage
 
 ClaimYieldReason = Literal["needs_input", "blocked", "capacity"]
 CLAIM_YIELD_REASONS = frozenset({"needs_input", "blocked", "capacity"})
+# Refusal codes for the two lease conflicts an agent answers differently from a
+# plain conflict: someone else holds the lease (move on), or you hold none (look,
+# then claim). Kind stays "conflict"; the code travels on the error.
+CLAIM_HELD_CODE = "claim_held"
+CLAIM_REQUIRED_CODE = "claim_required"
 MAX_CLAIM_YIELD_NOTE_CHARS = 500
 MAX_HANDOFF_ATTEMPTED_WORK_CHARS = 4_000
 MAX_HANDOFF_EVIDENCE_ITEMS = 10
@@ -267,6 +272,7 @@ def claim_issue(
                     "conflict",
                     f"issue is claimed by {existing['holder_name']} until "
                     f"{existing['expires_at']}",
+                    code=CLAIM_HELD_CODE,
                 )
             if generation is None:
                 # The holder repeated the claim without saying so. Say what this
@@ -778,11 +784,14 @@ def yield_claim(
         _visible_issue(conn, actor, issue_id)
         existing = leases.get_lease(conn, issue_id)
         if existing is None or not existing["active"]:
-            raise IssueCommandError("conflict", "no active claim to yield")
+            raise IssueCommandError(
+                "conflict", "no active claim to yield", code=CLAIM_REQUIRED_CODE
+            )
         if existing["holder_id"] != actor["id"]:
             raise IssueCommandError(
                 "conflict",
                 f"issue is claimed by {existing['holder_name']}, not you",
+                code=CLAIM_HELD_CODE,
             )
         current_generation = _matching_lease_generation(existing, generation)
         if claim_handoffs.get_open_handoff(conn, issue_id) is not None:
@@ -849,11 +858,15 @@ def resume_claim_handoff(
         existing = leases.get_lease(conn, issue_id)
         if existing is None or not existing["active"]:
             raise IssueCommandError(
-                "conflict", "an active claim is required to resume a handoff"
+                "conflict",
+                "an active claim is required to resume a handoff",
+                code=CLAIM_REQUIRED_CODE,
             )
         if existing["holder_id"] != actor["id"]:
             raise IssueCommandError(
-                "conflict", f"issue is claimed by {existing['holder_name']}, not you"
+                "conflict",
+                f"issue is claimed by {existing['holder_name']}, not you",
+                code=CLAIM_HELD_CODE,
             )
         current_generation = _matching_lease_generation(existing, generation)
         handoff = claim_handoffs.get_handoff(
@@ -967,17 +980,22 @@ def complete_claim(
         mine = existing is not None and existing["holder_id"] == actor["id"]
         if extended and (not mine or existing is None or not existing["active"]):
             raise IssueCommandError(
-                "conflict", "candidate completion requires your own active claim"
+                "conflict",
+                "candidate completion requires your own active claim",
+                code=CLAIM_REQUIRED_CODE,
             )
         # An expired row that is not yours is not a possession anyone may
         # complete — including an admin, whose release lever stays ACTIVE-only.
         # It is left for the next acquisition to replace, exactly as before.
         if existing is None or (not existing["active"] and not mine):
-            raise IssueCommandError("conflict", "no active claim to complete")
+            raise IssueCommandError(
+                "conflict", "no active claim to complete", code=CLAIM_REQUIRED_CODE
+            )
         if not mine and not identity.is_admin(actor):
             raise IssueCommandError(
                 "conflict",
                 f"issue is claimed by {existing['holder_name']}, not you",
+                code=CLAIM_HELD_CODE,
             )
         lapsed = not existing["active"]
         if lapsed and generation is None:

@@ -13,7 +13,6 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
-    HTTPException,
     Query,
     Request,
     Response,
@@ -57,6 +56,7 @@ from athena.aegis.review_models import (
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import is_admin, issue_write_actor, optional_actor
+from athena.core.refusals import Refusal
 from athena.aegis.rest_support import (
     PRIVATE_LEASE_HEADERS,
     if_match_values,
@@ -73,6 +73,13 @@ STATUS_BY_KIND: dict[str, int] = {
     "conflict": 409,
     "forbidden": 403,
     "unauthorized": 401,
+}
+CODE_BY_KIND: dict[str, str] = {
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "conflict": "conflict",
+    "forbidden": "forbidden",
+    "unauthorized": "unauthenticated",
 }
 # Labels are a top-level resource (shared vocabulary), not nested under an issue,
 # so they get their own router. Attaching a label TO an issue is a sub-resource
@@ -343,20 +350,26 @@ def _parse_project_filter(project: str | None) -> tuple[int | None, bool]:
     "invalid" signal (None) into the API's 422."""
     parsed = issues.parse_project_filter(project)
     if parsed is None:
-        raise HTTPException(status_code=422, detail="invalid project filter")
+        raise Refusal(
+            status_code=422, detail="invalid project filter", code="validation_error"
+        )
     return parsed
 
 
-def _query_refusal(exc: Exception, atom: str | None) -> HTTPException:
+INVALID_QUERY_CODE = "invalid_query"
+
+
+def _query_refusal(exc: Exception, atom: str | None) -> Refusal:
     """One 422 shape for a bad query, whether the grammar or the domain refused it.
 
     ``atom`` names the offending piece so a caller can fix the typo instead of
     guessing which of eight terms was wrong — the whole reason an unknown atom is
     an error rather than an empty result set."""
-    detail: dict[str, object] = {"error": str(exc), "code": "invalid_query"}
+    detail: dict[str, object] = {"error": str(exc), "code": INVALID_QUERY_CODE}
     if atom is not None:
         detail["atom"] = atom
-    return HTTPException(status_code=422, detail=detail)
+    # The top-level code repeats the one this body has always carried in detail.
+    return Refusal(status_code=422, detail=detail, code=INVALID_QUERY_CODE)
 
 
 def _parsed_query(raw: str) -> work_query.Query:
@@ -409,12 +422,13 @@ def index(
         if include_archived:
             conflicting.append("include_archived")
         if conflicting:
-            raise HTTPException(
+            raise Refusal(
                 status_code=422,
                 detail=(
                     "q cannot be combined with the structured filters "
                     f"({', '.join(sorted(conflicting))}); express them in the query"
                 ),
+                code="validation_error",
             )
         try:
             rows = issue_query.run_query(
@@ -564,7 +578,7 @@ def show(
     if issue is None or not access.can_see_project_or_backlog(
         conn, actor, issue["project_id"]
     ):
-        raise HTTPException(status_code=404, detail="no such issue")
+        raise Refusal(status_code=404, detail="no such issue", code="not_found")
     return _tagged_issue(conn, issue, response)
 
 
@@ -656,7 +670,11 @@ def link_issue_mention(
     # the same authorization, projections, and audit as any other issue edit.
     issue = issue_for_read(conn, issue_id, actor)
     if payload.target_kind not in ("issue", "page"):
-        raise HTTPException(status_code=422, detail="target_kind must be issue or page")
+        raise Refusal(
+            status_code=422,
+            detail="target_kind must be issue or page",
+            code="validation_error",
+        )
     # The target resolves through the caller's visible-read rule: a hidden target
     # has no mention text, so it is the same 404 as a missing one — never a 409
     # or a 200 that would confirm a private id, title, or key exists.
@@ -664,15 +682,17 @@ def link_issue_mention(
         conn, payload.target_kind, payload.target_id, actor=actor
     )
     if not needle:
-        raise HTTPException(status_code=404, detail="no such link target")
+        raise Refusal(status_code=404, detail="no such link target", code="not_found")
     token = mentions.link_token(
         conn, payload.target_kind, payload.target_id, actor=actor
     )
     body = mentions.linkify_first(issue["body"] or "", needle, token)
     if body is None:
         # The body moved under the caller: the mention they acted on is gone.
-        raise HTTPException(
-            status_code=409, detail="that mention is no longer in this issue"
+        raise Refusal(
+            status_code=409,
+            detail="that mention is no longer in this issue",
+            code="conflict",
         )
     try:
         updated = issue_commands.update_issue(
@@ -715,11 +735,11 @@ def issue_state(
             conn, issue_id, as_of_event_id=as_of, actor=actor
         )
     except issue_history.IncompleteIssueHistory as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+        raise Refusal(status_code=403, detail=str(exc), code="forbidden") from exc
     except issue_history.IssueHistoryTooLarge as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise Refusal(status_code=409, detail=str(exc), code="conflict") from exc
     if state is None:  # issue_for_read already 404s; this is belt-and-suspenders
-        raise HTTPException(status_code=404, detail="no such issue")
+        raise Refusal(status_code=404, detail="no such issue", code="not_found")
     return state
 
 
@@ -739,7 +759,7 @@ def issue_history_narrative(
         conn, issue_id, actor=actor, limit=limit
     )
     if narrative is None:  # issue_for_read already 404s; this is belt-and-suspenders
-        raise HTTPException(status_code=404, detail="no such issue")
+        raise Refusal(status_code=404, detail="no such issue", code="not_found")
     return narrative
 
 
@@ -758,14 +778,15 @@ def _issue_for_write(conn: sqlite3.Connection, issue_id: int, actor: dict) -> di
     if issue is None or not access.can_see_project_or_backlog(
         conn, actor, issue["project_id"]
     ):
-        raise HTTPException(status_code=404, detail="no such issue")
+        raise Refusal(status_code=404, detail="no such issue", code="not_found")
     if not issues.can_act_on(conn, issue, actor):
-        raise HTTPException(
+        raise Refusal(
             status_code=403,
             detail=(
                 "only the issue creator, assignee, a delegated contributor, "
                 "or an admin may modify it"
             ),
+            code="forbidden",
         )
     return issue
 
@@ -904,18 +925,30 @@ def bulk_update(
     provided = payload.model_dump(exclude_unset=True)
     field_keys = [k for k in provided if k != "ids"]
     if not payload.ids:
-        raise HTTPException(status_code=422, detail="ids must be a non-empty list")
+        raise Refusal(
+            status_code=422,
+            detail="ids must be a non-empty list",
+            code="validation_error",
+        )
     if len(payload.ids) > _BULK_MAX:
-        raise HTTPException(
-            status_code=422, detail=f"at most {_BULK_MAX} ids per request"
+        raise Refusal(
+            status_code=422,
+            detail=f"at most {_BULK_MAX} ids per request",
+            code="validation_error",
         )
     if not field_keys:
-        raise HTTPException(status_code=422, detail="no fields to update")
+        raise Refusal(
+            status_code=422, detail="no fields to update", code="validation_error"
+        )
     # status/priority set a value; there is no "clear" for them, so an explicit null
     # is a malformed request (rejected for the whole batch, before any write).
     for column in ("status", "priority"):
         if column in provided and provided[column] is None:
-            raise HTTPException(status_code=422, detail=f"{column} cannot be null")
+            raise Refusal(
+                status_code=422,
+                detail=f"{column} cannot be null",
+                code="validation_error",
+            )
 
     results: list[dict] = []
     for issue_id in dict.fromkeys(payload.ids):  # dedupe, preserve first-seen order
@@ -1035,7 +1068,9 @@ def add_comment(
     issue_for_read(conn, issue_id, actor)
     body = payload.body.strip()
     if not body:
-        raise HTTPException(status_code=422, detail="comment body is required")
+        raise Refusal(
+            status_code=422, detail="comment body is required", code="validation_error"
+        )
     # The command owns the insert AND its atomic 'commented' event (with the auto-watch
     # and any mentions), so a comment and its activity footprint land together.
     return comment_commands.create_comment(
@@ -1074,9 +1109,11 @@ def _author_comment_or_error(
     the admin, so the moderation is on the record."""
     existing = comments.get_comment(conn, comment_id)
     if existing is None or existing["issue_id"] != issue_id:
-        raise HTTPException(status_code=404, detail="no such comment")
+        raise Refusal(status_code=404, detail="no such comment", code="not_found")
     if existing["author_id"] != actor["id"] and not (allow_admin and is_admin(actor)):
-        raise HTTPException(status_code=403, detail="not the comment author")
+        raise Refusal(
+            status_code=403, detail="not the comment author", code="forbidden"
+        )
     return existing
 
 
@@ -1092,7 +1129,9 @@ def edit_comment(
     _author_comment_or_error(conn, issue_id, comment_id, actor)
     body = payload.body.strip()
     if not body:
-        raise HTTPException(status_code=422, detail="comment body is required")
+        raise Refusal(
+            status_code=422, detail="comment body is required", code="validation_error"
+        )
     # The command owns the edit AND its atomic 'comment_edited' event — previously a
     # silent content rewrite.
     try:
@@ -1104,8 +1143,10 @@ def edit_comment(
             body=body,
         )
     except comment_commands.CommentCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -1123,7 +1164,7 @@ def delete_comment(
     if not comment_commands.delete_comment(
         conn, actor=actor, issue_id=issue_id, comment_id=comment_id
     ):
-        raise HTTPException(status_code=404, detail="no such comment")
+        raise Refusal(status_code=404, detail="no such comment", code="not_found")
 
 
 # --- Attachments on an issue ----------------------------------------------
@@ -1142,9 +1183,11 @@ def upload_issue_attachment(
     issue_for_read(conn, issue_id, actor)
     data = file.file.read()
     if not data:
-        raise HTTPException(status_code=422, detail="empty file")
+        raise Refusal(status_code=422, detail="empty file", code="validation_error")
     if len(data) > config.ATTACH_MAX_BYTES:
-        raise HTTPException(status_code=413, detail="attachment too large")
+        raise Refusal(
+            status_code=413, detail="attachment too large", code="payload_too_large"
+        )
     try:
         return attachment_commands.create_attachment(
             conn,
@@ -1157,8 +1200,10 @@ def upload_issue_attachment(
             attach_dir=config.ATTACH_DIR,
         )
     except attachment_commands.AttachmentCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 

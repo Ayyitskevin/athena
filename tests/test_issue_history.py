@@ -273,5 +273,6 @@ def test_state_endpoint_rejects_a_truncated_projection(tmp_path, monkeypatch):
         response = client.get(f"/issues/{issue_id}/state", headers=H_ADMIN)
         assert response.status_code == 409
         assert response.json() == {
-            "detail": "issue history exceeds the exact projection limit"
+            "detail": "issue history exceeds the exact projection limit",
+            "code": "conflict",
         }

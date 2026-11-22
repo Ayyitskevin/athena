@@ -22,7 +22,7 @@ import sqlite3
 from typing import BinaryIO
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -31,6 +31,7 @@ from athena.core import access, attachment_commands, attachments, tokens
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import optional_actor, require_token_scope, write_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/attachments", tags=["core"])
 
@@ -41,6 +42,13 @@ STATUS_BY_KIND: dict[str, int] = {
     "conflict": 409,
     "forbidden": 403,
     "unauthorized": 401,
+}
+CODE_BY_KIND: dict[str, str] = {
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "conflict": "conflict",
+    "forbidden": "forbidden",
+    "unauthorized": "unauthenticated",
 }
 
 
@@ -89,7 +97,7 @@ def download(
     # metadata, and existence never leak.
     att = attachments.get(conn, attachment_id)
     if att is None or not _can_see_attachment(conn, actor, att):
-        raise HTTPException(status_code=404, detail="no such attachment")
+        raise Refusal(status_code=404, detail="no such attachment", code="not_found")
     stored = attachments.get_stored_name(conn, attachment_id)
     assert stored is not None
     try:
@@ -97,8 +105,8 @@ def download(
             config.ATTACH_DIR, stored, expected_size=att["byte_size"]
         )
     except (OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=404, detail="attachment file is missing"
+        raise Refusal(
+            status_code=404, detail="attachment file is missing", code="not_found"
         ) from exc
     # Open by descriptor before constructing the response. A symlink or pathname
     # swap can no longer redirect the download after the visibility check.
@@ -135,7 +143,7 @@ def remove(
     # 404 if missing OR on a container the actor can't see — you can't delete (or probe)
     # a file on a private issue/page you can't see, same 404 as a missing one.
     if att is None or not _can_see_attachment(conn, actor, att):
-        raise HTTPException(status_code=404, detail="no such attachment")
+        raise Refusal(status_code=404, detail="no such attachment", code="not_found")
     # The write scope is the one for the attachment's module — deleting an issue's
     # file needs issue:write, a page's file needs docs:write.
     scope = (
@@ -146,7 +154,7 @@ def remove(
     require_token_scope(actor, scope)
     # Only the uploader may remove their attachment (mirrors comment ownership).
     if att["uploaded_by"] != actor["id"]:
-        raise HTTPException(status_code=403, detail="not the uploader")
+        raise Refusal(status_code=403, detail="not the uploader", code="forbidden")
     try:
         attachment_commands.remove_attachment(
             conn,
@@ -155,6 +163,8 @@ def remove(
             attach_dir=config.ATTACH_DIR,
         )
     except attachment_commands.AttachmentCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc

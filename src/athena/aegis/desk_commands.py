@@ -31,6 +31,10 @@ STATUS_BY_KIND: dict[str, int] = {
     "invalid": 422,
     "conflict": 409,
 }
+CODE_BY_KIND: dict[str, str] = {
+    "invalid": "validation_error",
+    "conflict": "conflict",
+}
 
 
 #: Machine code for an ``after_id`` past the newest event. Carried beside the

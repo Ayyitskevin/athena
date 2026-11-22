@@ -15,12 +15,13 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from athena.core import security_events
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/security", tags=["core"])
 
@@ -69,7 +70,9 @@ def events(
     try:
         return security_events.list_failures(conn, verb=verb, since=since, limit=limit)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise Refusal(
+            status_code=422, detail=str(exc), code="validation_error"
+        ) from exc
 
 
 @router.get("/counts", response_model=SecurityCountsOut)

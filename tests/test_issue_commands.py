@@ -1461,7 +1461,10 @@ def test_hidden_and_missing_sprints_collapse_across_rest_web_and_bulk(tmp_path):
                 headers=source_headers,
             )
             assert response.status_code == 422
-            assert response.json() == {"detail": "no such sprint"}
+            assert response.json() == {
+                "detail": "no such sprint",
+                "code": "validation_error",
+            }
 
             bulk = client.post(
                 "/issues/bulk",
@@ -1488,7 +1491,8 @@ def test_hidden_and_missing_sprints_collapse_across_rest_web_and_bulk(tmp_path):
         )
         assert visible_wrong.status_code == 422
         assert visible_wrong.json() == {
-            "detail": "sprint belongs to a different project than the issue"
+            "detail": "sprint belongs to a different project than the issue",
+            "code": "validation_error",
         }
 
         login = client.post(

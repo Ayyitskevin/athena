@@ -73,7 +73,10 @@ def test_paused_bearer_cannot_replay_and_resume_stays_fenced(tmp_path):
         while_paused = client.post("/issues", json={"title": "created"}, headers=keyed)
         # The canonical pause refusal — not the stored 201 body, no replay marker.
         assert while_paused.status_code == 403
-        assert while_paused.json() == {"detail": "account is paused"}
+        assert while_paused.json() == {
+            "detail": "account is paused",
+            "code": "account_paused",
+        }
         assert while_paused.headers.get("idempotent-replay") is None
 
         _set_paused(client, agent_id, False)
