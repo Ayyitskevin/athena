@@ -526,6 +526,26 @@ class _IdempotencyCaptureError(RuntimeError):
     """The downstream response cannot be stored and replayed safely."""
 
 
+# Per-request flag (in the ASGI scope's ``state``, never a header) by which a route
+# or exception handler declares that its 2xx response reports the write was NOT
+# applied. Such a response is never an idempotency receipt: the key is released as
+# for a 4xx, so the same request under the same key runs again. It lives in the
+# request scope rather than a response header so it can never reach a client and
+# no request header can set it.
+_NON_FINAL_STATE_KEY = "athena_idempotency_non_final"
+
+
+def mark_response_non_final(request: Request) -> None:
+    """Declare this request's 2xx response non-final: not a replayable receipt.
+
+    For an answer that is not the write's outcome — today only the 202
+    ``approval_required`` ask, whose own durable record is the approval request.
+    Do not use it for a response that reports a decided outcome (claim-next's
+    ``claimed: false`` is a decided outcome and stays a receipt).
+    """
+    setattr(request.state, _NON_FINAL_STATE_KEY, True)
+
+
 class IdempotencyMiddleware:
     """Durably single-flight mutating API retries across workers and restarts.
 
@@ -1000,6 +1020,10 @@ class IdempotencyMiddleware:
             if not message.get("more_body", False):
                 captured["finished"] = True
 
+        # The route and its exception handlers write their non-final flag into this
+        # dict. Create it before the app runs so every layer shares one object.
+        request_state = scope.setdefault("state", {})
+        request_state.pop(_NON_FINAL_STATE_KEY, None)
         try:
             await self.app(scope, replay_receive, capture_send)
             if captured["status"] is None or not captured["finished"]:
@@ -1017,8 +1041,9 @@ class IdempotencyMiddleware:
         status_code = captured["status"]
         response_body = b"".join(captured["body"])
         response_headers = captured["headers"]
+        non_final = request_state.pop(_NON_FINAL_STATE_KEY, False) is True
 
-        if 200 <= status_code < 300:
+        if 200 <= status_code < 300 and not non_final:
             try:
                 serialized_headers = self._serialize_headers(response_headers)
                 content_type = next(
@@ -1074,6 +1099,8 @@ class IdempotencyMiddleware:
                 failure_code="server_error_response",
             )
         else:
+            # A 4xx, or a 2xx the route marked non-final: nothing was applied, so
+            # the same request under the same key may run again.
             try:
                 await asyncio.to_thread(
                     self._run_db,

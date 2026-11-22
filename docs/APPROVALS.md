@@ -25,6 +25,16 @@ The practical consequence: an approval that is granted but whose retry then fail
 (budget exhausted, ETag stale, issue since blocked) stays **unspent** — the agent
 can retry again once the other refusal is resolved.
 
+**Retry under the same `Idempotency-Key`.** The 202 `approval_required` reports
+that the write was *not* applied, so it is never stored as the key's receipt: the
+route marks it non-final and the idempotency middleware releases the key, exactly
+as it does for a 4xx. The same request under the same key therefore runs again:
+while the ask is pending it returns the same pending request (the ask is its own
+durable, idempotent record), after approval it applies once and that applied
+response becomes the receipt a later replay returns, and after a rejection it
+returns the 409 below. Concurrent same-key retries after approval still apply
+once: one runs, the others wait and replay its result.
+
 ## Single-use
 
 Consuming happens inside the retry's own transaction, so the consumption commits

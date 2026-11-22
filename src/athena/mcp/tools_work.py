@@ -78,6 +78,14 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         idempotent replay. It is informational: complete_claim with the exact
         generation is a separate deliberate action, never an automatic follow-up.
         The _etag still identifies the canonical issue revision, not the note.
+
+        If a close is gated for you, the result is {code: 'approval_required',
+        approval: {id, state, ...}} (HTTP 202) instead of the issue: the close was
+        NOT applied and waits on an operator decision. Wait, then call again with
+        the same arguments and the same idempotency_key: a 202 is never stored as
+        the key's result. Until decided it returns the same pending approval;
+        after approval it applies once; after a rejection it fails with
+        approval_rejected and the operator's note.
         """
         return client.update_issue(
             issue_id,

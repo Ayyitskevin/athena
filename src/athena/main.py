@@ -116,6 +116,7 @@ from athena.middleware import (
     _is_signed_inbound,
     _require_browser_session,
     content_security_policy,
+    mark_response_non_final,
 )
 
 
@@ -514,9 +515,13 @@ def create_app(
     # transaction would have rolled back with the refusal. Recording is idempotent,
     # so an agent retrying while it waits re-reads its existing ask rather than
     # flooding the operator's queue. 202: the ask was accepted, the action was not.
+    # Because the action was not applied, the 202 is marked non-final: it never
+    # becomes the Idempotency-Key's receipt, so after the operator decides, the
+    # same request under the same key runs again and gets the real outcome.
     def _approval_required(request: Request, exc: Exception) -> JSONResponse:
         if not isinstance(exc, approvals.ApprovalRequired):
             raise exc
+        mark_response_non_final(request)
         recorded = None
         try:
             conn = db.connect(request.app.state.db_path)

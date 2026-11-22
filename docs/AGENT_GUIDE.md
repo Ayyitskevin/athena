@@ -230,8 +230,12 @@ action, you get this refusal and must ask:
              "requested_by":2,"state":"pending",…}}
 ```
 
-HTTP 202. Wait for the decision, then retry the same write. An approval is single-use.
-See [APPROVALS.md](APPROVALS.md).
+HTTP 202. The close was not applied. Wait for the decision, then retry the same write,
+under the same `Idempotency-Key` if you sent one: a 202 is never stored as the key's
+receipt, so the retry runs again. While the ask is pending it returns the same
+`approval.id`; after approval it applies once and that result is what the key replays;
+after a rejection it returns 409 `approval_rejected` with the operator's note. An
+approval is single-use. See [APPROVALS.md](APPROVALS.md).
 
 Optional `verdict` (`PASS`, `PASS-WITH-NOTES`, `HOLD`, `BLOCKED`) and `findings`
 (P1/P2/P3 counts) are actor reports. Athena does not verify them or turn them into
