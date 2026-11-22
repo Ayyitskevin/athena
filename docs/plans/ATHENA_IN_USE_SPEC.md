@@ -44,7 +44,7 @@ there.
 3. An account nobody asked can turn a requested HOLD into `reported_pass` (C5).
 4. Four statements written by the earlier waves are false by execution (F2
    to F5), and two older ones (H11, U1).
-5. One outcome with three slices costs 142 tool calls and 382 KB (Wave 4).
+5. One outcome with three slices costs 142 tool calls and 359 KB (Wave 4).
 
 **Already fixed; do not redo.** Self-approval, the audit event for a failed
 project delete, the link-mention leak, the three loop defects, refusal codes,
@@ -124,7 +124,7 @@ loosened without a line in the wave's results.
 | Largest `my_desk` answer on a seat profile | 23,546 characters | 16,000 | 3 |
 | Agent write bodies that accept unknown fields | 25 of 67 | 0 | 3 |
 | A keyed retry after an unrelated assignment | 409 `idempotency_authorization_changed`; the marker is kept forever | Replays; a marker expires with its receipt | 3 |
-| Tool calls and bytes for one outcome with three slices, full variant | 142 calls, 382,369 bytes | 90 calls (arithmetic: 142 less 35 acknowledgements, 15 setup calls and 4 ETag reads) and 270,000 bytes (arithmetic: 30% less) | 4 |
+| Tool calls and bytes for one outcome with three slices, full variant | 142 calls and 359,252 bytes, as F1's test measures them in process. The review's run against a live server counted the same 142 calls and 382,369 bytes: its ids were longer and its drains re-read each feed from the first cursor. | 90 calls (arithmetic: 142 less 35 acknowledgements, 15 setup calls and 4 ETag reads) and 250,000 bytes (arithmetic: 30% less) | 4 |
 | Calls that acknowledge one notification each | 39 of 142 | At most 4 | 4 |
 | `GET /desk` as a seat, median at 10,000 and 50,000 issues | 259 ms and 1,285 ms | 80 ms and 200 ms (arithmetic: less the trail scan and three of four ready passes) | 6 |
 | A comment write, median at 50,000 issues | 75 ms, against 18 ms at 1,000 | Within twice the 1,000-issue figure | 6 |
@@ -181,7 +181,7 @@ by reading the code or the document.
 The contract agent holds one seat to the documented loop. The fleet trial does
 the same for the recipe. It is a test and not a benchmark: it counts calls and
 bytes, which are deterministic, and never time. Its ceilings file starts at
-the measured 142 calls and 382,369 bytes and is lowered by each requirement in
+what the test measures in process, 142 calls and 359,252 bytes, and is lowered by each requirement in
 Wave 4 that removes calls, in the same commit, so the scorecard row moves in
 the diff.
 

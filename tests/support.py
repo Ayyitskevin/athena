@@ -20,19 +20,32 @@ Typical use::
             bootstrap(client)  # user 1, the admin; ADMIN acts as them
             reader = client_as(app, token=mint_token(client, scopes=["read"]))
             assert reader.post("/issues", json={"title": "x"}).status_code == 403
+
+Tests that play an agent over the MCP protocol (the contract agent, the fleet
+trial) build its server with ``mcp_server_for``, connect with ``mcp_sessions``,
+call tools through a metered ``McpAgent`` and run with ``run_agents``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+import asyncio
+from collections import Counter
+from collections.abc import AsyncIterator, Coroutine, Iterable, Mapping
+import contextlib
+from dataclasses import dataclass, field
+import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from athena.core import activity, db
+from athena.core import activity, db, refusal_codes
 from athena.main import create_app
+
+if TYPE_CHECKING:  # the MCP helpers import these lazily: most tests never need them
+    from mcp.client.session import ClientSession
+    from mcp.server.fastmcp import FastMCP
 
 #: The password every helper gives a human account (agents have none).
 PASSWORD = "pw"
@@ -219,3 +232,174 @@ def events(db_file: Path, *verbs: str) -> list[dict[str, Any]]:
     finally:
         conn.close()
     return [row for row in rows if not verbs or row["verb"] in verbs]
+
+
+def lapse_lease(db_file: Path, issue_id: int) -> None:
+    """The clock passes the issue's lease expiry: its stored ``expires_at`` moves
+    into the past, as ``tests/test_desk.py`` lapses a lease. The app has no
+    injectable clock, and a test never sleeps."""
+    conn = db.connect(db_file)
+    try:
+        conn.execute(
+            "UPDATE issue_leases SET expires_at = '2000-01-01 00:00:00' "
+            "WHERE issue_id = ?",
+            (issue_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# --- scripted agents over the MCP protocol, metered ---------------------------------
+#
+# tests/test_contract_agent.py (one seat, A16) and tests/test_fleet_trial.py (a
+# conductor and three seats, F1) drive the real tool surface the way a model does
+# and count what each call costs. These are the pieces both use.
+
+
+def mcp_server_for(
+    app: FastAPI,
+    onboarded: Mapping[str, Any],
+    *,
+    run_id: str,
+    profile: str | None = None,
+) -> FastMCP:
+    """The server ``athena-mcp`` builds from the config Athena emitted for an
+    onboarded agent: its token, its profile, its probed scopes, a fixed run id.
+
+    ``profile`` replaces the emitted ``ATHENA_MCP_PROFILE``, as an operator who
+    sets up a conductor does (onboarding prints ``seat``)."""
+    from athena.mcp import server as mcp_server
+    from athena.mcp.client import AthenaClient
+
+    env = dict(onboarded["mcp_config"]["mcpServers"]["athena"]["env"])
+    if profile is not None:
+        env[mcp_server.PROFILE_ENV] = profile
+    client = AthenaClient(
+        client=TestClient(app, headers=bearer(env["ATHENA_TOKEN"])), run_id=run_id
+    )
+    return mcp_server.build_server(
+        client,
+        scopes=mcp_server.probe_scopes(client),
+        profile=mcp_server.profile_from_env(env),
+    )
+
+
+@contextlib.asynccontextmanager
+async def mcp_sessions(*servers: FastMCP) -> AsyncIterator[list[ClientSession]]:
+    """One connected client session per server, in order, over the protocol."""
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    async with contextlib.AsyncExitStack() as stack:
+        yield [
+            await stack.enter_async_context(
+                create_connected_server_and_client_session(
+                    server._mcp_server  # noqa: SLF001 — the protocol server under test
+                )
+            )
+            for server in servers
+        ]
+
+
+def run_agents(play: Coroutine[Any, Any, Any]) -> Any:
+    """Run a scripted play; a failure inside the sessions' task groups is raised
+    as itself, not wrapped in one-member exception groups."""
+    try:
+        return asyncio.run(play)
+    except BaseExceptionGroup as group:
+        failure: BaseException = group
+        while isinstance(failure, BaseExceptionGroup) and len(failure.exceptions) == 1:
+            failure = failure.exceptions[0]
+        raise failure from None
+
+
+@dataclass
+class Refusal:
+    agent: str
+    tool: str
+    answer: dict[str, Any]
+    followed: bool = False
+
+
+@dataclass
+class Meter:
+    """Tool calls: how many, which tools, the bytes of each answer's text (UTF-8,
+    what the client receives as content), each answer over its tool's declared
+    response budget, and each refusal."""
+
+    calls: int = 0
+    bytes_received: int = 0
+    tools: Counter[str] = field(default_factory=Counter)
+    over_budget: list[str] = field(default_factory=list)
+    refusals: list[Refusal] = field(default_factory=list)
+
+
+def assert_registered_refusal(answer: Mapping[str, Any]) -> None:
+    """A refusal's code is in the registry, with a status the entry allows, and its
+    ``next`` is the one the registry names."""
+    code, status = answer.get("code"), answer.get("status_code")
+    if status is None:
+        assert code in refusal_codes.MCP_REFUSAL_CODES, answer
+    else:
+        assert code in refusal_codes.REFUSAL_CODES, answer
+        assert status in refusal_codes.REFUSAL_CODES[code].statuses, answer
+    assert answer.get("next") == refusal_codes.next_call(code), answer
+
+
+class McpAgent:
+    """One account's MCP session: it calls tools the way a model does, only tools
+    its profile carries, and every call is metered."""
+
+    def __init__(
+        self,
+        name: str,
+        user_id: int,
+        session: ClientSession,
+        meter: Meter,
+        tools: frozenset[str],
+    ):
+        self.name = name
+        self.user_id = user_id
+        self.session = session
+        self.meter = meter
+        self.tools = tools
+
+    async def attempt(self, tool: str, **arguments: Any) -> tuple[bool, dict]:
+        from athena.mcp import server as mcp_server
+
+        assert tool in self.tools, f"{self.name} called {tool}, not in its profile"
+        result = await self.session.call_tool(tool, arguments)
+        text = "".join(getattr(block, "text", "") for block in result.content)
+        self.meter.calls += 1
+        self.meter.tools[tool] += 1
+        self.meter.bytes_received += len(text.encode("utf-8"))
+        budget = mcp_server.response_budget(tool)
+        if budget is not None and len(text) > budget:
+            self.meter.over_budget.append(f"{tool}: {len(text)} > {budget}")
+        answer = json.loads(text)
+        assert isinstance(answer, dict), f"{tool} answered {type(answer).__name__}"
+        if result.isError:
+            assert_registered_refusal(answer)
+            self.meter.refusals.append(Refusal(self.name, tool, answer))
+        return not result.isError, answer
+
+    async def call(self, tool: str, **arguments: Any) -> dict:
+        ok, answer = await self.attempt(tool, **arguments)
+        assert ok, f"{self.name}: {tool}({arguments}) refused: {answer}"
+        return answer
+
+    async def refused(self, code: str, tool: str, **arguments: Any) -> dict:
+        ok, answer = await self.attempt(tool, **arguments)
+        assert not ok and answer.get("code") == code, (tool, arguments, answer)
+        return answer
+
+    async def follow(self, answer: dict, **arguments: Any) -> dict:
+        """Make the call the answer's ``next`` names, with arguments its hint
+        describes; it must succeed and must be the registry's call."""
+        named = answer["next"]
+        assert named == refusal_codes.next_call(answer["code"]), answer
+        result = await self.call(named["tool"], **arguments)
+        for refusal in self.meter.refusals:
+            if refusal.answer is answer:
+                refusal.followed = True
+        return result
