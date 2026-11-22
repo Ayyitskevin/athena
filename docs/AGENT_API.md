@@ -120,7 +120,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `search_work` | `GET /issues` | Find issues with a work query — the precise way to ask for work. |
 | `search_workspace` | `GET /search/workspace` | One ask across issues, pages, AND comments — use this when you do not … |
 | `unlinked_mentions` | `GET /{base}/{node_id}/unlinked-mentions` | Documents whose text NAMES this issue/page without linking to it. |
-| `wait_for_events` | `GET /events` | `recent_events` that parks instead of returning empty: the server holds the … |
+| `wait_for_events` | `GET /events` | The event feed after `after`, in ascending id order, parked instead of … |
 | `whoami` | `GET /users/me` | Who am I? Your identity (id, email, role, agent flag), the acting … |
 
 ## Aegis write tools — scope: `issue:write`

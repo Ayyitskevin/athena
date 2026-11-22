@@ -129,7 +129,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         `@me` is the token's own actor. Archived issues are excluded unless the
         query says `is:archived`. An unknown field is an error naming the field,
         never an empty result — so a typo is visible instead of looking like "no
-        work". Call query_help() for the vocabulary as data."""
+        work". The `full` profile has the vocabulary as data."""
         return client.search_work(q, limit=limit, offset=offset)
 
     @tool
@@ -450,21 +450,21 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         verb: str | None = None,
         limit: EventLimit = 50,
     ) -> dict:
-        """`recent_events` that parks instead of returning empty: the server holds the
-        request up to `wait` seconds (0 to 25; 0 is exactly `recent_events`) and
-        answers as soon as an event you may read lands after `after`.
+        """The event feed after `after`, in ascending id order, parked instead of
+        empty: the server holds the request up to `wait` seconds (0 to 25; 0
+        answers at once) and answers as soon as an event you may read lands.
 
-        Use it in place of a sleep loop: call with your last processed id, act on
-        what comes back, call again. The result is the `recent_events` shape plus
-        `wait` = {requested_seconds, elapsed_seconds, outcome}. `outcome` is
-        `event` (a visible batch arrived), `timeout` (nothing visible in time; the
-        batch is empty and next_after is your own cursor) or `capacity` (every
-        parking place on the server was taken, so this is the immediate answer:
-        back off a little before waiting again). It never errors for a full server.
+        Use it in place of a sleep loop, from your last processed id. Returns
+        {events, next_after, has_more, wait = {requested_seconds,
+        elapsed_seconds, outcome}}; `outcome` is `event` (a visible batch
+        arrived), `timeout` (nothing visible in time; the batch is empty and
+        next_after is your own cursor) or `capacity` (every parking place was
+        taken, so this is the immediate answer, never an error: back off a
+        little before waiting again). An event you may not read neither
+        appears nor wakes you.
 
-        Visibility is the immediate read's: an event you may not read neither
-        appears nor wakes you. The same filter caveat as `recent_events` applies:
-        a filtered read cannot justify advancing the desk cursor.
+        A filtered read can omit events, so its next_after cannot justify
+        advancing the desk cursor.
         """
         return client.wait_for_events(
             after=after,

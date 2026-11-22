@@ -222,18 +222,17 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         have not acknowledged), `work` (your delegation inbox, the leases you
         hold — `active` is the clock's verdict at THIS read, not a stored
         state — and `work.leases.lapsed`, your expired rows including done
-        issues (`issue_done`). Settle your own rows deliberately with
-        complete_claim; reading never releases them. `lapsed_total` and
-        `lapsed_clipped` bound the list; oldest expiry is unknown when clipped),
-        `signals` (unread notifications, and how many visible events sit past
-        your cursor).
+        issues (`issue_done`); settle them with complete_claim, as reading
+        never releases them. `lapsed_total` and `lapsed_clipped` bound the list;
+        oldest expiry is unknown when clipped), `signals` (unread
+        notifications, visible events past your cursor).
 
-        The loop: `my_desk()` -> act -> drain `recent_events(after=...)` from
-        your cursor -> `advance_desk_cursor(after_id=<last id you handled>)`.
+        The loop: `my_desk()` -> `claim_next_ready()` -> act ->
+        `complete_claim(...)` -> drain `wait_for_events(after=<cursor>, wait=0)`
+        -> `advance_desk_cursor(after_id=<last id you handled>)`. Creating
+        `identity.notebook` needs `full`; editing it, `seat+knowledge`.
 
-        The desk RESERVES NOTHING. It is a snapshot, not a lock, a lease, or a
-        queue: seeing work here does not claim it, and two agents can read the
-        same contents at once. Claim work through the delegation/lease tools."""
+        RESERVES NOTHING: seeing work here does not claim it."""
         return client.my_desk()
 
     @tool
