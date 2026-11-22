@@ -11,12 +11,24 @@ An issue is READY for an actor when every one of these holds:
    A blocker the actor cannot see still blocks, and is not disclosed;
 5. the actor **may claim it** under the claim command's policy
    (:func:`lease_commands.claimant_is_eligible`: assignee, delegated contributor,
-   or admin), so the queue never offers work a claim would refuse.
+   or admin), so the queue never offers work a claim would refuse;
+6. it is **not awaiting an answer** (decision record
+   ``docs/decisions/2026-11-22-ready-rule-awaiting-decision.md``). Take the
+   issue's newest native settlement: a ``claim_completed`` or ``claim_yielded``
+   event. If that settlement is a ``needs_input`` yield, the issue is not ready
+   for ANY account; if it is a completion, it is not ready for the account that
+   completed it. Either lifts once an *answer* is newer than the settlement: a
+   comment, status change, assignment change or claim on the issue, native, by
+   an account other than the settler and not the Automation actor. Yields for
+   ``blocked`` or ``capacity`` exclude nobody. Direct ``claim_issue`` ignores
+   this rule (and its claim is itself an answer).
 
 Order: delegated to me first, then priority (urgent first), then age (oldest
 first), then id. One definition serves three surfaces: the ``is:ready`` query
 atom, the desk's bounded ``work.ready`` lane (and ``GET /desk/ready``), and the
 MCP ``claim_next_ready`` tool, which claims through the existing claim command.
+The issues rule 6 alone keeps out are listed by :func:`build_not_offered`, so
+the desk can say what is waiting and why.
 
 Ready is a read at one instant, not a reservation: two actors can see the same
 item, and the claim command's own interlock decides who gets it.
@@ -28,6 +40,7 @@ from datetime import UTC, datetime
 import sqlite3
 
 from athena.aegis import claim_handoffs, dependencies, issues, leases, statuses
+from athena.aegis.issue_commands import AUTOMATION_ACTOR_EMAIL
 from athena.core import access, db, identity
 from athena.core.ids import MAX_SQLITE_INTEGER
 
@@ -38,6 +51,19 @@ READY_LIMIT = 20
 MAX_READY_LIMIT = 50
 
 _READY_CATEGORIES = ("todo", "doing")
+
+#: The acts that settle a possession (rule 6). Only the newest one counts.
+SETTLEMENT_VERBS = ("claim_completed", "claim_yielded")
+#: The acts by another account that answer a settlement (rule 6). Comment
+#: edits, labels, links and lease renewals are deliberately not answers.
+ANSWER_VERBS = ("commented", "changed_status", "assigned", "unassigned", "claimed")
+
+#: Why rule 6 keeps an issue out of an actor's ready lane.
+AWAITING_ANSWER = "awaiting_answer"  # a needs_input yield nobody else has answered
+COMPLETED_BY_YOU = "completed_by_you"  # your completion, with nothing newer by others
+
+_SETTLEMENT_LIST = ", ".join(f"'{verb}'" for verb in SETTLEMENT_VERBS)
+_ANSWER_LIST = ", ".join(f"'{verb}'" for verb in ANSWER_VERBS)
 
 
 class ReadyQueueError(ValueError):
@@ -51,21 +77,43 @@ def _now(now: datetime | None) -> datetime:
     return current.astimezone(UTC)
 
 
-def ready_clause(
-    conn: sqlite3.Connection,
-    actor: dict | None,
-    *,
-    now: datetime,
-    category_expr: str,
-) -> tuple[str, list]:
-    """Rules 2 to 5 as one SQL clause over issue alias ``i``.
+def awaiting_answer_sql(actor_id: int) -> tuple[str, list]:
+    """Rule 6's exclusion, true when the issue (alias ``i``) awaits an answer
+    that ``actor_id`` may not supply by picking the work up again.
 
-    ``category_expr`` is the caller's status-category expression (each caller
-    owns its own ``project_statuses`` join and alias). Visibility (rule 1) and the
-    archived default are the caller's, as in every list. Raises
-    :class:`ReadyQueueError` for no actor: "ready for me" needs a me."""
-    if actor is None:
-        raise ReadyQueueError("'is:ready' needs an authenticated caller")
+    One correlated read per candidate, both over ``idx_activity_target``
+    (target_kind, target_id, id): the newest native settlement by walking the
+    issue's own events newest first, then any answer after it by a range scan
+    above that id. Imported rows never settle and never answer (``imported_at
+    IS NULL`` on both reads); the Automation actor is recognised exactly as the
+    commands recognise it (its fixed email on an agent account) and never
+    answers. Ordering is by activity id, never by timestamp, so two events in
+    the same second cannot tie."""
+    sql = (
+        "EXISTS (SELECT 1 FROM activity rqw WHERE rqw.id = ("
+        "SELECT rqs.id FROM activity rqs "
+        "WHERE rqs.target_kind = 'issue' AND rqs.target_id = i.id "
+        f"AND rqs.verb IN ({_SETTLEMENT_LIST}) AND rqs.imported_at IS NULL "
+        "ORDER BY rqs.id DESC LIMIT 1) "
+        "AND CASE WHEN rqw.verb = 'claim_completed' THEN rqw.actor_id = ? "
+        "ELSE EXISTS (SELECT 1 FROM issue_claim_handoffs rqh "
+        "WHERE rqh.yield_event_id = rqw.id AND rqh.reason = 'needs_input') END "
+        "AND NOT EXISTS (SELECT 1 FROM activity rqa "
+        "WHERE rqa.target_kind = 'issue' AND rqa.target_id = i.id "
+        "AND rqa.id > rqw.id AND rqa.imported_at IS NULL "
+        f"AND rqa.verb IN ({_ANSWER_LIST}) "
+        "AND rqa.actor_id != rqw.actor_id "
+        "AND rqa.actor_id NOT IN (SELECT rqu.id FROM users rqu "
+        "WHERE rqu.email = ? AND rqu.is_agent = 1)))"
+    )
+    return sql, [int(actor_id), AUTOMATION_ACTOR_EMAIL]
+
+
+def _claimable_clauses(
+    actor: dict, *, now: datetime, category_expr: str
+) -> tuple[list[str], list]:
+    """Rules 2 to 5, each a clause over issue alias ``i``, with their params in
+    clause order."""
     categories = ", ".join(f"'{c}'" for c in _READY_CATEGORIES)
     clauses = [
         f"{category_expr} IN ({categories})",
@@ -79,6 +127,30 @@ def ready_clause(
             "WHERE qrc.issue_id = i.id AND qrc.user_id = ?))"
         )
         params.extend([int(actor["id"]), int(actor["id"])])
+    return clauses, params
+
+
+def ready_clause(
+    conn: sqlite3.Connection,
+    actor: dict | None,
+    *,
+    now: datetime,
+    category_expr: str,
+) -> tuple[str, list]:
+    """Rules 2 to 6 as one SQL clause over issue alias ``i``.
+
+    ``category_expr`` is the caller's status-category expression (each caller
+    owns its own ``project_statuses`` join and alias). Visibility (rule 1) and the
+    archived default are the caller's, as in every list. Raises
+    :class:`ReadyQueueError` for no actor: "ready for me" needs a me."""
+    if actor is None:
+        raise ReadyQueueError("'is:ready' needs an authenticated caller")
+    clauses, params = _claimable_clauses(actor, now=now, category_expr=category_expr)
+    # Last, so the cheap column and lease tests discard most rows before the
+    # correlated trail reads run.
+    awaiting, awaiting_params = awaiting_answer_sql(int(actor["id"]))
+    clauses.append(f"NOT {awaiting}")
+    params.extend(awaiting_params)
     return "(" + " AND ".join(clauses) + ")", params
 
 
@@ -214,11 +286,120 @@ def _build_ready(
         "meaning": (
             "issues you could claim now, in claim order (delegated to you, then "
             "priority, then oldest): visible, to-do or doing, no live lease, no "
-            "blocker that is not done (a blocker you cannot see still blocks), and "
-            "you are the assignee, a delegated contributor or an admin. `total` "
-            "counts the same rule before `limit`. A read, not a reservation: the "
-            "claim command decides between two claimants."
+            "blocker that is not done (a blocker you cannot see still blocks), "
+            "you are the assignee, a delegated contributor or an admin, and it is "
+            "not awaiting an answer: not after an unanswered needs_input yield, "
+            "and not after your own completion until another account comments, "
+            "changes status or assignment, or claims it. `total` counts the same "
+            "rule before `limit` and is what claim_next_ready can serve. A read, "
+            "not a reservation: the claim command decides between two claimants."
         ),
+    }
+
+
+def build_not_offered(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict,
+    now: datetime | None = None,
+    limit: int = READY_LIMIT,
+) -> dict:
+    """The issues rule 6 alone keeps out of this actor's ready lane: every other
+    ready rule holds, visibility included, but the work awaits an answer. Each
+    row says why. Read-only; the caller owns the snapshot (the desk's)."""
+    current = _now(now)
+    category = statuses.category_sql(
+        status_column="i.status", category_column="rps.category"
+    )
+    clauses, params = _claimable_clauses(actor, now=current, category_expr=category)
+    awaiting, awaiting_params = awaiting_answer_sql(int(actor["id"]))
+    clauses.append(awaiting)
+    params.extend(awaiting_params)
+    vis_sql, vis_params = _visibility(conn, actor)
+    base = (
+        "FROM issues i LEFT JOIN projects p ON p.id = i.project_id "
+        "LEFT JOIN project_statuses rps "
+        "ON rps.project_id = i.project_id AND rps.name = i.status "
+        f"WHERE i.archived_at IS NULL AND {' AND '.join(clauses)}{vis_sql}"
+    )
+    params.extend(vis_params)
+    total = int(conn.execute(f"SELECT COUNT(*) AS n {base}", params).fetchone()["n"])
+    rows = conn.execute(
+        "SELECT i.id, i.title, i.status, i.priority, i.project_seq, "
+        f"p.key AS project_key {base} ORDER BY i.id ASC LIMIT ?",
+        [*params, limit],
+    ).fetchall()
+    settlements = _latest_settlements(conn, [int(row["id"]) for row in rows])
+    me = int(actor["id"])
+    items = []
+    for row in rows:
+        settled = settlements[int(row["id"])]
+        mine = settled["actor_id"] == me
+        key = None
+        if row["project_key"] is not None and row["project_seq"] is not None:
+            key = f"{row['project_key']}-{row['project_seq']}"
+        items.append(
+            {
+                "kind": "not_offered",
+                "issue": {
+                    "id": int(row["id"]),
+                    "key": key,
+                    "title": row["title"],
+                    "status": row["status"],
+                    "priority": row["priority"],
+                },
+                "reason": (
+                    COMPLETED_BY_YOU
+                    if settled["verb"] == "claim_completed"
+                    else AWAITING_ANSWER
+                ),
+                "settled_by_you": mine,
+                # Your own act's time only: another account's is not yours to read
+                # here.
+                "settled_at": settled["created_at"] if mine else None,
+            }
+        )
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "clipped": total > len(items),
+        "meaning": (
+            "issues claim_next_ready will not offer you yet, though every other "
+            "ready rule holds. awaiting_answer: the newest settlement is a "
+            "needs_input yield, so it is offered to no account; "
+            "completed_by_you: you completed it, so it is not offered back to you. "
+            "Either lifts when an account other than the one that settled it "
+            "(Automation excluded) comments, changes its status or assignment, or "
+            "claims it. claim_issue still works directly."
+        ),
+    }
+
+
+def _latest_settlements(
+    conn: sqlite3.Connection, issue_ids: list[int]
+) -> dict[int, dict]:
+    """The newest native settlement on each issue: verb, settler and time. The
+    same choice rule 6 makes, read back for the rows it excluded."""
+    if not issue_ids:
+        return {}
+    placeholders = ",".join("?" for _ in issue_ids)
+    rows = conn.execute(
+        "SELECT a.target_id, a.verb, a.actor_id, a.created_at FROM activity a "
+        "WHERE a.id IN (SELECT MAX(s.id) FROM activity s "
+        "WHERE s.target_kind = 'issue' "
+        f"AND s.target_id IN ({placeholders}) "
+        f"AND s.verb IN ({_SETTLEMENT_LIST}) AND s.imported_at IS NULL "
+        "GROUP BY s.target_id) AND a.imported_at IS NULL",
+        issue_ids,
+    ).fetchall()
+    return {
+        int(row["target_id"]): {
+            "verb": row["verb"],
+            "actor_id": int(row["actor_id"]),
+            "created_at": row["created_at"],
+        }
+        for row in rows
     }
 
 

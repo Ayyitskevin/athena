@@ -1,8 +1,8 @@
 # Ready pickup serializes selection and acquisition
 
 Date: 2026-11-17.
-Status: Accepted implementation direction, maintainer request and independently reviewed specification.
-Superseded-by: None.
+Status: Accepted implementation direction, maintainer request and independently reviewed specification. Superseded in part on 2026-11-22: the ready predicate only.
+Superseded-by: [Work awaiting an answer is not ready](2026-11-22-ready-rule-awaiting-decision.md), for the ready predicate. The rest of this record stands.
 
 ## Context
 

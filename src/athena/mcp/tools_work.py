@@ -213,7 +213,11 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         claims may still hold several issues. limit (1-5) bounds candidates, not
         acquisitions. Returns claimed=true with lease generation, issue/context
         tags and previous_lease/open_handoff labels, or claimed=false with reason
-        already_holding, nothing_ready or candidates_conflicted. Read full work
+        already_holding, nothing_ready or candidates_conflicted. Work awaiting an
+        answer is not offered: an issue you completed (it is not closed) and any
+        needs_input yield, until another non-automation account comments,
+        changes status or assignment, or claims it. my_desk lists them under
+        work.waiting_on_operator.not_offered; claim_issue still works. Read full work
         context before work; an open handoff needs explicit resume. Responses are
         historical receipts on replay, never renewal or reacquisition. A fresh
         poll needs a new key; reconcile an uncertain outcome before changing keys.

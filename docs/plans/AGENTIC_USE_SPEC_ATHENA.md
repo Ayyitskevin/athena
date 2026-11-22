@@ -1,12 +1,15 @@
 # Agentic use: review findings and improvement specification
 
 Date: 2026-11-21. Review baseline: `99a0286ba12c7b9250348a61819827ce943f01b9`.
-Status: **decisions accepted; Wave 0 built.** On 2026-11-22 the owner accepted
-all fifteen decisions as recommended and authorized Wave 0 only. See
+Status: **decisions accepted; Waves 0 and 0b built.** On 2026-11-22 the owner
+accepted all fifteen decisions as recommended and authorized Wave 0, then, once
+it had merged, Wave 0b and Wave 1. See
 [the decision record](../decisions/2026-11-22-agentic-use-decisions.md). Wave 0
 landed in PR #466 and its results are under "Wave 0 results" below. Wave 0b
-and the later waves are not built; they remain proposals for when to build,
-not whether the design holds.
+(A2, under D3) is built; its rule is recorded in
+[its own decision record](../decisions/2026-11-22-ready-rule-awaiting-decision.md).
+The later waves are not built; they remain proposals for when to build, not
+whether the design holds.
 Several requirements change or extend an earlier accepted decision; each says
 so and names the decision it relies on under "Decisions for the owner".
 Evidence: [reports/repo-review-2026-11-21.md](reports/repo-review-2026-11-21.md).
@@ -128,7 +131,7 @@ Re-measured on the Wave 0 head in the same 4-CPU, 15 GB container.
 
 | Measure | Baseline | After Wave 0 |
 |---|---|---|
-| Reproduced loop defects with no recovery by the agent | 3 | 1. MCP-1 and LOOP-2 are fixed (A1, A3). LOOP-1 remains; it is A2, in Wave 0b. |
+| Reproduced loop defects with no recovery by the agent | 3 | 0. MCP-1 and LOOP-2 are fixed in Wave 0 (A1, A3), LOOP-1 in Wave 0b (A2). |
 | Written guarantees false by execution | 4 | 0. Each original reproduction was re-run against the fixed code and is refused (C1, C2, C3, A1). |
 | Product gate in a 4-CPU, 15 GB container | Workers killed for memory after about 16 minutes | Passes in about 15 minutes: 5,259 tests, peak 1.41 GiB (B1). |
 | Apps left alive after a 20-test run | About one per test | One, the module-level app, held by `tests/test_suite_memory.py`. |

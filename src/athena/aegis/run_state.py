@@ -44,7 +44,7 @@ from datetime import UTC, datetime, timedelta
 import sqlite3
 from typing import Literal
 
-from athena.aegis import work_progress
+from athena.aegis import ready_queue, work_progress
 from athena.core import access
 
 #: A run that recorded real work within this window is moving. Thirty minutes is
@@ -375,7 +375,13 @@ def waiting_on_operator(
     limit: int = LANE_LIMIT,
 ) -> dict:
     """An agent's own open asks: its unresumed blocking questions and its pending
-    approvals, oldest first, with the total behind a clipped list."""
+    approvals, oldest first, with the total behind a clipped list.
+
+    ``not_offered`` is the work the ready rule is holding back from this actor
+    until someone else answers (a needs_input yield, or its own completion), with
+    the reason for each and its own total. It is a separate list because it is a
+    different fact: a question stays open until resumed, while the hold lifts on
+    any answer."""
     current = _now(now)
     me = int(actor["id"])
     questions = open_questions(conn, actor=actor, asked_by=me, now=current, limit=limit)
@@ -414,9 +420,14 @@ def waiting_on_operator(
         "total": total,
         "limit": limit,
         "clipped": total > len(merged),
+        "not_offered": ready_queue.build_not_offered(
+            conn, actor=actor, now=current, limit=limit
+        ),
         "meaning": (
             "what you asked a human and is still open: your blocking questions "
             "nobody has resumed and your pending approvals, oldest first. Nothing "
-            "enforces a response time; do not re-ask what is already here."
+            "enforces a response time; do not re-ask what is already here. "
+            "`not_offered` lists work the ready lane holds back from you until "
+            "another account answers, with the reason."
         ),
     }

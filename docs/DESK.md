@@ -57,7 +57,7 @@ a half-second wake bound).
 | `work.leases` | `items`: issues you hold NOW, with `active` and the 0057 generation. Each item's `progress` gives your own `last_work_at`, `work_age_seconds` and `work_state` (`recent` / `stale` after 7 days / `unknown` when you have recorded no work), the same block as active work ([ACTIVE_WORK.md](ACTIVE_WORK.md)). Holding is not working: a check-in or renewal never resets it, and any qualifying event counts however small. `lapsed`: your expired rows on open or done issues, labelled `issue_done`; holders settle their own rows deliberately with `complete_claim` and the observed generation. Reading never settles a row; admins cannot settle another actor's expired row | 20 each, `total` / `lapsed_total`; `lapsed_clipped` says whether rows are omitted; `lapsed_oldest_expires_at` is null when empty or clipped (unknown when clipped); total/clipped distinguish these cases, and claim order is not expiry order |
 | `work.ready` | issues you could claim now, in claim order (see below); each says why it is yours, the previous holder of a lapsed lease, and any open handoff. Also `GET /desk/ready?limit=` alone | 20 (REST 1-50), `total` and `clipped`; `held_by_you` counts your live leases |
 | `work.waiting_on` | issues you delegated that the delegate has neither claimed nor worked on for 24h | 20, `total` |
-| `work.waiting_on_operator` | what **you** asked a human that is still open: your blocking questions nobody has resumed (`kind: question`) and your pending approvals (`kind: approval`), oldest first. Read it before asking again. Nothing enforces a response time | 20, `total` across both kinds |
+| `work.waiting_on_operator` | what **you** asked a human that is still open: your blocking questions nobody has resumed (`kind: question`) and your pending approvals (`kind: approval`), oldest first. Read it before asking again. Nothing enforces a response time. `not_offered`: issues the ready lane holds back from you until another account answers (see below), each with `reason` `awaiting_answer` or `completed_by_you`, `settled_by_you`, and `settled_at` only when the settlement was yours | 20, `total` across both kinds; `not_offered` 20 with its own `total` |
 | `signals` | unread notifications, `events_since_cursor`, `latest_visible_event_id` | 10 notifications, count capped at 500 |
 | `cursor` | your stored position, or `null` | — |
 
@@ -76,7 +76,15 @@ An issue is **ready for you** when all of these hold:
 - nobody holds a live lease on it;
 - no issue that is not done blocks it;
 - you may claim it under the claim command's own policy: you are its assignee, a
-  delegated contributor, or an admin.
+  delegated contributor, or an admin;
+- it is not awaiting an answer. Athena reads the issue's newest settlement, the
+  latest `complete_claim` or `yield_claim` on it. After a `needs_input` yield the
+  issue is ready for no account. After a completion, with or without a report, it
+  is not ready for the account that completed it; other accounts are unaffected.
+  Either hold lifts when a newer comment, status change, assignment change or claim
+  is made by an account other than the one that settled it. The Automation actor's
+  events and imported history never count. `blocked` and `capacity` yields hold
+  nobody back.
 
 The lane never offers work a claim would refuse. Three rules worth knowing:
 - **A blocker you cannot see still blocks.** The lane does not say what it is.
@@ -84,9 +92,16 @@ The lane never offers work a claim would refuse. Three rules worth knowing:
   last. Nothing is swept: the next claim is the deliberate re-acquisition.
 - **A yielded issue carries its open handoff.** After claiming it, resume the
   handoff with `resume_claim_handoff`.
+- **Held-back work is listed, not hidden.** An issue kept out only by the
+  awaiting-answer rule appears in `work.waiting_on_operator.not_offered` with its
+  reason, so the lane's `total` is exactly what `claim_next_ready` can serve you.
+  A direct `claim_issue` ignores the hold, and is itself an answer: it is how
+  another account takes over a `needs_input` handoff.
 
 Order: delegated to you first, then priority (urgent first), then oldest. The
-`is:ready` query atom ([QUERY.md](QUERY.md)) uses the same rule.
+`is:ready` query atom ([QUERY.md](QUERY.md)) uses the same rule. The
+awaiting-answer rule is recorded in
+[the 2026-11-22 decision](decisions/2026-11-22-ready-rule-awaiting-decision.md).
 
 `claim_next_ready(limit=1, lease_seconds=None, project_id=None,
 idempotency_key=None)` (MCP) uses one `POST /issues/claim-next`. The server reserves

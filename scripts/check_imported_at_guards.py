@@ -269,6 +269,21 @@ EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
         "issue across the stale threshold",
     ),
     (
+        "aegis/ready_queue.py",
+        "awaiting_answer_sql",
+        r"(?s)rqs\.imported_at IS NULL.*rqa\.imported_at IS NULL",
+        "the ready rule's settlement and its answer are both native acts: an "
+        "imported claim_completed must not hold work back from an account, and "
+        "an imported comment must not hand it back",
+    ),
+    (
+        "aegis/ready_queue.py",
+        "_latest_settlements",
+        r"s\.imported_at IS NULL",
+        "the not-offered lane reads back the same native settlement the ready "
+        "rule chose; foreign history must not supply its reason",
+    ),
+    (
         "aegis/notification_state.py",
         "annotate_inbox",
         r"AND c\.imported_at IS NULL",
