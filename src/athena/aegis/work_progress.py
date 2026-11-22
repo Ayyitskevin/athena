@@ -11,7 +11,8 @@ check-in and lease times.
 to the work itself (``SUBSTANTIVE_WORK_VERBS``). Everything else on an issue's trail
 is bookkeeping about who holds it or how the board is organised:
 
-- lease bookkeeping: ``claimed``, ``lease_renewed`` — the clock, not the work;
+- lease bookkeeping: ``claimed``, ``lease_renewed``, ``lease_lapsed`` — the clock,
+  not the work;
 - coordination: ``claim_yielded``, ``claim_handoff_resumed``, ``delegated``,
   ``delegation_declined`` — who should hold it;
 - triage: ``assigned``/``unassigned``, ``added_contributor``/``removed_contributor``,

@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 import sqlite3
 
 from athena.aegis import claim_handoffs, issues, run_state, statuses, work_progress
-from athena.core import agent_run_checkins, db
+from athena.core import access, agent_run_checkins, db
 
 
 SCHEMA = "athena.fleet_active_work.v1"
@@ -135,8 +135,14 @@ def build_active_work(
     limit: int = DEFAULT_LIMIT,
     attention_state: str | None = None,
     now: datetime | None = None,
+    viewer: dict | None = None,
 ) -> dict:
     """Return a bounded admin projection of agent-held issue leases.
+
+    ``viewer`` narrows it to the claims one non-admin account answers for: the
+    leases it holds, and, on issues it may currently see, the leases on issues
+    it is the assignee of or delegated to the holder (C4). The count and the
+    rows apply the same filter, so neither says more than the viewer may read.
 
     Lease expiry and cooperative check-in freshness are evaluated against the same
     server-owned instant.  A claim can be active while its exact run is stale,
@@ -167,12 +173,27 @@ def build_active_work(
         if normalized_agent_id is not None:
             clauses.append("l.holder_id = ?")
             params.append(normalized_agent_id)
+        if viewer is not None:
+            visible, visible_params = access.project_visibility_clause(
+                viewer, alias="p"
+            )
+            clauses.append(
+                "(l.holder_id = ? OR ((i.assignee_id = ? OR EXISTS ("
+                "SELECT 1 FROM issue_contributors accountable "
+                "WHERE accountable.issue_id = l.issue_id "
+                "AND accountable.user_id = l.holder_id "
+                "AND accountable.added_by = ?)) "
+                f"AND (i.project_id IS NULL OR ({visible}))))"
+            )
+            params.extend([viewer["id"], viewer["id"], viewer["id"], *visible_params])
         where_sql = " AND ".join(clauses)
 
         visible_total = int(
             conn.execute(
                 "SELECT COUNT(*) AS n FROM issue_leases l "
                 "JOIN users u ON u.id = l.holder_id "
+                "JOIN issues i ON i.id = l.issue_id "
+                "LEFT JOIN projects p ON p.id = i.project_id "
                 f"WHERE {where_sql}",
                 params,
             ).fetchone()["n"]

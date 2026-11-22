@@ -66,6 +66,7 @@ from athena.core import (
     security_event_commands,
     security_events,
     events_api,
+    feed_observers,
     notifications,
     notifications_api,
     provenance,
@@ -84,6 +85,7 @@ from athena.core import (
     workers_api,
 )
 from athena.aegis import issue_undo as aegis_issue_undo
+from athena.aegis import lease_lapse_commands as aegis_lease_lapse_commands
 from athena.mentor import api as mentor_api
 from athena.mentor import learnings_api as mentor_learnings_api
 from athena.mentor import page_undo as mentor_page_undo
@@ -451,6 +453,10 @@ def create_app(
     # process (every test) is fine.
     aegis_issue_undo.register()
     mentor_page_undo.register()
+    # The event feed observes, on entry, what the clock made and nobody wrote
+    # down: a lapsed lease its caller is accountable for (C4, D11). Same reason
+    # as above: core owns the feed and may not import aegis.
+    feed_observers.register("lease_lapses", aegis_lease_lapse_commands.observe_lapses)
 
     # Every JSON refusal carries a registered `code` beside its unchanged
     # `detail` (core/refusal_codes.py owns the codes): the HTTPException and

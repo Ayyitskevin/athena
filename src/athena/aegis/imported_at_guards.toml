@@ -140,6 +140,18 @@ module = "fleet_work.py"
 function = "_replay_ready_run_ids"
 why = "run-scoped; imported rows carry NULL run coordinates"
 
+# --- leases.py ---------------------------------------------------------------
+
+[[guarded]]
+module = "leases.py"
+function = "unrecorded_lapses"
+pattern = 'AND a\.imported_at IS NULL'
+why = """\
+    whether this instance already recorded a lease generation's lapse (C4): \
+    an imported row carrying the verb is foreign history, not this \
+    instance's record, and must not suppress the native event or its \
+    notifications"""
+
 # --- notification_state.py ---------------------------------------------------
 
 [[guarded]]

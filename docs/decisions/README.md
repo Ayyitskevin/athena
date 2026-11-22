@@ -7,6 +7,7 @@ This index creates no runtime authority or automatic consumer.
 
 | Date | Decision | Status |
 |---|---|---|
+| 2026-11-22 | [A read that observes a lapsed lease records it](2026-11-22-lease-lapse-events.md) | Accepted, owner instruction (D11) |
 | 2026-11-22 | [Athena in use: thirteen decisions accepted by standing instruction](2026-11-22-athena-in-use-decisions.md) | Accepted, owner's standing instruction |
 | 2026-11-22 | [A review request carries what its requested reviewer reported](2026-11-22-requested-reviewer-verdict.md) | Accepted, owner instruction (D4) |
 | 2026-11-22 | [A review request answers the reviewer's completion](2026-11-22-review-request-answers.md) | Accepted, owner's standing instruction (D16) |

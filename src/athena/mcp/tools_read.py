@@ -441,9 +441,11 @@ def register_read_tools(tool, mutation_tool, client) -> None:
     ) -> dict:
         """Read the bounded, actor-filtered "Now" queue. Each row cites its
         owning source, reason, freshness, and signal denominator. Admin tokens
-        see fleet-private signals; other tokens see only their own claim/control
-        rows and blockers on issues they may read. This tool labels a safe next
-        action but never executes one."""
+        see fleet-private signals; other tokens see their own claim/control rows,
+        claims on issues they may read and answer for (assignee, or delegated the
+        issue to its holder), and blockers on issues they may read. A lapsed lease
+        you answer for is recorded once as a `lease_lapsed` event. This tool
+        labels a safe next action but never executes one."""
         return client.get_attention_ranking(
             signals=signals,
             window_hours=window_hours,
@@ -559,7 +561,9 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         next_after is your own cursor) or `capacity` (every parking place was
         taken, so this is the immediate answer, never an error: back off a
         little before waiting again). An event you may not read neither
-        appears nor wakes you.
+        appears nor wakes you. On entry it records any lapsed lease you answer
+        for (you are the issue's assignee or delegated it to the holder) as one
+        `lease_lapsed` event, so one call learns of it; nothing is released.
 
         A filtered read can omit events, so its next_after cannot justify
         advancing the desk cursor.
@@ -592,8 +596,8 @@ def register_read_tools(tool, mutation_tool, client) -> None:
     def list_notifications(
         unread: bool = False, limit: int = 50, offset: ListOffset = 0
     ) -> ListResult:
-        """Read YOUR notification inbox — mentions, watched-issue changes, and
-        work delegated to you land here. Pass unread=true for just the unseen.
+        """Read YOUR notification inbox — mentions, watched-issue changes, work
+        delegated to you, and lapsed leases you answer for land here. Pass unread=true for just the unseen.
         Each row's target_state describes that row: "completed_by_you" means you
         completed a claim on the target at or after this row's event; "archived" and
         "closed" describe the target; null means none of these applies."""

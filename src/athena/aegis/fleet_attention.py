@@ -452,9 +452,12 @@ def _collect_claims_needing_attention(
     actor: dict,
     now: datetime | None = None,
 ) -> tuple[list[AttentionRankItem], int, int]:
+    # An admin sees the fleet. Anyone else sees the claims it answers for: the
+    # leases it holds, and those on issues it may see and is the assignee of or
+    # delegated to the holder (C4), so a lapse reaches whoever is accountable.
     work = fleet_work.build_active_work(
         conn,
-        agent_id=None if _has_admin_visibility(actor) else actor["id"],
+        viewer=None if _has_admin_visibility(actor) else actor,
         attention_state=fleet_work.NEEDS_ATTENTION,
         limit=200,
         now=now,

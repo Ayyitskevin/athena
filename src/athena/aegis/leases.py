@@ -6,7 +6,8 @@ NOT the assignee (the accountable owner) nor the contributor set (everyone the i
 delegated to) — it is the thing that stops two delegated agents from silently pulling the
 same work. A lease carries an expiry, so "active" is a pure function of the clock: a
 crashed holder's lease simply expires and the work becomes reclaimable, with no background
-sweeper.
+sweeper. The first read that observes the lapse records it once per generation
+(``lease_lapse_commands``, C4); recording releases nothing.
 
 All lease SQL lives here; the conflict/eligibility rules and audit events live in
 aegis/lease_commands.py, the same split every other Aegis write uses (data layer owns the
@@ -24,7 +25,7 @@ from typing import TypeGuard
 
 from athena import config
 from athena.aegis import statuses
-from athena.core import coordination_roots
+from athena.core import access, coordination_roots
 
 # A claim lasts this long by default before it must be renewed (re-claimed). Long enough
 # for a real work session, short enough that an abandoned claim frees the work within the
@@ -312,6 +313,91 @@ def lapsed_leases_held_by(
         lease["issue_done"] = bool(lease["issue_done"])
         lapsed.append(lease)
     return lapsed, rows[0]["total"] if rows else 0
+
+
+#: The verb that records a lapse (C4, D11). One event per lease generation; the
+#: command in ``lease_lapse_commands`` is its only writer.
+LAPSE_VERB = "lease_lapsed"
+#: ``generation <32 hex>;``: the fixed prefix of a lapse event's detail. The
+#: once-per-generation check compares this exact prefix, delimiter included.
+_LAPSE_DETAIL_PREFIX_CHARS = len("generation ") + GENERATION_HEX_CHARS + 1
+
+
+def unrecorded_lapses(
+    conn: sqlite3.Connection,
+    *,
+    viewer: dict,
+    accountable_id: int | None,
+    now: datetime | None = None,
+    limit: int = 20,
+    issue_id: int | None = None,
+    generation: str | None = None,
+) -> list[dict]:
+    """Expired, unsettled leases no native ``lease_lapsed`` event records yet,
+    on open issues ``viewer`` may see. Read-only, oldest expiry first.
+
+    Unsettled means the row is still there: completing, yielding, declining or
+    releasing deletes it, and a new acquisition replaces it with a new
+    generation. Done and archived issues are left out: a lease that outlives the
+    work it fenced strands nothing (its holder may still clear the row). An
+    imported row with the verb is foreign history and does not count as this
+    instance having recorded the lapse.
+
+    ``accountable_id`` narrows the scan to leases that account answers for: it
+    is the issue's assignee, or it delegated the issue to the holder (the
+    holder's ``issue_contributors.added_by``). ``issue_id`` and ``generation``
+    narrow it to one possession, for the command's re-check under its writer
+    lock. Each row carries what the event and its notifications need: the
+    holder, the expiry, the project, the assignee and the delegating account.
+    """
+    bounded = max(1, min(int(limit), 100))
+    visible, visible_params = access.project_visibility_clause(viewer, alias="p")
+    clauses = [
+        "l.expires_at <= ?",
+        "i.archived_at IS NULL",
+        f"({statuses.exact_category_sql('i')}) IS NOT 'done'",
+        f"(i.project_id IS NULL OR ({visible}))",
+        "NOT EXISTS (SELECT 1 FROM activity a "
+        "WHERE a.target_kind = 'issue' AND a.target_id = l.issue_id "
+        "AND a.verb = ? AND a.imported_at IS NULL "
+        "AND substr(a.detail, 1, ?) = 'generation ' || l.generation || ';')",
+    ]
+    params: list[object] = [
+        _clock_stamp(now),
+        *visible_params,
+        LAPSE_VERB,
+        _LAPSE_DETAIL_PREFIX_CHARS,
+    ]
+    if accountable_id is not None:
+        clauses.append(
+            "(i.assignee_id = ? OR EXISTS (SELECT 1 FROM issue_contributors c "
+            "WHERE c.issue_id = l.issue_id AND c.user_id = l.holder_id "
+            "AND c.added_by = ?))"
+        )
+        params.extend([accountable_id, accountable_id])
+    if issue_id is not None:
+        clauses.append("l.issue_id = ?")
+        params.append(issue_id)
+    if generation is not None:
+        clauses.append("l.generation = ?")
+        params.append(generation)
+    rows = conn.execute(
+        "SELECT l.issue_id, l.generation, l.holder_id, u.name AS holder_name, "
+        "l.expires_at, i.project_id, i.assignee_id, "
+        "(SELECT c.added_by FROM issue_contributors c WHERE c.issue_id = l.issue_id "
+        "AND c.user_id = l.holder_id) AS delegated_by "
+        # CROSS JOIN pins the order: start from the leases, which are few, and
+        # reach each issue by its key. Left to itself the planner starts from
+        # every unarchived issue, and the event feed runs this on each read.
+        "FROM issue_leases l "
+        "CROSS JOIN issues i ON i.id = l.issue_id "
+        "CROSS JOIN users u ON u.id = l.holder_id "
+        "LEFT JOIN projects p ON p.id = i.project_id "
+        f"WHERE {' AND '.join(clauses)} "
+        "ORDER BY l.expires_at, l.issue_id LIMIT ?",
+        [*params, bounded],
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def upsert_lease(

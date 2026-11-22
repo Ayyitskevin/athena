@@ -31,15 +31,14 @@ An agent that cannot take the recipe's next step from what it reads stops (it
 raises ``Stalled``), and the trial still reads the four issues: skip a step,
 such as the operator's answer, and it is the "all done" assertion that fails.
 
-One scenario holds a requirement that has landed: F2 (after the reviewer's
-HOLD and a second request, the reviewer's desk and pickup agree).
-
-Three more scenarios state behaviour the fleet needs, each marked ``@unmet``
-until its requirement in docs/plans/ATHENA_IN_USE_SPEC.md lands: C6 (disjoint
+Four scenarios hold requirements that have landed: F2 (after the reviewer's
+HOLD and a second request, the reviewer's desk and pickup agree), C6 (disjoint
 path fences on an instance with no root catalog, and pickup with paths), C4 (a
 lapsed lease is an event the conductor receives) and C5 (what the conductor
-gates on is what the requested reviewer reported). C6 and C5 have landed: their
-marks are gone, and the recipe above gates on C5's field.
+gates on is what the requested reviewer reported; the recipe above gates on it).
+
+A scenario for a requirement that is not built yet is marked ``@unmet`` until
+its requirement in docs/plans/ATHENA_IN_USE_SPEC.md lands. None is marked now.
 A marked scenario must stop by raising ``RequirementUnmet`` at the check that
 states its requirement, and its test passes when it does; any other failure,
 such as a refused setup step, is a real failure. When the requirement lands the
@@ -938,11 +937,6 @@ def test_c6_disjoint_paths_are_both_fenced_without_a_root_catalog(fleet, monkeyp
     assert [r.tool for agent in agents.values() for r in agent.meter.refusals] == []
 
 
-@unmet(
-    "C4",
-    "a lapsed lease writes no event, no notification and no attention "
-    "row for the conductor that delegated the work",
-)
 def test_c4_a_lapsed_lease_reaches_the_conductor_that_delegated_it(fleet):
     async def scene(fleet: Fleet, agents: dict[str, FleetAgent]) -> None:
         conductor, seat = agents["conductor"], agents["design"]

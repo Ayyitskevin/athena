@@ -74,6 +74,12 @@ Capture the clock once at the public boundary and pass it through nested
 lease readers. A response may be stale immediately after it is returned,
 but its lanes and totals must describe one observed state.
 
+Amended on 2026-11-22 by
+[A read that observes a lapsed lease records it](decisions/2026-11-22-lease-lapse-events.md)
+(D11): the event feed and the attention ranking may record a lapsed lease in a
+separate immediate transaction, outside their read snapshot. No reader holds the
+writer lock while it reads.
+
 Add one bounded owning reader for open handoffs on the actor's live, visible
 claims. Join/filter first, order deterministically, fetch limit plus one,
 then return at most the declared limit and an accurate clipped flag. Avoid

@@ -384,7 +384,9 @@ To decline a delegation: MCP `decline_delegation(issue_id, generation?)` · REST
   `POST /issues/{issue_id}/archive` hides it from default lists and keeps its history.
 - **Never sweep leases.** Expired leases are shown to their holder in the desk. Settle
   only your own, with `complete_claim` and the generation you observed. An admin cannot
-  settle another actor's expired lease. Do not clear leases in bulk.
+  settle another actor's expired lease. Do not clear leases in bulk. A lapse is
+  recorded once as a `lease_lapsed` event and told to the issue's assignee and the
+  account that delegated it; recording it releases nothing.
 - **Never bulk-acknowledge notifications.** `mark_notifications_read` marks every unread
   row. Acknowledge one row at a time with `mark_notification_read(notification_id)` /
   `POST /notifications/{notification_id}/read`.

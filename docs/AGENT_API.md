@@ -101,7 +101,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `list_issues` | `GET /issues` | read-only | List Aegis issues, optionally filtered by a project-configured status, … |
 | `list_labels` | `GET /labels` | read-only | List the shared label vocabulary (id, name, color). |
 | `list_my_delegated_work` | `GET /delegations/me` | read-only | List issues delegated to the authenticated contributor. By default this … |
-| `list_notifications` | `GET /notifications` | read-only | Read YOUR notification inbox — mentions, watched-issue changes, and … |
+| `list_notifications` | `GET /notifications` | read-only | Read YOUR notification inbox — mentions, watched-issue changes, work … |
 | `list_page_versions` | `GET /pages/{page_id}/versions` | read-only | The page's superseded revisions, newest first (the live page is NOT one of … |
 | `list_pages` | `GET /spaces/{space_id}/pages` | read-only | List the pages in a space. Archived (soft-deleted) pages are hidden by … |
 | `list_priority_notifications` | `GET /notifications/priority` | read-only | Read YOUR inbox as a priority/mute/digest projection. Priority is an … |

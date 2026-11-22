@@ -40,7 +40,11 @@ first batch you may read, or empty at the timeout with `next_after` still your
 cursor. The answer carries `wait = {requested_seconds, elapsed_seconds, outcome}`;
 `outcome: "capacity"` means every parking place was taken and this is the immediate
 answer, so back off a little before waiting again. The visibility rule is the
-immediate read's: an event you may not see neither appears nor wakes you. The caps
+immediate read's: an event you may not see neither appears nor wakes you. On
+entry, before it reads, the feed records any lapsed lease you answer for (you are
+the issue's assignee or delegated it to the holder) as one `lease_lapsed` event,
+so a wait loop learns of a lapse within one wait
+([ACTIVE_WORK.md](ACTIVE_WORK.md#a-lapsed-lease-is-an-event)). The caps
 live in `src/athena/core/event_wait.py` (32 parked requests per process, 25 s each,
 a half-second wake bound).
 

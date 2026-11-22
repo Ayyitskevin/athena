@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from datetime import datetime, timezone
 from typing import cast
 
@@ -184,6 +184,21 @@ def notify_watchers(
             "INSERT OR IGNORE INTO notifications (user_id, event_id) VALUES (?, ?)",
             (user_id, event_id),
         )
+
+
+def notify_users(
+    conn: sqlite3.Connection, *, event_id: int, user_ids: Collection[int]
+) -> None:
+    """Put one event in named inboxes, beside the watcher fan-out
+    ``activity.record`` already ran. For an event whose actor did not cause it
+    (a lapse is recorded by whoever observed it), so the actor is not excluded
+    here. The caller chooses the recipients and checks they may see the target;
+    the UNIQUE (user_id, event_id) collapses a recipient who also watches. Does
+    NOT commit: the caller's transaction owns the event and its inbox rows."""
+    conn.executemany(
+        "INSERT OR IGNORE INTO notifications (user_id, event_id) VALUES (?, ?)",
+        [(user_id, event_id) for user_id in sorted(set(user_ids))],
+    )
 
 
 # --- mentions ---------------------------------------------------------------

@@ -253,8 +253,9 @@ Use `get_project_floor(project_id=...)` for visible open issues, occupants and
 blockers, `get_attention_ranking()` for actor-filtered questions/signals, and
 `get_issue_history(issue_id=...)` for the source-cited narrative. The floor reserves
 nothing and drops done issues; retain known issue IDs to inspect completed work.
-Attention exposes visible issue blockers but only your own claim/control signals
-without admin authority. Empty or clipped results do not prove fleet health,
+Without admin authority, attention exposes visible issue blockers, your own
+claim/control signals, and the claims on issues you can see and answer for: you are
+the assignee, or you delegated the issue to its holder. Empty or clipped results do not prove fleet health,
 process liveness or complete history.
 
 Narrow profiles carry `wait_for_events`, not `recent_events`. To drain immediately,
@@ -264,7 +265,10 @@ batches, and advance with `advance_desk_cursor(after_id=last_processed_id)` only
 through the unfiltered visible prefix actually handled. If processing stops, retain
 that prefix and resume there; do not jump to the desk's newest visible ID. A filtered
 read cannot justify advancing past unseen events. The same tool with a positive
-wait can wait for later work; waiting does not acknowledge anything.
+wait can wait for later work; waiting does not acknowledge anything. On entry the
+feed records a lapsed lease you answer for as one `lease_lapsed` event, with a
+notification, so a seat that went away reaches you within one wait. Re-delegate or
+reclaim deliberately; the lapse releases nothing.
 
 Acknowledge each notification only after handling it, with
 `mark_notification_read(notification_id=...)`. Desk reads, cursor advances and claim

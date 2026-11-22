@@ -152,6 +152,42 @@ Each row keeps independent facts independent:
 `observed` means only that none of those known reasons applied at the snapshot.
 It is intentionally not called healthy or running.
 
+### A lapsed lease is an event
+
+`lease_expired` is the clock's verdict, and the clock tells nobody. So the first
+request that observes an expired, unsettled lease on an issue its account answers
+for records one native `lease_lapsed` event for that lease generation (requirement
+C4, decision D11). An account answers for a lease when it is the issue's assignee
+or it delegated the issue to the holder. Two reads observe: `GET /events`
+(`wait_for_events`, `list_events`) on entry, before it reads, so a caller in a wait
+loop learns of the lapse within one wait; and `GET /attention/ranking`
+(`get_attention_ranking`) after it reads. Each reads its candidates with no
+transaction open and writes in its own immediate transaction, so no reader holds
+the writer lock while it reads; a write that cannot get the lock is left for the
+next observer and never fails the read.
+
+- **Actor and subject.** The event's actor is the observing account; the holder,
+  who did nothing, is the subject. The detail reads
+  `generation <g>; holder_id <n>; expired_at <t>; holder <name>`. The event
+  carries no run coordinates: observing is not work in the observer's run.
+- **Once per generation.** The command re-checks under the writer lock that no
+  native `lease_lapsed` event names the generation, so a second observer, racing
+  or later, writes nothing. A reacquired lease that lapses again is a new
+  generation and a new event. A settled lease (its row is gone) and a lease on a
+  done or archived issue record nothing.
+- **Who is told.** The assignee and the delegating account get a notification,
+  even when one of them is the observer, and a `claim_needs_attention` row in their
+  attention ranking. An account that cannot see the issue records, receives and
+  counts nothing.
+- **Nothing is released.** The row stays until its holder clears it with
+  `complete_claim` or the next claim replaces it (ruling K1). Automation never fires
+  on `lease_lapsed`, and it does not reset a schedule's inactivity clock.
+
+For an account without admin authority, the attention ranking's
+`claim_needs_attention` rows are the claims it holds plus, on issues it can see,
+the claims it answers for; the count and the rows use the same filter. The record
+is [the lapse decision](decisions/2026-11-22-lease-lapse-events.md).
+
 Summary counts carry `scope=returned_items`: active, expired, and attention totals
 describe only the bounded `items` window, never undisplayed claims when `clipped=true`.
 
