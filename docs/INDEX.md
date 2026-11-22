@@ -1,8 +1,11 @@
 # Docs index — one line per document
 
-Forty-odd documents is too many to skim and too few to search well. This page
+Sixty-odd documents is too many to skim and too few to search well. This page
 is the map: one honest line each, grouped by the question you arrived with.
 When a one-liner and the document disagree, the document wins — fix the line.
+Every document under `docs/` is reachable from here — listed by name, or inside a
+directory listed below with its rule — and every link resolves;
+`tests/test_docs_index.py` fails otherwise.
 
 ## Start here
 
@@ -13,6 +16,7 @@ When a one-liner and the document disagree, the document wins — fix the line.
 | [../AGENTS.md](../AGENTS.md) | How we build in this repo: the cardinal rule, module lanes, the gate, branch/PR contract. Read before writing. |
 | [QUICKSTART.md](QUICKSTART.md) | Two honest install paths: a disposable demo, or the instance you keep (bootstrap admin, onboard your agent). |
 | [OPERATIONS.md](OPERATIONS.md) | The operator runbook: deployment gate, env vars, health, backups, API token minting/scopes/revocation. |
+| [GLOSSARY.md](GLOSSARY.md) | The shared terms (account, seat, claim, lease, run, approval, …) with each one's boundary and owner, plus the link to the decision records. |
 
 ## Working as an agent (the product surfaces)
 
@@ -26,7 +30,9 @@ When a one-liner and the document disagree, the document wins — fix the line.
 | [WORK_CONTEXT.md](WORK_CONTEXT.md) | The bounded read packet for one issue: the issue, neighbours, blockers, runbook — prefer it over five separate reads. |
 | [PROJECT_BRIEF_SPEC.md](PROJECT_BRIEF_SPEC.md) | The compact visible project briefing: section counts, clipping, historical reports and visibility/authority limits. |
 | [ATOMIC_PICKUP_SPEC.md](ATOMIC_PICKUP_SPEC.md) | Atomic ready-work selection and acquisition, account-wide pickup guard, project filter and historical retry receipts. |
+| [COORDINATION_RELIABILITY_SPEC.md](COORDINATION_RELIABILITY_SPEC.md) | The accepted review-and-implementation spec for trustworthy coordination views at revocation, expiry, concurrent-write and bounded-list edges. |
 | [EVIDENCE_MANIFEST.md](EVIDENCE_MANIFEST.md) | When freezing or reviewing evidence: versioned documentary bindings through existing attachments and references, never approval. |
+| [DOCUMENTARY_READER.md](DOCUMENTARY_READER.md) | The local prototype reader for evidence manifests (`scripts/documentary_review/`): what it checks, and that it is outside the server, MCP and any adoption. |
 | [CONTINUATION.md](CONTINUATION.md) | When resuming or encountering clipped evidence: select the smallest new delta and recover exact bytes or report PARTIAL. |
 | [CAPABILITY_BASELINE.md](CAPABILITY_BASELINE.md) | Before adopting a source feature: distinguish source presence, dated observations and unknown live capability. |
 | [QUERY.md](QUERY.md) | The work query language (GitHub-shaped, not Jira) — same syntax in the search box, REST, and saved filters. |
@@ -42,6 +48,7 @@ When a one-liner and the document disagree, the document wins — fix the line.
 | [FLEET_METRICS.md](FLEET_METRICS.md) | Fleet throughput metrics — the first accepted vertical slice. |
 | [RUNTIME_RECIPE.md](RUNTIME_RECIPE.md) | Wiring a real agent runtime (MCP config, token) to close the operator loop — Athena ships no runtime on purpose. |
 | [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md) | A member conductor coordinates architect, builder and independent reviewer accounts through existing scoped tools, with explicit ownership and evidence. |
+| [CLOSEOUT_RECIPE.md](CLOSEOUT_RECIPE.md) | Completing a claim: the optional reported completion, usage and exact-version submission grammar, and how to inspect closeout debt before acting. |
 | [REVIEW_REQUEST_SPEC.md](REVIEW_REQUEST_SPEC.md) | Named review requests, pickup, fulfillment and recovery after candidate replacement. |
 | [REVIEW_QUEUE_SPEC.md](REVIEW_QUEUE_SPEC.md) | Exact-version submissions and linked reviews, bounded queue/history, visibility and authority boundaries. |
 | [../examples/desk_loop.md](../examples/desk_loop.md) | A prompt you can hand an agent verbatim: desk → claim one thing → work → learn → put it down. |
@@ -55,6 +62,7 @@ When a one-liner and the document disagree, the document wins — fix the line.
 | [GRAPH.md](GRAPH.md) | The link graph behind `[[wikilinks]]` and `[[ATH-12]]` refs, and what reads it. |
 | [OUTGOING_LINKS_SPEC.md](OUTGOING_LINKS_SPEC.md) | How a reader's outgoing links are resolved, ordered and measured. |
 | [BACKLINKS_SPEC.md](BACKLINKS_SPEC.md) | Which sources appear under “Referenced by” on an issue or page, and how its read cost is measured. |
+| [RUNBOOK_LINK_IDENTITY_SPEC.md](RUNBOOK_LINK_IDENTITY_SPEC.md) | Saved `[[Title]]` links bind to the page they resolved to, so a rename or a reused title never retargets them. |
 | [PLAYBOOKS.md](PLAYBOOKS.md) | Docs that *start* work: a page that files the issues it describes. |
 | [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md) | Watches and notifications: subscribing your inbox to a target. |
 | [PLANNING.md](PLANNING.md) | The timeline and live rollups drawing sprints and typed dependencies together. |
@@ -88,9 +96,11 @@ When a one-liner and the document disagree, the document wins — fix the line.
 
 | Path | One line |
 |---|---|
-| [plans/](plans/) | Long-form working guides for major pushes (expansion, remediation, performance/adoption) and their reports. |
-| [research/](research/) | Roadmap research notes feeding future work. |
-| [assets/](assets/) | Images used by the docs (the operator-loop diagram). |
+| [decisions/](decisions/) | Dated decision records with their accepting sources; [its README](decisions/README.md) indexes every record. |
+| [plans/](plans/) | Long-form working guides for major pushes (expansion, remediation, performance/adoption, agentic use) and their reports; listed as a directory, not file by file. |
+| [research/](research/) | Roadmap research notes feeding future work; listed as a directory, not file by file. |
+| [evidence-convention/](evidence-convention/) | The inert evidence-manifest schema and its fictional examples and samples, read by EVIDENCE_MANIFEST.md and DOCUMENTARY_READER.md; listed as a directory, not file by file. |
+| [assets/](assets/) | Images used by the docs (the operator-loop diagram); listed as a directory, not file by file. |
 
 ## Looking for something that isn't where you expected?
 

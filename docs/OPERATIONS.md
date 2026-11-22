@@ -31,39 +31,49 @@ loops everywhere else, but that remains outside the supported deployment shape.
 ## Runtime Configuration
 
 Athena reads configuration from environment variables at process start.
+Every table of variables in this document is generated from the one registry
+in `src/athena/config.py` (`SETTINGS`); `tests/test_settings_registry.py` fails
+when the code reads a variable the registry does not declare.
 
-| Variable | Default | Use |
-|----------|---------|-----|
-| `ATHENA_DB` | `athena.db` | SQLite database path. Use an absolute path for a long-running service. |
-| `ATHENA_NETWORK_MODE` | `local` | Supported listener policy: `local` permits only loopback; `tailnet` additionally permits exact numeric addresses in Tailscale's `100.64.0.0/10` and `fd7a:115c:a1e0::/48` ranges. There is no `public` value. |
-| `ATHENA_ALLOWED_AUTHORITIES` | *(derived for local; required for tailnet)* | Comma-separated exact HTTP `Host` authorities, each with the listener's port, such as `athena.tailnet.example:8000` or `[::1]:8000`. A numeric authority must equal the numeric bind; a DNS authority is an operator assertion. No wildcard, suffix, userinfo, path, browser-numeric final label, internationalized/punycode label, or port range is accepted. |
-| `ATHENA_LOG_LEVEL` | `INFO` | Level for Athena's own logs (`athena.*`). At `INFO` startup logs the migrations it applied and which background loops started, and the loops log any swallowed error. Set `WARNING` for a quieter server or `DEBUG` when diagnosing. |
-| `ATHENA_BOOTSTRAP_TOKEN` | *(empty; bootstrap disabled)* | One-time credential for the first `POST /users`. Generate 32 random bytes as URL-safe text, present it in `X-Athena-Bootstrap-Token`, then remove it and restart. Values must be 32–255 visible ASCII characters. |
-| `ATHENA_TRUST_ACTOR_HEADER` | `false` | Legacy application-factory identity fallback. The supported `athena-serve` launcher refuses to start when this is enabled; use password/OIDC login or a bearer token. |
-| `ATHENA_COOKIE_SECURE` | `false` | Adds the HTTPS-only `Secure` flag to browser cookies for retained raw-factory HTTPS experiments. The current direct-HTTP `athena-serve` contract refuses `true`; no supported TLS/proxy mode exists yet. |
-| `ATHENA_SESSION_TTL_DAYS` | `14` | Browser session lifetime. |
-| `ATHENA_MAX_REQUEST_BODY_BYTES` | `1048576` | Request body cap. A nonzero supported-launcher value must be at least `16384`, which carries the bounded bootstrap/login credential envelope; `0` disables the cap and is allowed only in local mode. Tailnet mode requires a positive value. Also caps attachment uploads (the whole request must fit), so raise it for larger files. |
-| `ATHENA_IDEMPOTENCY_TTL_SECONDS` | `86400` | Retention for completed API idempotency receipts. Expired completed receipts are removed lazily. |
-| `ATHENA_IDEMPOTENCY_LEASE_SECONDS` | `60` | Freshness window for an executing idempotency owner. Expiry never grants automatic takeover. |
-| `ATHENA_IDEMPOTENCY_WAIT_SECONDS` | `5` | How long an identical concurrent retry waits for the owner to publish a result before receiving `409 idempotency_in_progress`. |
-| `ATHENA_IDEMPOTENCY_MAX_RESPONSE_BYTES` | `1048576` | Largest successful response Athena will retain for safe replay. An overflow is fail-closed and becomes indeterminate. |
-| `ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE` | `120` | Per-bearer-token request ceiling for API/agent traffic. `0` disables it and is refused in tailnet mode. |
-| `ATHENA_AGENT_RUN_STALE_SECONDS` | `90` | Maximum check-in age still labeled `reporting_recently`; older reports are `stale`. |
-| `ATHENA_AGENT_RUN_MAX_CHECKINS_PER_AGENT` | `1000` | Durable check-in row ceiling per agent. Existing ids remain refreshable at the ceiling; new ids receive `409`. |
-| `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | Per-client-IP ceiling used by optional-identity REST reads and each signed-inbound attempt (forge and Icarus callbacks). It is not a global browser-request ceiling. Keyed by the accepted direct peer, never forwarding headers. Tailnet mode requires a positive value. |
-| `ATHENA_LOGIN_RATE_LIMIT_PER_MINUTE` | `10` | Per-client-IP cap on `POST /login` attempts, checked before the password hash (bounds brute force and pbkdf2 CPU). Over the limit returns `429` with `Retry-After`. Keyed by the accepted direct peer, never forwarding headers. `0` disables it and is refused in tailnet mode. |
-| `ATHENA_LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE` | `5` | Per-**account** cap on `POST /login` attempts, keyed by the submitted email address rather than the resolved user, so a real address and an unknown one are throttled identically and the limiter cannot be used to test whether an account exists. Closes the axis the per-IP limit above leaves open: credential stuffing is distributed by construction. `0` disables it. See SECURITY.md for the denial-of-service trade. |
-| `ATHENA_ANONYMOUS_READS` | `true` | When `false`, REST reads require an authenticated REST actor and browser routes require a resolved browser session, regardless of container visibility. Signing in and first-user creation stay reachable so the switch cannot lock out the operator. Bearer and trusted-header credentials remain REST/MCP-only and never satisfy the browser gate. Swagger UI and ReDoc follow that browser rule; OpenAPI, liveness, readiness, and build identity remain public metadata. |
-| `ATHENA_DEFAULT_VISIBILITY` | `public` | Visibility new projects and spaces are born with (`public` or `private`). Ergonomics, not enforcement: it does nothing for containers that already exist, and nothing at all when `ATHENA_ANONYMOUS_READS=false` has already closed reads. |
-| `ATHENA_LIVE_REFRESH_SECONDS` | `10` | How often the three self-refreshing cockpit panels (fleet attention, active claimed work, run controls) re-ask the server for their own markup. `0` turns polling off — the pages still render and say so, they just stop updating themselves. Any other value must be 5–3600; the floor is a load bound, since each polling admin costs roughly `0.5 ms / interval` of server time. |
-| `ATHENA_EGRESS_PRIVATE_HOSTS` | *(empty)* | Exact hostnames (comma-separated, case-insensitive, no wildcards) outbound webhook/dispatch POSTs may reach even though they resolve to private, loopback, or link-local addresses. Empty keeps the SSRF policy absolute. Set it when your webhook receiver or execution fleet legitimately lives on your own machine, LAN, or tailnet — e.g. `127.0.0.1` — and name only hosts you operate. Delivery still pins the connection to the resolved address. |
-| `ATHENA_WEBHOOK_DELIVERY` | `true` | Run the in-process webhook delivery loop. Exactly one process per deployment may run it — see Background Loops. |
-| `ATHENA_WEBHOOK_INTERVAL` | `5` | Seconds between webhook delivery passes. |
-| `ATHENA_WEBHOOK_TIMEOUT` | `5` | Cap in seconds on each outbound webhook POST, so one slow receiver cannot stall the loop. |
-| `ATHENA_AUTOMATION` | `true` | Run the in-process automation rules loop. Same single-runner rule as webhook delivery. |
-| `ATHENA_AUTOMATION_INTERVAL` | `5` | Seconds between automation passes. |
-| `ATHENA_ATTACH_DIR` | `attachments` | Directory for uploaded attachment blobs. Use an absolute path owned by the service user; keep it outside any web-served directory (files are reachable only through the target-visibility-gated download route). |
-| `ATHENA_ATTACH_MAX_BYTES` | `10485760` | Per-attachment size cap (bounded by `ATHENA_MAX_REQUEST_BODY_BYTES`). |
+<!-- BEGIN GENERATED settings:server (scripts/generate_settings_doc.py; do not edit by hand) -->
+| Variable | Default | Secret | Use |
+|----------|---------|--------|-----|
+| `ATHENA_DB` | `athena.db` | no | SQLite database path. Use an absolute path for a long-running service. |
+| `ATHENA_NETWORK_MODE` | `local` | no | Supported listener policy: `local` permits only loopback; `tailnet` additionally permits exact numeric addresses in Tailscale's `100.64.0.0/10` and `fd7a:115c:a1e0::/48` ranges. There is no `public` value. |
+| `ATHENA_ALLOWED_AUTHORITIES` | *(derived for local; required for tailnet)* | no | Comma-separated exact HTTP `Host` authorities, each with the listener's port, such as `athena.tailnet.example:8000` or `[::1]:8000`. A numeric authority must equal the numeric bind; a DNS authority is an operator assertion. No wildcard, suffix, userinfo, path, browser-numeric final label, internationalized/punycode label, or port range is accepted. |
+| `ATHENA_LOG_LEVEL` | `INFO` | no | Level for Athena's own logs (`athena.*`). At `INFO` startup logs the migrations it applied and which background loops started, and the loops log any swallowed error. Set `WARNING` for a quieter server or `DEBUG` when diagnosing. |
+| `ATHENA_BOOTSTRAP_TOKEN` | *(empty; bootstrap disabled)* | yes | One-time credential for the first `POST /users`. Generate 32 random bytes as URL-safe text, present it in `X-Athena-Bootstrap-Token`, then remove it and restart. Values must be 32–255 visible ASCII characters. |
+| `ATHENA_TRUST_ACTOR_HEADER` | `false` | no | Legacy application-factory identity fallback. The supported `athena-serve` launcher refuses to start when this is enabled; use password/OIDC login or a bearer token. |
+| `ATHENA_COOKIE_SECURE` | `false` | no | Adds the HTTPS-only `Secure` flag to browser cookies for retained raw-factory HTTPS experiments. The current direct-HTTP `athena-serve` contract refuses `true`; no supported TLS/proxy mode exists yet. |
+| `ATHENA_SESSION_TTL_DAYS` | `14` | no | Browser session lifetime. |
+| `ATHENA_MAX_REQUEST_BODY_BYTES` | `1048576` | no | Request body cap. A nonzero supported-launcher value must be at least `16384`, which carries the bounded bootstrap/login credential envelope; `0` disables the cap and is allowed only in local mode. Tailnet mode requires a positive value. Also caps attachment uploads (the whole request must fit), so raise it for larger files. |
+| `ATHENA_IDEMPOTENCY_TTL_SECONDS` | `86400` | no | Retention for completed API idempotency receipts. Expired completed receipts are removed lazily. |
+| `ATHENA_IDEMPOTENCY_LEASE_SECONDS` | `60` | no | Freshness window for an executing idempotency owner. Expiry never grants automatic takeover. |
+| `ATHENA_IDEMPOTENCY_WAIT_SECONDS` | `5` | no | How long an identical concurrent retry waits for the owner to publish a result before receiving `409 idempotency_in_progress`. |
+| `ATHENA_IDEMPOTENCY_MAX_RESPONSE_BYTES` | `1048576` | no | Largest successful response Athena will retain for safe replay. An overflow is fail-closed and becomes indeterminate. |
+| `ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE` | `120` | no | Per-bearer-token request ceiling for API/agent traffic. `0` disables it and is refused in tailnet mode. |
+| `ATHENA_AGENT_RUN_STALE_SECONDS` | `90` | no | Maximum check-in age still labeled `reporting_recently`; older reports are `stale`. |
+| `ATHENA_AGENT_RUN_MAX_CHECKINS_PER_AGENT` | `1000` | no | Durable check-in row ceiling per agent. Existing ids remain refreshable at the ceiling; new ids receive `409`. |
+| `ATHENA_WORKER_STALE_SECONDS` | `90` | no | Maximum worker-heartbeat age still labeled `reporting_recently`; older workers are `stale`. Cooperative presence, never process liveness. |
+| `ATHENA_WORKER_MAX_PER_AGENT` | `50` | no | Worker-registry ceiling per agent. Existing workers stay refreshable at the ceiling; a new one is refused. |
+| `ATHENA_RUN_CONTROL_TTL_SECONDS` | `3600` | no | Lifetime of a run control when the operator names none (at least `60`). Expiry is derived at read time; nothing sweeps or writes. |
+| `ATHENA_LEASE_ROOT_CATALOG` | *(empty)* | no | Optional JSON catalog of operator-declared coordination roots for lease path declarations, parsed once at startup and never resolved against the filesystem. See ACTIVE_WORK.md for its exact shape. |
+| `ATHENA_SLOW_REQUEST_LOG_MS` | `1000` | no | Requests slower than this are logged at `WARNING` with their route template, method, status and duration. `0` disables it. |
+| `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | no | Per-client-IP ceiling used by optional-identity REST reads and each signed-inbound attempt (forge and Icarus callbacks). It is not a global browser-request ceiling. Keyed by the accepted direct peer, never forwarding headers. Tailnet mode requires a positive value. |
+| `ATHENA_LOGIN_RATE_LIMIT_PER_MINUTE` | `10` | no | Per-client-IP cap on `POST /login` attempts, checked before the password hash (bounds brute force and pbkdf2 CPU). Over the limit returns `429` with `Retry-After`. Keyed by the accepted direct peer, never forwarding headers. `0` disables it and is refused in tailnet mode. |
+| `ATHENA_LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE` | `5` | no | Per-**account** cap on `POST /login` attempts, keyed by the submitted email address rather than the resolved user, so a real address and an unknown one are throttled identically and the limiter cannot be used to test whether an account exists. Closes the axis the per-IP limit above leaves open: credential stuffing is distributed by construction. `0` disables it. See SECURITY.md for the denial-of-service trade. |
+| `ATHENA_ANONYMOUS_READS` | `true` | no | When `false`, REST reads require an authenticated REST actor and browser routes require a resolved browser session, regardless of container visibility. Signing in and first-user creation stay reachable so the switch cannot lock out the operator. Bearer and trusted-header credentials remain REST/MCP-only and never satisfy the browser gate. Swagger UI and ReDoc follow that browser rule; OpenAPI, liveness, readiness, and build identity remain public metadata. |
+| `ATHENA_DEFAULT_VISIBILITY` | `public` | no | Visibility new projects and spaces are born with (`public` or `private`). Ergonomics, not enforcement: it does nothing for containers that already exist, and nothing at all when `ATHENA_ANONYMOUS_READS=false` has already closed reads. |
+| `ATHENA_LIVE_REFRESH_SECONDS` | `10` | no | How often the three self-refreshing cockpit panels (fleet attention, active claimed work, run controls) re-ask the server for their own markup. `0` turns polling off — the pages still render and say so, they just stop updating themselves. Any other value must be 5–3600; the floor is a load bound, since each polling admin costs roughly `0.5 ms / interval` of server time. |
+| `ATHENA_EGRESS_PRIVATE_HOSTS` | *(empty)* | no | Exact hostnames (comma-separated, case-insensitive, no wildcards) outbound webhook/dispatch POSTs may reach even though they resolve to private, loopback, or link-local addresses. Empty keeps the SSRF policy absolute. Set it when your webhook receiver or execution fleet legitimately lives on your own machine, LAN, or tailnet — e.g. `127.0.0.1` — and name only hosts you operate. Delivery still pins the connection to the resolved address. |
+| `ATHENA_WEBHOOK_DELIVERY` | `true` | no | Run the in-process webhook delivery loop. Exactly one process per deployment may run it — see Background Loops. |
+| `ATHENA_WEBHOOK_INTERVAL` | `5` | no | Seconds between webhook delivery passes. |
+| `ATHENA_WEBHOOK_TIMEOUT` | `5` | no | Cap in seconds on each outbound webhook POST, so one slow receiver cannot stall the loop. |
+| `ATHENA_AUTOMATION` | `true` | no | Run the in-process automation rules loop. Same single-runner rule as webhook delivery. |
+| `ATHENA_AUTOMATION_INTERVAL` | `5` | no | Seconds between automation passes. |
+| `ATHENA_ATTACH_DIR` | `attachments` | no | Directory for uploaded attachment blobs. Use an absolute path owned by the service user; keep it outside any web-served directory (files are reachable only through the target-visibility-gated download route). |
+| `ATHENA_ATTACH_MAX_BYTES` | `10485760` | no | Per-attachment size cap (bounded by `ATHENA_MAX_REQUEST_BODY_BYTES`). |
+<!-- END GENERATED settings:server -->
 
 Typed configuration fails closed at import/startup. Boolean settings accept only
 `1`, `true`, `yes`, `on`, `0`, `false`, `no`, or `off` (case-insensitive).
@@ -145,6 +155,33 @@ process their requests until every preflight check succeeds.
 and the browser would refuse to send a Secure login cookie back. A supported
 direct-TLS or proxy/origin contract has not yet been defined. The setting remains
 available to explicitly unsupported raw-factory HTTPS experiments.
+
+Outbound integrations are off until configured. Dispatch to an external
+executor ([DISPATCH.md](DISPATCH.md)) needs both Icarus settings; the Buzz
+radio needs its CLI, key file and relay URL:
+
+<!-- BEGIN GENERATED settings:integrations (scripts/generate_settings_doc.py; do not edit by hand) -->
+| Variable | Default | Secret | Use |
+|----------|---------|--------|-----|
+| `ATHENA_ICARUS_URL` | *(empty)* | no | Dispatch executor base URL (`POST {URL}/dispatch`). Dispatch is refused unless this and `ATHENA_ICARUS_SECRET` are both set. See DISPATCH.md. |
+| `ATHENA_ICARUS_SECRET` | *(empty)* | yes | Shared HMAC secret for dispatch and its callbacks, both directions. |
+| `ATHENA_ICARUS_TIMEOUT_SECONDS` | `10` | no | Per-request timeout in seconds for outbound dispatch. |
+| `ATHENA_BUZZ_CLI` | *(empty)* | no | Path of the Buzz CLI the radio shells out to. The radio is off unless this, `ATHENA_BUZZ_KEY_FILE` and `ATHENA_BUZZ_RELAY_URL` are all set. |
+| `ATHENA_BUZZ_KEY_FILE` | *(empty)* | no | Path of the signing key file the Buzz CLI uses. Athena stores no Buzz secret; it passes this path, never the key. |
+| `ATHENA_BUZZ_RELAY_URL` | *(empty)* | no | Buzz relay URL the radio posts to. |
+| `ATHENA_BUZZ_ASSIGN_CHANNEL` | `3fc2b270-cd0b-4a6b-afcd-f10471caffb2` | no | Buzz channel that assignment directives go to; override it if the channel is recreated. |
+| `ATHENA_PUBLIC_BASE_URL` | *(empty)* | no | Base URL Athena writes into links it sends out (Buzz messages, fleet assignment); empty sends the issue key without a link. |
+<!-- END GENERATED settings:integrations -->
+
+The repository's own scripts read two more. They configure no running
+Athena; they are listed so the registry has no unlisted entry:
+
+<!-- BEGIN GENERATED settings:tooling (scripts/generate_settings_doc.py; do not edit by hand) -->
+| Variable | Default | Secret | Use |
+|----------|---------|--------|-----|
+| `ATHENA_COVERAGE_WORKERS` | `4` | no | pytest-xdist workers for `scripts/coverage.sh` and the gate's test stages. At the default the suite needs about 1.5 GiB of memory; set fewer on a smaller machine. |
+| `ATHENA_PYTHON` | `.venv/bin/python` in the checkout | no | Interpreter `scripts/coverage.sh` runs the suite with; `scripts/gate.py` sets it to its own. |
+<!-- END GENERATED settings:tooling -->
 
 ## Health Checks
 
@@ -261,13 +298,15 @@ administrator exists, so a default-role member cannot consume the one
 credentialed bootstrap grant and leave the instance with no administrator.
 Already-linked identities continue to resolve normally.
 
-| Variable | Use |
-|----------|-----|
-| `ATHENA_OIDC_ISSUER` | The IdP's issuer URL; its `/.well-known/openid-configuration` is discovered from it. |
-| `ATHENA_OIDC_CLIENT_ID` | Client id registered with the IdP. |
-| `ATHENA_OIDC_CLIENT_SECRET` | Client secret registered with the IdP. |
-| `ATHENA_OIDC_REDIRECT_URL` | This app's callback URL. Must exactly match what the IdP has registered. |
-| `ATHENA_OIDC_ALLOWED_DOMAINS` | Optional comma-separated email-domain allow-list for first-login auto-provisioning (e.g. `acme.com,acme.io`). Empty = any domain the IdP asserts. Set it to lock SSO to your organization. |
+<!-- BEGIN GENERATED settings:oidc (scripts/generate_settings_doc.py; do not edit by hand) -->
+| Variable | Default | Secret | Use |
+|----------|---------|--------|-----|
+| `ATHENA_OIDC_ISSUER` | *(empty)* | no | The IdP's issuer URL; its `/.well-known/openid-configuration` is discovered from it. |
+| `ATHENA_OIDC_CLIENT_ID` | *(empty)* | no | Client id registered with the IdP. |
+| `ATHENA_OIDC_CLIENT_SECRET` | *(empty)* | yes | Client secret registered with the IdP. |
+| `ATHENA_OIDC_REDIRECT_URL` | *(empty)* | no | This app's callback URL. Must exactly match what the IdP has registered. |
+| `ATHENA_OIDC_ALLOWED_DOMAINS` | *(empty)* | no | Optional comma-separated email-domain allow-list for first-login auto-provisioning (e.g. `acme.com,acme.io`). Empty = any domain the IdP asserts. Set it to lock SSO to your organization. |
+<!-- END GENERATED settings:oidc -->
 
 The supported direct-HTTP launcher applies a stricter recovery check than the
 general application factory: the issuer must be a visible-ASCII HTTPS URL
@@ -1376,6 +1415,19 @@ The server speaks MCP over stdio (how desktop/agent clients launch tool servers)
 Point your MCP client at the `athena-mcp` command with those two environment
 variables. Give the agent the **narrowest token** that fits its job (e.g. a triage
 bot gets `read`, `issue:write`); the MCP server never widens what the token allows.
+
+The MCP server, and `athena-seat-doctor` for the first two, read these:
+
+<!-- BEGIN GENERATED settings:client (scripts/generate_settings_doc.py; do not edit by hand) -->
+| Variable | Default | Secret | Use |
+|----------|---------|--------|-----|
+| `ATHENA_BASE_URL` | `http://127.0.0.1:8000` for `athena-mcp`; required by `athena-seat-doctor` (or `--base-url`) | no | The Athena deployment the MCP server and the seat doctor call. |
+| `ATHENA_TOKEN` | *(required)* | yes | The agent's bearer token. The MCP server never widens what it allows. |
+| `ATHENA_MCP_PROFILE` | *(unset: `full`)* | no | The tool profile the MCP session carries (`seat`, `seat+knowledge`, `conductor` or `full`); an unknown name stops the server. See AGENT_BOOT.md. |
+| `ATHENA_MCP_ALL_TOOLS` | *(unset: probe the token's scopes)* | no | `1` skips the startup scope probe and presents every tool. |
+| `ATHENA_RUN_ID` | *(unset: a fresh `mcp-<hex>` id)* | no | The run identity the MCP session tags its writes with. |
+| `ATHENA_PARENT_RUN_ID` | *(unset)* | no | Optional parent run of `ATHENA_RUN_ID`, for lineage. |
+<!-- END GENERATED settings:client -->
 
 The narrow token also buys a smaller session: at startup the server asks
 `whoami` for the token's scopes and **registers only the tools that token can
