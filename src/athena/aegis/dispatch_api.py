@@ -207,7 +207,7 @@ def create_dispatch(
 @router.get("/dispatches", response_model=list[DispatchOut])
 def index(
     work_item_id: int | None = Query(None, ge=1, le=dispatch.MAX_SQLITE_INTEGER),
-    state: str | None = Query(None),
+    state: str | None = Query(None, description=f"one of {', '.join(dispatch.STATES)}"),
     limit: int = Query(50, ge=1, le=dispatch.MAX_LIST_LIMIT),
     actor: dict = Depends(_dispatch_reader),
     conn: sqlite3.Connection = Depends(get_conn),

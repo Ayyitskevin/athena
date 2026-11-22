@@ -98,13 +98,20 @@ def test_save_current_view_carries_priority_and_assignee(tmp_path):
         assert "assignee_id=2" in body  # mapped to the create form's field name
 
 
-def test_unknown_priority_matches_nothing_like_the_api(tmp_path):
-    # WHY: an unknown priority is passed straight through (matches nothing), the same
-    # as GET /issues — the web doesn't invent a different meaning for bad input.
+def test_unknown_priority_never_matches_an_issue(tmp_path):
+    # WHY: an unknown priority never shows an issue. The web list passes it
+    # straight through (matches nothing). GET /issues refuses it instead (A9:
+    # priorities are a closed set, so a typo must not look like an empty list to
+    # an agent); neither invents a match for bad input.
     with TestClient(create_app(tmp_path / "u.db")) as client:
         _admin(client)
         _issue(client, "real issue", priority="high")
-        assert client.get("/issues?priority=nope").json() == []
+        refused = client.get("/issues?priority=nope")
+        assert refused.status_code == 422
+        assert refused.json() == {
+            "detail": "priority must be one of: low, medium, high, urgent",
+            "code": "validation_error",
+        }
         body = client.get("/aegis/issues?priority=nope").text
         assert "real issue" not in body
 

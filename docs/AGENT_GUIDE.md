@@ -15,6 +15,11 @@ returns that same object with `isError` true, and `next` names the call that res
 it where one exists. The codes are listed in [AGENT_API.md](AGENT_API.md#refusal-codes).
 A failure that never reached Athena (a bad argument, say) is the same object, with
 `status_code` null and an MCP-side code such as `invalid_arguments`.
+Write bodies refuse a field they do not declare (422 `validation_error`), so a
+misspelt field is never silently dropped. A filter whose values are a closed set
+(`kind` on search, `priority` on the issue list, `state` on dispatches) refuses an
+unknown value with 422 and names the allowed ones; a configured name such as a
+status or label still just matches nothing.
 
 Every MCP tool answers one JSON object. A list is `{items, count, truncated, next}`:
 when `truncated` is true, call again with the arguments in `next` added, and stop when
@@ -250,10 +255,18 @@ HTTP 200.
 Each result has `state` of `met`, `not_met`, `not_assessed` or `inconclusive`. The
 report records what you say; it is not an independent assessment. Do not put
 credentials or tokens in it. The write is refused, and the refusal names only the field.
+A report that breaks the grammar is refused with every problem at once: 422
+`validation_error` with `violations`, a list of `{path, message}` such as
+`{"path":"results[0].state","message":"must be met, not_met, not_assessed, or inconclusive"}`
+(`$` is the report as a whole). No message repeats what you sent. The allowed keys
+and words are on each field of `complete_claim`'s input schema and in the OpenAPI
+document.
 
 Closing the issue is a separate call. MCP `update_issue(issue_id, status="done")` ·
-REST `PATCH /issues/{issue_id}` `{"status":"done"}`. If the operator gates closing this
-action, you get this refusal and must ask:
+REST `PATCH /issues/{issue_id}` `{"status":"done"}`. Status names are per project: the
+work-context packet lists them under `issue.project_statuses`, and a name the project
+lacks is a 422 whose `valid_statuses` lists the ones it has. If the operator gates
+closing this action, you get this refusal and must ask:
 
 ```json
 {"detail":"issue.close requires operator approval","code":"approval_required",

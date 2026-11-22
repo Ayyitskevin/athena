@@ -10,11 +10,14 @@ app-level handlers that write that code beside the unchanged ``detail``:
 - an unhandled exception, as a JSON 500.
 
 Only ``code`` is added. Status, ``detail`` and headers stay exactly as FastAPI's
-default handlers produced them.
+default handlers produced them. A refusal may carry further structured fields
+beside them (``extra``): the problems of a completion report, or the status names
+a project offers.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -32,13 +35,17 @@ VALIDATION_ERROR_CODE = "validation_error"
 #: Starlette's plain-text 500 always carried.
 INTERNAL_ERROR_CODE = "internal_error"
 INTERNAL_ERROR_DETAIL = "Internal Server Error"
+#: The two keys every refusal body owns; structured extras sit beside them.
+RESERVED_KEYS = frozenset({"detail", "code"})
 
 
 class Refusal(HTTPException):
     """An ``HTTPException`` that names its registered refusal code.
 
     ``code`` is keyword-only and required, so a call site cannot forget it;
-    ``scripts/check_refusal_codes.py`` also refuses a code the registry lacks."""
+    ``scripts/check_refusal_codes.py`` also refuses a code the registry lacks.
+    ``extra`` holds structured fields the body carries beside ``detail`` and
+    ``code``; it may not replace either."""
 
     def __init__(
         self,
@@ -47,9 +54,13 @@ class Refusal(HTTPException):
         headers: dict[str, str] | None = None,
         *,
         code: str,
+        extra: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(status_code=status_code, detail=detail, headers=headers)
+        if extra is not None and not RESERVED_KEYS.isdisjoint(extra):
+            raise ValueError("a refusal's extra fields may not replace detail or code")
         self.code = code
+        self.extra: dict[str, Any] = dict(extra or {})
 
 
 def code_of(exc: StarletteHTTPException) -> str:
@@ -65,7 +76,7 @@ def _http_exception(request: Request, exc: Exception) -> Response:
     if not is_body_allowed_for_status_code(exc.status_code):
         return Response(status_code=exc.status_code, headers=headers)
     return JSONResponse(
-        {"detail": exc.detail, "code": code_of(exc)},
+        {"detail": exc.detail, "code": code_of(exc), **getattr(exc, "extra", {})},
         status_code=exc.status_code,
         headers=headers,
     )

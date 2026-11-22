@@ -16,6 +16,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel
 
+from athena.core.request_models import RequestBody
 from athena.core import approval_commands, approvals, users
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
@@ -56,12 +57,12 @@ class ApprovalOut(BaseModel):
     created_at: str
 
 
-class ApprovalDecision(BaseModel):
+class ApprovalDecision(RequestBody):
     decision: Literal["approve", "reject"]
     note: str | None = None
 
 
-class ApprovalPolicyUpdate(BaseModel):
+class ApprovalPolicyUpdate(RequestBody):
     action_kind: str
 
 

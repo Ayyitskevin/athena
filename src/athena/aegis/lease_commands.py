@@ -60,7 +60,12 @@ MAX_COMPLETION_TEXT_ITEMS = 10
 MAX_COMPLETION_TEXT_CHARS = 500
 MAX_COMPLETION_SOURCE_CHARS = 200
 MAX_COMPLETION_REPORT_JSON_CHARS = 8_000
-COMPLETION_RESULT_STATES = frozenset({"met", "not_met", "not_assessed", "inconclusive"})
+# The report's closed sets. These tuples are their one owner: the command validates
+# against them, and the OpenAPI field descriptions and the complete_claim tool's
+# input schema are rendered from them (``report_field_docs``).
+COMPLETION_RESULT_STATES = ("met", "not_met", "not_assessed", "inconclusive")
+COMPLETION_RESULT_KEYS = ("condition", "state", "note")
+COMPLETION_RESULT_OPTIONAL = ("subject",)
 # The reporter's own one-word result, in the words this fleet's reviews already use. A closed
 # vocabulary, exact and case-sensitive, so a typo refuses instead of becoming a new category.
 # It is a fact the reporter asserts, never a score or a verification (docs/ANSWERABILITY.md).
@@ -70,19 +75,27 @@ COMPLETION_VERDICTS = ("PASS", "PASS-WITH-NOTES", "HOLD", "BLOCKED")
 COMPLETION_FINDING_SEVERITIES = ("P1", "P2", "P3")
 # "attachment" and "forge_event" point at a row Athena holds by id (an attachment, or an imported
 # forge commit / pull-request event); their ref is that id. Shape only: see completion_evidence.py.
-COMPLETION_EVIDENCE_KINDS = frozenset(
-    {"event", "handoff", "doc", "file", "manifest", "attachment", "forge_event"}
+COMPLETION_EVIDENCE_KINDS = (
+    "event",
+    "handoff",
+    "doc",
+    "file",
+    "manifest",
+    "attachment",
+    "forge_event",
 )
 COMPLETION_ID_REF_KINDS = frozenset({"attachment", "forge_event"})
+COMPLETION_EVIDENCE_KEYS = ("kind", "source", "ref", "scope")
 COMPLETION_EVIDENCE_OPTIONAL = ("digest", "bytes", "locator")
 MAX_COMPLETION_SUBJECTS = 10
 MAX_COMPLETION_SUBJECT_CHARS = 200
 MAX_COMPLETION_LOCATOR_CHARS = 500
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 _ROW_ID = re.compile(r"[1-9][0-9]{0,17}")
-COMPLETION_EVIDENCE_SCOPES = frozenset(
-    {"source-only", "synthetic", "actual-run", "unrun"}
-)
+COMPLETION_EVIDENCE_SCOPES = ("source-only", "synthetic", "actual-run", "unrun")
+#: The structured field a refused completion report carries: every problem, each
+#: as ``{"path", "message"}``. ``$`` is the report as a whole.
+REPORT_VIOLATIONS_FIELD = "violations"
 CLAIM_PRECONDITION_REQUIRED_DETAIL = (
     "If-Match with exactly one strong issue ETag is required to claim"
 )
@@ -460,20 +473,168 @@ def _normalize_handoff_token(handoff_token: object) -> str:
     return handoff_token
 
 
-def _completion_text(
-    value: object, *, name: str, maximum: int, blank: bool = False
-) -> str:
-    """Use handoff text validation, retaining the exact submitted reference/text."""
+def _text_problem(value: object, *, maximum: int, blank: bool = False) -> str | None:
+    """The handoff text rule a report string breaks, or None: the same checks as
+    :func:`_normalize_handoff_text`, reported instead of raised. A report keeps
+    the exact submitted text, so nothing here trims or rewrites it."""
     if not isinstance(value, str):
-        raise IssueCommandError("invalid", f"{name} must be a string")
+        return "must be a string"
     try:
         value.encode("utf-8")
-    except UnicodeEncodeError as exc:
+    except UnicodeEncodeError:
+        return "must be valid Unicode text"
+    if len(value) > maximum:
+        return f"must be at most {maximum} characters"
+    if any(ord(char) < 32 and char not in "\t\n\r" for char in value):
+        return "contains an unsupported control character"
+    if not blank and not value.strip():
+        return "must not be blank"
+    return None
+
+
+def _one_of(words: tuple[str, ...]) -> str:
+    return ", ".join(words[:-1]) + f", or {words[-1]}"
+
+
+def _keys_rule(required: tuple[str, ...], optional: tuple[str, ...]) -> str:
+    rule = f"must be an object with exactly {', '.join(required)}"
+    return rule + (f", plus optionally {', '.join(optional)}" if optional else "")
+
+
+def report_field_docs() -> dict[str, str]:
+    """One sentence per report field, rendered from the closed sets above. The
+    REST model's OpenAPI descriptions and the complete_claim tool's input schema
+    both publish these, so the words an agent reads are the words the command
+    checks. Documentation only: the command stays the validator."""
+    return {
+        "verdict": f"One of {_one_of(COMPLETION_VERDICTS)}; exact case.",
+        "findings": (
+            f"Counts keyed {', '.join(COMPLETION_FINDING_SEVERITIES)}: "
+            "non-negative integers, at least one key."
+        ),
+        "results": (
+            f"Up to {MAX_COMPLETION_RESULTS} objects with keys "
+            f"{', '.join(COMPLETION_RESULT_KEYS)} (optional "
+            f"{', '.join(COMPLETION_RESULT_OPTIONAL)}); state is "
+            f"{_one_of(COMPLETION_RESULT_STATES)}."
+        ),
+        "evidence": (
+            f"Up to {MAX_HANDOFF_EVIDENCE_ITEMS} objects with keys "
+            f"{', '.join(COMPLETION_EVIDENCE_KEYS)} (optional "
+            f"{', '.join(COMPLETION_EVIDENCE_OPTIONAL)}); kind is "
+            f"{_one_of(COMPLETION_EVIDENCE_KINDS)}; scope is "
+            f"{_one_of(COMPLETION_EVIDENCE_SCOPES)}."
+        ),
+    }
+
+
+class _Problems:
+    """The violations of one completion report, collected rather than raised one
+    at a time, each by field path. A message never quotes the rejected value."""
+
+    def __init__(self) -> None:
+        self.items: list[dict[str, str]] = []
+
+    def add(self, path: str, message: str) -> None:
+        self.items.append({"path": path, "message": message})
+
+    def text(
+        self, value: object, path: str, *, maximum: int, blank: bool = False
+    ) -> None:
+        problem = _text_problem(value, maximum=maximum, blank=blank)
+        if problem is not None:
+            self.add(path, problem)
+
+    def raise_any(self) -> None:
+        if not self.items:
+            return
+        lines = [
+            item["message"]
+            if item["path"] == "$"
+            else f"{item['path']} {item['message']}"
+            for item in self.items
+        ]
+        detail = (
+            lines[0]
+            if len(lines) == 1
+            else f"the completion report has {len(lines)} problems: " + "; ".join(lines)
+        )
         raise IssueCommandError(
-            "invalid", f"{name} must be valid Unicode text"
-        ) from exc
-    _normalize_handoff_text(value, name=name, maximum=maximum, required=not blank)
-    return value
+            "invalid",
+            detail,
+            extra={REPORT_VIOLATIONS_FIELD: list(self.items)},
+        )
+
+
+def _result_problems(problems: _Problems, label: str, item: dict) -> None:
+    if "state" in item and (
+        not isinstance(item["state"], str)
+        or item["state"] not in COMPLETION_RESULT_STATES
+    ):
+        problems.add(f"{label}.state", f"must be {_one_of(COMPLETION_RESULT_STATES)}")
+    if "condition" in item:
+        problems.text(
+            item["condition"], f"{label}.condition", maximum=MAX_COMPLETION_TEXT_CHARS
+        )
+    if "note" in item:
+        problems.text(
+            item["note"], f"{label}.note", maximum=MAX_COMPLETION_TEXT_CHARS, blank=True
+        )
+    if "subject" in item:
+        subject = item["subject"]
+        if (
+            not isinstance(subject, list)
+            or not subject
+            or len(subject) > MAX_COMPLETION_SUBJECTS
+        ):
+            problems.add(
+                f"{label}.subject",
+                f"must be an array of 1 to {MAX_COMPLETION_SUBJECTS} items naming "
+                "what was judged",
+            )
+        else:
+            for n, entry in enumerate(subject):
+                problems.text(
+                    entry,
+                    f"{label}.subject[{n}]",
+                    maximum=MAX_COMPLETION_SUBJECT_CHARS,
+                )
+
+
+def _evidence_problems(problems: _Problems, label: str, item: dict) -> None:
+    kind = item.get("kind")
+    if "kind" in item and (
+        not isinstance(kind, str) or kind not in COMPLETION_EVIDENCE_KINDS
+    ):
+        problems.add(f"{label}.kind", f"must be {_one_of(COMPLETION_EVIDENCE_KINDS)}")
+    if "scope" in item and (
+        not isinstance(item["scope"], str)
+        or item["scope"] not in COMPLETION_EVIDENCE_SCOPES
+    ):
+        problems.add(f"{label}.scope", f"must be {_one_of(COMPLETION_EVIDENCE_SCOPES)}")
+    if "source" in item:
+        problems.text(
+            item["source"], f"{label}.source", maximum=MAX_COMPLETION_SOURCE_CHARS
+        )
+    if "ref" in item:
+        ref = item["ref"]
+        ref_problem = _text_problem(ref, maximum=MAX_HANDOFF_EVIDENCE_ITEM_CHARS)
+        if ref_problem is not None:
+            problems.add(f"{label}.ref", ref_problem)
+        elif kind in COMPLETION_ID_REF_KINDS and not _ROW_ID.fullmatch(str(ref)):
+            problems.add(f"{label}.ref", f"must be the numeric id of the {kind} row")
+    if "digest" in item and (
+        not isinstance(item["digest"], str) or not _SHA256_HEX.fullmatch(item["digest"])
+    ):
+        problems.add(f"{label}.digest", "must be 64 lowercase hex characters (SHA-256)")
+    if "bytes" in item:
+        size = item["bytes"]
+        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+            problems.add(f"{label}.bytes", "must be a non-negative integer")
+    if "locator" in item:
+        problems.text(
+            item["locator"], f"{label}.locator", maximum=MAX_COMPLETION_LOCATOR_CHARS
+        )
 
 
 def _normalize_completion_report(
@@ -489,191 +650,106 @@ def _normalize_completion_report(
     """Bound advisory data without lookup, execution, or verification.
 
     ``verdict`` and ``findings`` are optional reporter assertions in closed vocabularies.
+    Every problem is collected and refused together, each by field path, in the
+    error's ``violations``; a message never repeats the rejected value.
 
     This grammar is reused on reads: credential refusal belongs only to the
     accepting write commands, so existing stored history remains readable.
     """
-    report: dict = {}
+    problems = _Problems()
     if usage is not None:
-        try:
-            report["usage"] = reported_usage.normalize_usage(usage)
-        except ValueError as exc:
-            raise IssueCommandError("invalid", str(exc)) from exc
-    if verdict is not None:
-        if not isinstance(verdict, str) or verdict not in COMPLETION_VERDICTS:
-            raise IssueCommandError(
-                "invalid", f"verdict must be one of {', '.join(COMPLETION_VERDICTS)}"
-            )
-        report["verdict"] = verdict
+        for path, rule in reported_usage.usage_problems(usage):
+            problems.add(path, rule)
+    if verdict is not None and (
+        not isinstance(verdict, str) or verdict not in COMPLETION_VERDICTS
+    ):
+        problems.add("verdict", f"must be one of {', '.join(COMPLETION_VERDICTS)}")
     if findings is not None:
         severities = ", ".join(COMPLETION_FINDING_SEVERITIES)
         if not isinstance(findings, dict) or not findings:
-            raise IssueCommandError(
-                "invalid",
-                f"findings must be an object with at least one of {severities}",
+            problems.add(
+                "findings", f"must be an object with at least one of {severities}"
             )
-        counts: dict = {}
-        for key, count in findings.items():
-            if key not in COMPLETION_FINDING_SEVERITIES:
-                raise IssueCommandError(
-                    "invalid", f"findings key {key!r} must be one of {severities}"
-                )
-            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
-                raise IssueCommandError(
-                    "invalid", f"findings.{key} must be a non-negative integer"
-                )
-            counts[key] = count
-        report["findings"] = counts
-    for name, raw, maximum in (
+        else:
+            if any(key not in COMPLETION_FINDING_SEVERITIES for key in findings):
+                problems.add("findings", f"has a key outside {severities}")
+            for key in COMPLETION_FINDING_SEVERITIES:
+                count = findings.get(key, 0)
+                if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                    problems.add(f"findings.{key}", "must be a non-negative integer")
+    lists = (
         ("results", results, MAX_COMPLETION_RESULTS),
         ("unfinished", unfinished, MAX_COMPLETION_TEXT_ITEMS),
         ("uncertainty", uncertainty, MAX_COMPLETION_TEXT_ITEMS),
         ("evidence", evidence, MAX_HANDOFF_EVIDENCE_ITEMS),
-    ):
+    )
+    for name, raw, maximum in lists:
         if raw is None:
             continue
         if not isinstance(raw, list) or len(raw) > maximum:
-            raise IssueCommandError(
-                "invalid", f"{name} must be an array of at most {maximum} items"
-            )
-        items: list = []
+            problems.add(name, f"must be an array of at most {maximum} items")
+            continue
         for index, item in enumerate(raw):
             label = f"{name}[{index}]"
             if name in {"unfinished", "uncertainty"}:
-                items.append(
-                    _completion_text(
-                        item, name=label, maximum=MAX_COMPLETION_TEXT_CHARS
-                    )
-                )
+                problems.text(item, label, maximum=MAX_COMPLETION_TEXT_CHARS)
                 continue
-            keys = (
-                {"condition", "state", "note"}
+            keys, optional = (
+                (COMPLETION_RESULT_KEYS, COMPLETION_RESULT_OPTIONAL)
                 if name == "results"
-                else {"kind", "source", "ref", "scope"}
+                else (COMPLETION_EVIDENCE_KEYS, COMPLETION_EVIDENCE_OPTIONAL)
             )
-            optional = (
-                {"subject"} if name == "results" else set(COMPLETION_EVIDENCE_OPTIONAL)
-            )
-            if not isinstance(item, dict) or not (keys <= set(item) <= keys | optional):
-                suffix = (
-                    f", plus optionally {', '.join(sorted(optional))}"
-                    if optional
-                    else ""
-                )
-                raise IssueCommandError(
-                    "invalid",
-                    f"{label} must contain exactly {', '.join(sorted(keys))}{suffix}",
-                )
+            if not isinstance(item, dict):
+                problems.add(label, _keys_rule(keys, optional))
+                continue
+            if not (set(keys) <= set(item) <= set(keys) | set(optional)):
+                problems.add(label, _keys_rule(keys, optional))
             if name == "results":
-                if (
-                    not isinstance(item["state"], str)
-                    or item["state"] not in COMPLETION_RESULT_STATES
-                ):
-                    raise IssueCommandError(
-                        "invalid",
-                        f"{label}.state must be met, not_met, not_assessed, or inconclusive",
-                    )
-                normalized: dict = {
-                    "condition": _completion_text(
-                        item["condition"],
-                        name=f"{label}.condition",
-                        maximum=MAX_COMPLETION_TEXT_CHARS,
-                    ),
-                    "state": item["state"],
-                    "note": _completion_text(
-                        item["note"],
-                        name=f"{label}.note",
-                        maximum=MAX_COMPLETION_TEXT_CHARS,
-                        blank=True,
-                    ),
-                }
-                if "subject" in item:
-                    subject = item["subject"]
-                    if (
-                        not isinstance(subject, list)
-                        or not subject
-                        or len(subject) > MAX_COMPLETION_SUBJECTS
-                    ):
-                        raise IssueCommandError(
-                            "invalid",
-                            f"{label}.subject must be an array of 1 to "
-                            f"{MAX_COMPLETION_SUBJECTS} items naming what was judged",
-                        )
-                    normalized["subject"] = [
-                        _completion_text(
-                            entry,
-                            name=f"{label}.subject[{n}]",
-                            maximum=MAX_COMPLETION_SUBJECT_CHARS,
-                        )
-                        for n, entry in enumerate(subject)
-                    ]
-                items.append(normalized)
+                _result_problems(problems, label, item)
             else:
-                if (
-                    not isinstance(item["kind"], str)
-                    or item["kind"] not in COMPLETION_EVIDENCE_KINDS
-                ):
-                    raise IssueCommandError(
-                        "invalid",
-                        f"{label}.kind must be event, handoff, doc, file, manifest, "
-                        "attachment, or forge_event",
-                    )
-                if (
-                    not isinstance(item["scope"], str)
-                    or item["scope"] not in COMPLETION_EVIDENCE_SCOPES
-                ):
-                    raise IssueCommandError(
-                        "invalid",
-                        f"{label}.scope must be source-only, synthetic, actual-run, or unrun",
-                    )
-                normalized = {
-                    "kind": item["kind"],
-                    "source": _completion_text(
-                        item["source"],
-                        name=f"{label}.source",
-                        maximum=MAX_COMPLETION_SOURCE_CHARS,
-                    ),
-                    "ref": _completion_text(
-                        item["ref"],
-                        name=f"{label}.ref",
-                        maximum=MAX_HANDOFF_EVIDENCE_ITEM_CHARS,
-                    ),
-                    "scope": item["scope"],
-                }
-                if item["kind"] in COMPLETION_ID_REF_KINDS and not _ROW_ID.fullmatch(
-                    normalized["ref"]
-                ):
-                    raise IssueCommandError(
-                        "invalid",
-                        f"{label}.ref must be the numeric id of the {item['kind']} row",
-                    )
-                if "digest" in item:
-                    digest = item["digest"]
-                    if not isinstance(digest, str) or not _SHA256_HEX.fullmatch(digest):
-                        raise IssueCommandError(
-                            "invalid",
-                            f"{label}.digest must be 64 lowercase hex characters (SHA-256)",
-                        )
-                    normalized["digest"] = digest
-                if "bytes" in item:
-                    size = item["bytes"]
-                    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
-                        raise IssueCommandError(
-                            "invalid", f"{label}.bytes must be a non-negative integer"
-                        )
-                    normalized["bytes"] = size
-                if "locator" in item:
-                    normalized["locator"] = _completion_text(
-                        item["locator"],
-                        name=f"{label}.locator",
-                        maximum=MAX_COMPLETION_LOCATOR_CHARS,
-                    )
-                items.append(normalized)
-        if name == "evidence":
-            # The same item-count, text/control and encoded-ref envelope as yield.
-            # Validation trims there; retain the original bytes in this report.
-            _normalize_handoff_evidence([item["ref"] for item in items])
-        report[name] = items
+                _evidence_problems(problems, label, item)
+    problems.raise_any()
+    if isinstance(evidence, list) and evidence:
+        # The same item-count, text/control and encoded-ref envelope as yield.
+        # Validation trims there; retain the original bytes in this report.
+        try:
+            _normalize_handoff_evidence([item["ref"] for item in evidence])
+        except IssueCommandError:
+            # Every item passed above, so only the encoded size can fail here.
+            problems.add(
+                "evidence",
+                f"refs must encode to at most {MAX_HANDOFF_EVIDENCE_JSON_CHARS} "
+                "characters together",
+            )
+            problems.raise_any()
+    report: dict = {}
+    if usage is not None:
+        report["usage"] = reported_usage.normalize_usage(usage)
+    if verdict is not None:
+        report["verdict"] = verdict
+    if findings is not None:
+        assert isinstance(findings, dict)
+        report["findings"] = dict(findings)
+    for name, raw, _maximum in lists:
+        if raw is None:
+            continue
+        assert isinstance(raw, list)
+        if name in {"unfinished", "uncertainty"}:
+            report[name] = list(raw)
+            continue
+        fields = (
+            COMPLETION_RESULT_KEYS + COMPLETION_RESULT_OPTIONAL
+            if name == "results"
+            else COMPLETION_EVIDENCE_KEYS + COMPLETION_EVIDENCE_OPTIONAL
+        )
+        report[name] = [
+            {
+                field: list(item[field]) if field == "subject" else item[field]
+                for field in fields
+                if field in item
+            }
+            for item in raw
+        ]
     if not report:
         return None
     if (
@@ -684,10 +760,12 @@ def _normalize_completion_report(
         )
         > MAX_COMPLETION_REPORT_JSON_CHARS
     ):
-        raise IssueCommandError(
-            "invalid",
-            f"encoded reported completion must be at most {MAX_COMPLETION_REPORT_JSON_CHARS} characters",
+        problems.add(
+            "$",
+            "the encoded reported completion must be at most "
+            f"{MAX_COMPLETION_REPORT_JSON_CHARS} characters",
         )
+        problems.raise_any()
     return report
 
 

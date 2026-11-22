@@ -4,7 +4,9 @@ Registered by mcp.server.build_server."""
 
 from __future__ import annotations
 
-from pydantic import SkipValidation, ValidationError
+from typing import Annotated
+
+from pydantic import Field, SkipValidation, ValidationError
 
 from athena.aegis import lease_commands
 from athena.aegis.review_models import CandidateSubmission, ReviewCandidateId
@@ -29,6 +31,19 @@ from athena.mcp.server import (
     ProjectId,
     SprintId,
 )
+
+# The completion report's closed sets, published in complete_claim's input
+# schema from the command's own constants. Descriptions only: the command
+# validates, and refuses every problem at once by field path.
+_REPORT_DOCS = lease_commands.report_field_docs()
+ReportResults = Annotated[list[dict] | None, Field(description=_REPORT_DOCS["results"])]
+ReportEvidence = Annotated[
+    list[dict] | None, Field(description=_REPORT_DOCS["evidence"])
+]
+ReportVerdict = Annotated[str | None, Field(description=_REPORT_DOCS["verdict"])]
+ReportFindings = Annotated[
+    dict[str, int] | None, Field(description=_REPORT_DOCS["findings"])
+]
 
 
 def register_work_tools(tool, mutation_tool, client) -> None:
@@ -292,12 +307,12 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         issue_id: int,
         generation: LeaseGeneration,
         idempotency_key: IdempotencyKey | None = None,
-        results: list[dict] | None = None,
+        results: ReportResults = None,
         unfinished: list[str] | None = None,
         uncertainty: list[str] | None = None,
-        evidence: list[dict] | None = None,
-        verdict: str | None = None,
-        findings: dict[str, int] | None = None,
+        evidence: ReportEvidence = None,
+        verdict: ReportVerdict = None,
+        findings: ReportFindings = None,
         usage: dict | None = None,
         candidate_submission: SkipValidation[CandidateSubmission | None] = None,
         review_candidate_id: ReviewCandidateId | None = None,
@@ -312,15 +327,14 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         an open claim handoff answers 409 until you resume it.
 
         results, unfinished, uncertainty and evidence are optional advisory
-        reports, never success, approval or authority. results is up to 20
-        {condition,state,note} objects; state is met, not_met, not_assessed or
-        inconclusive. not_assessed means the condition was not evaluated; for
+        reports, never success, approval or authority (their shapes are on each
+        argument). not_assessed means the condition was not evaluated; for
         example, an integration check was never run. inconclusive means an
         evaluation was attempted but did not establish met or not_met; for
         example, an integration check ran but timed out before producing a
-        result. Optional verdict (PASS, PASS-WITH-NOTES, HOLD, BLOCKED),
-        findings (P1/P2/P3 counts), and usage are reported by the agent, not
-        verified by Athena. Usage is not metered. Shapes, limits and the credential guard:
+        result. Optional verdict, findings and usage are reported by the agent,
+        not verified by Athena. Usage is not metered. A refused report lists
+        every problem under violations. Limits and the credential guard:
         docs/CLOSEOUT_RECIPE.md.
 
         Optionally submit an immutable candidate with candidate_submission or

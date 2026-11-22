@@ -640,6 +640,13 @@ def build_work_context(
                 "created_at": public_issue["created_at"],
                 "archived_at": public_issue["archived_at"],
                 "labels": public_issue["labels"],
+                # The statuses this issue may be set to: its project's ordered
+                # menu (the built-in set for a backlog issue). update_issue
+                # refuses any other name and lists these in valid_statuses.
+                "project_statuses": [
+                    {"name": row["name"], "category": row["category"]}
+                    for row in statuses.list_statuses(conn, issue["project_id"])
+                ],
             },
             "issue_etag": issue_etag,
             "seat_slug": fleet_roster.seat_slug_for_email(

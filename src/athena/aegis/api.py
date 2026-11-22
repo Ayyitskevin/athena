@@ -21,6 +21,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, SkipValidation
 
+from athena.core.request_models import RequestBody
 from athena import config
 from athena.aegis import (
     comment_commands,
@@ -96,7 +97,7 @@ projects_router = APIRouter(prefix="/projects", tags=["aegis"])
 Priority = Literal["low", "medium", "high", "urgent"]
 
 
-class IssueCreate(BaseModel):
+class IssueCreate(RequestBody):
     title: str
     body: str = ""
     # None => the target project's first (default) status. A given status is
@@ -106,7 +107,7 @@ class IssueCreate(BaseModel):
     project_id: int | None = None
 
 
-class IssueUpdate(BaseModel):
+class IssueUpdate(RequestBody):
     # A partial edit: send any subset. Unset fields are left unchanged. priority is
     # constrained to its lifecycle when present; status is validated against the
     # issue's final project's set in the command. project_id and sprint_id may be
@@ -124,12 +125,12 @@ class IssueUpdate(BaseModel):
     override_blocked_close: StrictBool = False
 
 
-class AssigneeUpdate(BaseModel):
+class AssigneeUpdate(RequestBody):
     # None clears the assignee (unassign); an int assigns to that user.
     assignee_id: int | None
 
 
-class SprintAssign(BaseModel):
+class SprintAssign(RequestBody):
     # None moves the issue to the backlog; an int puts it in that sprint (which must
     # belong to the issue's project).
     sprint_id: int | None
@@ -140,7 +141,7 @@ class ProjectUpdate(BaseModel):
     project_id: int | None
 
 
-class BulkUpdate(BaseModel):
+class BulkUpdate(RequestBody):
     # Apply the same triage change to many issues at once. Only the fields actually
     # sent are touched (model_dump(exclude_unset=True) in the handler), so a sent
     # assignee_id/project_id/sprint_id null clears that relationship — distinct
@@ -172,7 +173,7 @@ class BulkUpdateOut(BaseModel):
     results: list[BulkResult]
 
 
-class ParentUpdate(BaseModel):
+class ParentUpdate(RequestBody):
     # None clears the parent (top-level); an int nests the issue under that issue.
     parent_id: int | None
 
@@ -183,7 +184,7 @@ class LabelOut(BaseModel):
     color: str
 
 
-class LabelAttach(BaseModel):
+class LabelAttach(RequestBody):
     label_id: int
 
 
@@ -249,7 +250,7 @@ class LinkOut(BaseModel):
     exists: bool
 
 
-class LinkCreate(BaseModel):
+class LinkCreate(RequestBody):
     # The other issue, addressed by ref — numeric id ("15") or project key
     # ("ATH-15"), the same addressing the read endpoints accept. relation is the
     # user-facing form; "blocked_by" is stored as the inverse "blocks" edge.
@@ -272,7 +273,7 @@ class IssueLinksOut(BaseModel):
     relates: list[IssueLinkSummary] = []
 
 
-class CommentCreate(BaseModel):
+class CommentCreate(RequestBody):
     body: str
 
 
@@ -388,8 +389,12 @@ def index(
             "Mutually exclusive with the structured filters below."
         ),
     ),
+    # A project's statuses are configured, so an unknown one matches nothing;
+    # priorities are a closed set, so an unknown one is refused.
     status: str | None = None,
-    priority: str | None = None,
+    priority: str | None = Query(
+        None, description=f"one of {', '.join(issues.PRIORITIES)}"
+    ),
     assignee: int | None = Query(None, ge=0, le=issues.MAX_SQLITE_INTEGER),
     label: str | None = None,
     search: str | None = None,
@@ -442,6 +447,12 @@ def index(
         except issue_query.QueryCompileError as exc:
             raise _query_refusal(exc, exc.atom) from exc
         return _with_labels_many(conn, rows)
+    if priority is not None and priority not in issues.PRIORITIES:
+        raise Refusal(
+            status_code=422,
+            detail=f"priority must be one of: {', '.join(issues.PRIORITIES)}",
+            code="validation_error",
+        )
     # Optional filters, same semantics the web list uses (one shared path in
     # issues.list_issues). A label name is resolved to issue ids by labels.py so
     # issues.py stays decoupled from the join; an unknown label matches nothing.
@@ -528,8 +539,12 @@ class IssueSearchHit(BaseModel):
 @router.get("/search", response_model=list[IssueSearchHit])
 def search_issues_endpoint(
     q: str,
+    # A project's statuses are configured, so an unknown one matches nothing;
+    # priorities are a closed set, so an unknown one is refused.
     status: str | None = None,
-    priority: str | None = None,
+    priority: str | None = Query(
+        None, description=f"one of {', '.join(issues.PRIORITIES)}"
+    ),
     assignee: int | None = Query(None, ge=0, le=issues.MAX_SQLITE_INTEGER),
     label: str | None = None,
     project: str | None = None,
@@ -649,7 +664,7 @@ def issue_unlinked_mentions(
     )
 
 
-class LinkMentionIn(BaseModel):
+class LinkMentionIn(RequestBody):
     # Which target to link to. The SOURCE is the issue in the path — this endpoint
     # edits that issue's body.
     target_kind: str
@@ -1365,14 +1380,20 @@ class LeaseGenerationIn(BaseModel):
     generation: str | None = None
 
 
+_REPORT_DOCS = lease_commands.report_field_docs()
+
+
 class CompleteClaimIn(LeaseGenerationIn):
-    # The shared command owns the bounded report grammar and its invalid error.
-    verdict: object | None = None
-    findings: object | None = None
-    results: object | None = None
+    # The shared command owns the bounded report grammar and its invalid error,
+    # which lists every problem by field path. The descriptions publish the
+    # grammar's closed sets from the command's own constants; they validate
+    # nothing, so the fields stay `object` and FastAPI never echoes a value.
+    verdict: object | None = Field(default=None, description=_REPORT_DOCS["verdict"])
+    findings: object | None = Field(default=None, description=_REPORT_DOCS["findings"])
+    results: object | None = Field(default=None, description=_REPORT_DOCS["results"])
     unfinished: object | None = None
     uncertainty: object | None = None
-    evidence: object | None = None
+    evidence: object | None = Field(default=None, description=_REPORT_DOCS["evidence"])
     usage: object | None = None
     # Keep the shared OpenAPI shapes, but let the command validate raw input.
     # FastAPI's default validation errors echo rejected input (including secrets
@@ -1393,6 +1414,12 @@ class CompleteClaimIn(LeaseGenerationIn):
     "/{issue_id}/complete",
     response_model=CompleteClaimOut,
     response_model_exclude_unset=True,
+    description=(
+        "Release your lease; the issue's status is unchanged. The optional "
+        "report fields are described on the request body. A report that breaks "
+        "the grammar answers 422 with every problem at once under `violations`, "
+        "each `{path, message}` by field path; no message repeats a value."
+    ),
 )
 def complete_issue_claim(
     issue_id: RowIdPath,

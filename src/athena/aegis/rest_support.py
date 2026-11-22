@@ -73,6 +73,7 @@ def issue_command_http_error(
         status_code=issue_command_status(exc),
         detail=exc.detail,
         code=issue_command_code(exc),
+        extra=exc.extra,
     )
 
 

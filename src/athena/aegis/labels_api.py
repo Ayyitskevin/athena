@@ -10,8 +10,8 @@ from __future__ import annotations
 import sqlite3
 
 from fastapi import Depends
-from pydantic import BaseModel
 
+from athena.core.request_models import RequestBody
 from athena.aegis.api import LabelOut, labels_router
 from athena.core import label_commands, labels
 from athena.core.deps import get_conn
@@ -35,7 +35,7 @@ CODE_BY_KIND: dict[str, str] = {
 }
 
 
-class LabelCreate(BaseModel):
+class LabelCreate(RequestBody):
     name: str
     color: str = "#6b7280"
 

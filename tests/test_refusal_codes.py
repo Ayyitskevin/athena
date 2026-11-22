@@ -456,7 +456,8 @@ def test_command_kind_refusals_from_each_module_carry_codes(world):
         422,
         "validation_error",
     )
-    assert set(bad_status) == {"detail", "code"}
+    assert set(bad_status) == {"detail", "code", "valid_statuses"}
+    assert bad_status["valid_statuses"] == ["open", "in_progress", "done"]
     # aegis: a sprint command on a missing sprint
     _assert_coded(client.post("/sprints/9999/start", headers=H1), 404, "not_found")
     # mentor: the space command's `not_found` kind

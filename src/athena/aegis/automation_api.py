@@ -19,6 +19,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, StrictInt
 
+from athena.core.request_models import RequestBody
 from athena.aegis import automation, automation_commands
 from athena.core.deps import get_conn
 from athena.core.ids import RowIdPath
@@ -76,7 +77,7 @@ class RuleOut(BaseModel):
     schedule_status: str
 
 
-class RuleCreate(BaseModel):
+class RuleCreate(RequestBody):
     name: str
     trigger_verb: str
     action_type: str
@@ -91,7 +92,7 @@ class RuleCreate(BaseModel):
     target_kind: str = "issue"
 
 
-class RuleUpdate(BaseModel):
+class RuleUpdate(RequestBody):
     # Pause (false) or resume (true) a rule WITHOUT deleting it — the pause twin of a
     # webhook's active flag. The trigger/action are fixed at creation: to change the
     # logic, delete and recreate (so an edit can never half-rewrite a live rule).

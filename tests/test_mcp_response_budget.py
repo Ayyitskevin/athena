@@ -110,7 +110,7 @@ def _seed(admin: TestClient) -> dict[str, Any]:
 
     # An exact candidate for request_candidate_review: the admin submits it on
     # a build issue; Ray, delegated on a review issue, is the eligible reviewer.
-    build = issue("build", "build it", assignee_id=1)
+    build = issue("build", "build it")
     etag = admin.get(f"/issues/{build['id']}").headers["ETag"]
     held = ok(
         admin.post(f"/issues/{build['id']}/claim", json={}, headers={"If-Match": etag}),

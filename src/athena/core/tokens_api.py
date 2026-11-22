@@ -18,6 +18,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 
+from athena.core.request_models import RequestBody
 from athena.core import token_commands, tokens
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
@@ -44,7 +45,7 @@ CODE_BY_KIND: dict[str, str] = {
 TokenScope = Literal["read", "issue:write", "docs:write", "admin"]
 
 
-class TokenCreate(BaseModel):
+class TokenCreate(RequestBody):
     name: str
     # REQUIRED in effect: omitting scopes is a 422 with a helpful message (the old
     # behavior silently minted ADMIN — a fail-open default that inverted least

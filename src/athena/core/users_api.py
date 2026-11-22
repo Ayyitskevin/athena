@@ -14,6 +14,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field
 
+from athena.core.request_models import RequestBody
 from athena import config
 from athena.core import (
     agent_commands,
@@ -128,7 +129,7 @@ class UserPasswordReset(BaseModel):
     password: str
 
 
-class BudgetUpdate(BaseModel):
+class BudgetUpdate(RequestBody):
     window: Literal["hour", "day"]
     action_limit: int
 
@@ -156,7 +157,7 @@ class UserOut(BaseModel):
     removed_at: str | None = None
 
 
-class UserPausedUpdate(BaseModel):
+class UserPausedUpdate(RequestBody):
     paused: bool
 
 
@@ -179,7 +180,7 @@ class RemoveOut(BaseModel):
     revoked_token_count: int
 
 
-class AgentOnboard(BaseModel):
+class AgentOnboard(RequestBody):
     name: str
     # REQUIRED: an agent's first credential must say what it may do — the same
     # least-privilege rule as POST /tokens (no omitted-scopes fail-open).

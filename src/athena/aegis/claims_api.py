@@ -13,6 +13,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+from athena.core.request_models import RequestBody
 from athena.aegis import (
     claim_handoffs,
     contributors,
@@ -127,7 +128,7 @@ class LeaseOut(BaseModel):
     open_claim_handoff: ClaimHandoffOut | None = None
 
 
-class ClaimIn(BaseModel):
+class ClaimIn(RequestBody):
     # How long the lease should hold before it must be renewed. Omitted → the server
     # default. Bounded by the command to [MIN, MAX] lease seconds.
     lease_seconds: int | None = None
@@ -303,7 +304,7 @@ class DeclineDelegationIn(BaseModel):
     generation: str | None = None
 
 
-class ContributorAdd(BaseModel):
+class ContributorAdd(RequestBody):
     user_id: int
 
 

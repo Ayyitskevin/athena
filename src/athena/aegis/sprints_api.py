@@ -15,6 +15,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from athena.core.request_models import RequestBody
 from athena.aegis import projects, sprint_commands, sprints
 from athena.core import access
 from athena.core.ids import RowIdPath
@@ -51,14 +52,14 @@ class SprintOut(BaseModel):
     created_at: str
 
 
-class SprintCreate(BaseModel):
+class SprintCreate(RequestBody):
     name: str
     goal: str = ""
     start_date: str | None = None
     end_date: str | None = None
 
 
-class SprintEdit(BaseModel):
+class SprintEdit(RequestBody):
     # Partial edit; only fields actually sent are written (exclude_unset). A date may
     # be sent as null to clear it. State is not edited here — it moves via start/complete.
     name: str | None = None

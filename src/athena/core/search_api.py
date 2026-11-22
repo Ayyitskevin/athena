@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from athena.core import search
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/search", tags=["core"])
 
@@ -43,7 +44,10 @@ class SearchHit(BaseModel):
 @router.get("", response_model=list[SearchHit])
 def query(
     q: str = Query(..., description="free text; prefix-matched, terms AND together"),
-    kind: str | None = Query(None, description="narrow to 'issue' or 'page'"),
+    kind: str | None = Query(
+        None,
+        description=f"narrow to one kind: one of {', '.join(search.KINDS)}",
+    ),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(
         0,
@@ -57,5 +61,12 @@ def query(
     # An empty/whitespace q legitimately returns [] (the search layer handles it);
     # no need to 422 — a blank search box is "no results", not an error. The actor
     # gates the hits: a private project's issues / a private space's pages never
-    # surface to someone who can't see them (admins see all).
+    # surface to someone who can't see them (admins see all). An unknown kind is
+    # refused: it is a closed set, so a typo must not look like "no results".
+    if kind is not None and kind not in search.KINDS:
+        raise Refusal(
+            status_code=422,
+            detail=f"kind must be one of: {', '.join(search.KINDS)}",
+            code="validation_error",
+        )
     return search.search(conn, q, kind=kind, limit=limit, offset=offset, actor=actor)

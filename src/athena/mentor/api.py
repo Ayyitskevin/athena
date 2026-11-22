@@ -20,6 +20,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from athena.core.request_models import RequestBody
 from athena import config
 from athena.core import (
     access,
@@ -145,7 +146,7 @@ class MemberOut(BaseModel):
     added_at: str
 
 
-class PageCreate(BaseModel):
+class PageCreate(RequestBody):
     title: str
     body: str = ""
     parent_id: int | None = None
@@ -160,7 +161,7 @@ class LabelOut(BaseModel):
     color: str
 
 
-class LabelAttach(BaseModel):
+class LabelAttach(RequestBody):
     label_id: int
 
 
@@ -181,7 +182,7 @@ class PageOut(BaseModel):
     labels: list[LabelOut] = []
 
 
-class PageUpdate(BaseModel):
+class PageUpdate(RequestBody):
     title: str | None = None
     body: str | None = None
 
@@ -214,7 +215,7 @@ class LinkOut(BaseModel):
     exists: bool
 
 
-class LinkMentionIn(BaseModel):
+class LinkMentionIn(RequestBody):
     # Which target to link the mention to. The SOURCE is the page in the path —
     # this endpoint edits that page — so only the target needs naming.
     target_kind: str

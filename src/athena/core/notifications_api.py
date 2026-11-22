@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from athena.core.request_models import RequestBody
 from athena.core import notifications
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
@@ -45,7 +46,7 @@ class UnreadCount(BaseModel):
     count: int
 
 
-class WatchCreate(BaseModel):
+class WatchCreate(RequestBody):
     target_kind: str
     target_id: int
 
@@ -132,7 +133,7 @@ class WatchPreferenceOut(BaseModel):
     updated_at: str
 
 
-class WatchPreferenceUpdate(BaseModel):
+class WatchPreferenceUpdate(RequestBody):
     priority: Literal["low", "medium", "high", "urgent"] | None = None
     mute_until: (
         Annotated[str, Field(max_length=notifications.MAX_MUTE_UNTIL_CHARS)] | None

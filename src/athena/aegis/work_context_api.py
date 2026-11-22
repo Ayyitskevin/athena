@@ -39,6 +39,11 @@ class LabelOut(BaseModel):
     color: str
 
 
+class ProjectStatusOut(BaseModel):
+    name: str
+    category: Literal["todo", "doing", "done"]
+
+
 class IssueSummaryOut(BaseModel):
     id: int
     key: str | None
@@ -55,6 +60,9 @@ class IssueSummaryOut(BaseModel):
     created_at: str
     archived_at: str | None
     labels: list[LabelOut]
+    # The status names this issue may be set to, in its project's order, with
+    # their categories. A write naming any other is a 422 listing these names.
+    project_statuses: list[ProjectStatusOut]
 
 
 class RelatedIssueOut(BaseModel):

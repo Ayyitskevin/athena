@@ -54,6 +54,10 @@ _SOURCE: dict[str, _SourceSpec] = {
     "page_comment": {"table": "page_comments", "title": None, "body": "body"},
 }
 
+#: Every kind a hit can be, and so every value ``kind=`` may narrow to. A closed
+#: set: the search route refuses any other value rather than matching nothing.
+KINDS: tuple[str, ...] = tuple(_SOURCE)
+
 # Comment kinds → the parent (kind, table, foreign-key column) the hit resolves to for its
 # title, context, and link. A comment has no address of its own in the UI; it is read and
 # linked through the issue/page it hangs off.
@@ -311,7 +315,8 @@ def search(
     with the title column weighted above the body, so a title match outranks a
     body-only match. An empty/whitespace query returns [] (a search box with no input
     shows nothing, it does not dump the table). `kind` optionally narrows to one side
-    ('issue' | 'page'); an unknown kind simply matches nothing. `limit`/`offset` page
+    (one of KINDS); an unknown kind matches nothing here, and the REST route refuses it
+    first. `limit`/`offset` page
     the ranked result set, so a caller can fetch one window at a time.
 
     `ids` optionally restricts the hits to these source ids — the generic hook that
