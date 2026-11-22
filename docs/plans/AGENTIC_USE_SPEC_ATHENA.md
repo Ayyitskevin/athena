@@ -9,9 +9,12 @@ landed in PR #466 and its results are under "Wave 0 results" below. Wave 0b
 (A2, under D3) landed in PR #467; its rule is recorded in
 [its own decision record](../decisions/2026-11-22-ready-rule-awaiting-decision.md).
 Wave 1 (A4 to A10, A15b, A16 and A17) landed in PR #468 and its results are
-under "Wave 1 results" below. Wave 2 (B2 to B5, B6a and B7 to B10) is built in
+under "Wave 1 results" below. Wave 2 (B2 to B5, B6a and B7 to B10) landed in
 PR #469 and its results are under "Wave 2 results". Waves 3 and 4 are not
-built; they remain proposals for when to build, not whether the design holds.
+built and are no longer scheduled here: their requirements (C4 to C11, A11 to
+A14, B6b and B11) are carried, with their IDs, into
+[ATHENA_IN_USE_SPEC.md](ATHENA_IN_USE_SPEC.md), which re-measured each at
+`0b42d40`.
 Several requirements change or extend an earlier accepted decision; each says
 so and names the decision it relies on under "Decisions for the owner".
 Evidence: [reports/repo-review-2026-11-21.md](reports/repo-review-2026-11-21.md).
@@ -657,8 +660,8 @@ requirement on the branch that carries this document.
 | 0b. The pickup loop | A2 | D3 |
 | 1. The agent contract, executed | A4 to A10, A15b, A16, A17 | D2 |
 | 2. The builder's workplace | B2 to B5, B6a, B7 to B10 | D8 |
-| 3. The fleet | C4 to C9, A11 to A14 | D4, D5, D6, D11, D12 |
-| 4. Parity, pruning, one board | C10, C11, B6b, B11 | D7, D9, D10 |
+| 3. The fleet | C4 to C9, A11 to A14. Carried into [ATHENA_IN_USE_SPEC.md](ATHENA_IN_USE_SPEC.md). | D4, D5, D6, D11, D12 |
+| 4. Parity, pruning, one board | C10, C11, B6b, B11. Carried into the same document. | D7, D9, D10 |
 
 Wave 0 is small and should not wait for the rest to be accepted. It needs no
 product decision except A3's one-time cursor repair. C1 as scoped restores a
