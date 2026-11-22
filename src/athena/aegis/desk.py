@@ -103,7 +103,7 @@ def _events_since(
     return count, False
 
 
-def _latest_event_id(conn: sqlite3.Connection, *, actor: dict) -> int | None:
+def latest_visible_event_id(conn: sqlite3.Connection, *, actor: dict) -> int | None:
     """The newest event id this actor can see — the value a fully-drained
     reader would advance its cursor to. Null on an empty (or fully hidden)
     trail, which is the honest answer: there is nothing to acknowledge."""
@@ -362,7 +362,7 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
             "events_since_cursor_capped": since_capped,
             # Where a fully-drained reader would advance to. Drain GET /events
             # from `cursor.after_id`, then acknowledge this.
-            "latest_visible_event_id": _latest_event_id(conn, actor=actor),
+            "latest_visible_event_id": latest_visible_event_id(conn, actor=actor),
         },
         "office": office.build_office(
             conn,

@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from athena.aegis import desk_commands, operator_since, ready_queue
@@ -25,6 +26,22 @@ def _refuse(exc: desk_commands.DeskCommandError) -> HTTPException:
     return HTTPException(
         status_code=desk_commands.STATUS_BY_KIND.get(exc.kind, 400),
         detail=exc.detail,
+    )
+
+
+def _refusal_response(exc: desk_commands.DeskCommandError) -> JSONResponse:
+    """A refusal that carries a machine code, with the fields it names.
+
+    ``cursor_ahead`` adds the newest event id the caller can see — the highest
+    value it may pass — so an agent can correct the call without another read.
+    """
+    return JSONResponse(
+        status_code=desk_commands.STATUS_BY_KIND.get(exc.kind, 400),
+        content={
+            "detail": exc.detail,
+            "code": exc.code,
+            "latest_visible_event_id": exc.latest_visible_event_id,
+        },
     )
 
 
@@ -96,7 +113,7 @@ def advance_cursor(
     # included. Shipped briefly on current_actor; this closes that.
     actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> dict:
+) -> dict | JSONResponse:
     # No idempotency-key plumbing: advancing to a value you already hold is a
     # no-op that returns current state, and advancing below it is refused, so
     # a retry is safe by construction rather than by receipt.
@@ -105,4 +122,6 @@ def advance_cursor(
             conn, actor=actor, after_id=payload.after_id, name=desk_cursors.DESK_CURSOR
         )
     except desk_commands.DeskCommandError as exc:
+        if exc.code is not None:
+            return _refusal_response(exc)
         raise _refuse(exc) from exc

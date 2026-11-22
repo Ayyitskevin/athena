@@ -779,9 +779,13 @@ def test_the_command_guards_below_the_transport(tmp_path):
         with pytest.raises(desk_commands.DeskCommandError) as unknown:
             desk_commands.advance_cursor(conn, actor=actor, after_id=5, name="nope")
         assert unknown.value.kind == "invalid"
-        desk_commands.advance_cursor(conn, actor=actor, after_id=5)
+        # A real position: an id past the newest event is its own refusal
+        # (cursor_ahead, tests/test_desk_cursor_ahead.py).
+        newest = conn.execute("SELECT MAX(id) FROM activity").fetchone()[0]
+        assert newest >= 2
+        desk_commands.advance_cursor(conn, actor=actor, after_id=newest)
         with pytest.raises(desk_commands.DeskCommandError) as back:
-            desk_commands.advance_cursor(conn, actor=actor, after_id=4)
+            desk_commands.advance_cursor(conn, actor=actor, after_id=newest - 1)
         assert back.value.kind == "conflict"
         assert desk_commands.STATUS_BY_KIND[back.value.kind] == 409
     finally:

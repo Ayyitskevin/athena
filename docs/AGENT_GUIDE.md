@@ -29,7 +29,9 @@ Authorization: Bearer <token>
 The desk shows what is asked of you, what you hold, and what changed. It reserves
 nothing: it is orientation, not a lock. When you have handled events up to some id,
 record it with `advance_desk_cursor(after_id)` / `POST /desk/cursor` `{"after_id": N}`.
-Use the last id you actually handled, not the newest one you saw.
+Use the last id you actually handled, not the newest one you saw. An id above the newest
+event is refused (422, code `cursor_ahead`, with your `latest_visible_event_id`) and a
+lower one than your cursor is refused (409), so the cursor never moves past what exists.
 
 `work.waiting_on` is the other side of delegation: issues you delegated more than 24
 hours ago that the delegate has neither claimed nor worked on since. Each inbox row

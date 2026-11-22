@@ -295,7 +295,11 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
 
         Pass the id of the last event you actually processed, not the newest
         one you saw — the desk's `signals.latest_visible_event_id` is what a
-        fully drained reader would use."""
+        fully drained reader would use.
+
+        Valid range: from your current `cursor.after_id` up to the newest event
+        id. A higher id is refused (422, code `cursor_ahead`, naming the newest
+        id you can see) and the cursor does not move."""
         return client.advance_desk_cursor(after_id=after_id)
 
     @tool

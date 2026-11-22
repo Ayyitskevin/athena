@@ -339,10 +339,19 @@ EXEMPT_READERS: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "aegis/desk.py",
-        "_latest_event_id",
+        "latest_visible_event_id",
         "the value a fully-drained reader would acknowledge, so it must span "
         "exactly the rows that reader can drain — the same general-feed "
         "population as _events_since above",
+    ),
+    (
+        "aegis/desk_commands.py",
+        "advance_cursor",
+        "the cursor's upper bound is the trail's newest row as stored, so a "
+        "reader may acknowledge any event the general feed handed it — imported "
+        "rows included, as GET /events and _events_since serve them; bounding "
+        "by native rows only would refuse an honest acknowledgement of a "
+        "foreign event",
     ),
     (
         "core/activity_chain.py",

@@ -33,13 +33,33 @@ STATUS_BY_KIND: dict[str, int] = {
 }
 
 
-class DeskCommandError(Exception):
-    """A refusal with a transport-neutral kind. The adapter maps it."""
+#: Machine code for an ``after_id`` past the newest event. Carried beside the
+#: ``invalid`` kind so a caller can tell "pick a value you have seen" apart from
+#: a malformed one.
+CURSOR_AHEAD_CODE = "cursor_ahead"
 
-    def __init__(self, kind: str, detail: str) -> None:
+
+class DeskCommandError(Exception):
+    """A refusal with a transport-neutral kind. The adapter maps it.
+
+    ``code`` and ``latest_visible_event_id`` are set only on a ``cursor_ahead``
+    refusal: the machine code, and the newest event id the caller can see
+    (null when it can see none), which is the highest value it may pass.
+    """
+
+    def __init__(
+        self,
+        kind: str,
+        detail: str,
+        *,
+        code: str | None = None,
+        latest_visible_event_id: int | None = None,
+    ) -> None:
         super().__init__(detail)
         self.kind = kind
         self.detail = detail
+        self.code = code
+        self.latest_visible_event_id = latest_visible_event_id
 
 
 def read_desk(
@@ -72,6 +92,13 @@ def advance_cursor(
     made. The 0073 trigger refuses the same move at the database, for a writer
     that skips this command.
 
+    Refused above the newest activity id (``invalid``, code ``cursor_ahead``):
+    an advance-only position past the present could never be corrected and
+    would hide every later event. The bound is the trail's newest row, so a
+    reader whose visibility narrowed can still re-acknowledge what it holds;
+    the refusal reports only the newest id the caller can see, never the
+    table's maximum, which would disclose activity volume.
+
     Records no activity event — see the module docstring.
     """
     if isinstance(after_id, bool) or not isinstance(after_id, int):
@@ -90,6 +117,16 @@ def advance_cursor(
     # and the write that acts on it cannot be interleaved by a concurrent
     # advance — the personal-state category explicitly permits this shape.
     with db.transaction(conn, immediate=True):
+        newest = conn.execute("SELECT MAX(id) FROM activity").fetchone()[0]
+        if newest is None or after_id > int(newest):
+            visible = desk.latest_visible_event_id(conn, actor=actor)
+            raise DeskCommandError(
+                "invalid",
+                f"after_id {after_id} is past the newest event; the newest event "
+                f"you can see is {'none' if visible is None else visible}",
+                code=CURSOR_AHEAD_CODE,
+                latest_visible_event_id=visible,
+            )
         current = desk_cursors.get_cursor(conn, user_id=user_id, name=name)
         if current is not None and after_id < int(current["after_id"]):
             raise DeskCommandError(
