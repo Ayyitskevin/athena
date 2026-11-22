@@ -17,14 +17,15 @@ HTTP work lives in client.py (SDK-free, unit-tested).
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from functools import wraps
+from collections.abc import Callable, Mapping
+from functools import cache, wraps
 import inspect
 import json
 import os
 import secrets
 import sys
-from typing import Annotated, Any, Literal, NamedTuple
+from types import MappingProxyType
+from typing import Annotated, Any, Final, Literal, NamedTuple, NoReturn
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -266,213 +267,57 @@ SERVER_INSTRUCTIONS = (
 )
 RETRY_POINTER = "Retry keys and ETags: see the server instructions."
 
-# --- tool scopes -------------------------------------------------------------
+# --- tool declarations -------------------------------------------------------
 #
-# What each tool needs from the token, mirroring the REST layer's enforcement —
-# this is the entire authorization POLICY on one screen, audited against the
-# route dependencies (and, where a route checks inside its command, against
-# that command: dispatch and the worker kill are the two).
+# Every tool declares, where it is defined in mcp/tools_*.py, what its token
+# needs, which profiles carry it, its hints and, when it is not the default, its
+# response budget:
 #
-# Vocabulary:
-#   "read"  — any authenticated token (reads gate on authentication, not scope)
-#   "write" — any write scope (the personal-state rule: a read-only token must
-#             never mutate anything, its own rows included)
+#     @tool(scope=READ_ONLY, profiles=SEAT)
+#     @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=SETS)
+#
+# Adding a tool edits its tools_*.py definition and its client.py method, and
+# nothing here: TOOL_SCOPES, PROFILES, WRITE_HINTS, ADMIN_READS and
+# RESPONSE_BUDGET_EXCEPTIONS are read-only views derived from the declarations
+# (see the bottom of this section), and docs/AGENT_API.md is generated from them.
+#
+# Registration fails closed: a tool with no scope, no profile statement, or (for
+# anything but a read-scoped tool) no hints raises at build time, whether or not
+# the session carries it, so a tool cannot ship undeclared.
+#
+# Scope: what the tool needs from the token, mirroring the REST layer's
+# enforcement, audited against the route dependencies (and, where a route checks
+# inside its command, against that command: dispatch and the worker kill are the
+# two).
+#   READ_ONLY       — any authenticated token (reads gate on authentication, not
+#                     scope)
+#   ANY_WRITE_SCOPE — any write scope (the personal-state rule: a read-only
+#                     token must never mutate anything, its own rows included)
 #   a scope constant — that scope, with admin implying all of them, exactly as
-#             identity.token_has_scope decides
+#                     identity.token_has_scope decides
+# Admin-gated reads are scoped admin too, so a non-admin session does not carry
+# tools that can only answer 403; tests/test_mcp_surface_slim.py walks every
+# read-scoped tool with a seat token and fails on a 403, so a new admin read
+# cannot be scoped READ_ONLY.
 #
 # This drives PRESENTATION, not authorization: build_server registers only the
 # tools the session's token can actually use, so a read-scoped agent does not
 # carry ~10k tokens of mutation docstrings it can never call. The REST layer
-# remains the boundary — a wrong entry here shows or hides a tool; it can never
+# remains the boundary — a wrong scope shows or hides a tool; it can never
 # permit a call the server would refuse.
-#
-# Fail-closed against drift: registering a tool with no entry here raises at
-# build time, so a new tool cannot ship unmapped.
 ANY_WRITE_SCOPE = "write"
 READ_ONLY = "read"
-TOOL_SCOPES: dict[str, str] = {
-    # reads — any authenticated token
-    "search": READ_ONLY,
-    "search_workspace": READ_ONLY,
-    "list_issues": READ_ONLY,
-    "search_work": READ_ONLY,
-    "count_work": READ_ONLY,
-    "read_page_embeds": READ_ONLY,
-    "resolve_embeds": READ_ONLY,
-    "embed_help": READ_ONLY,
-    "link_graph": READ_ONLY,
-    "related_items": READ_ONLY,
-    "project_timeline": READ_ONLY,
-    "unlinked_mentions": READ_ONLY,
-    "query_help": READ_ONLY,
-    "list_my_delegated_work": READ_ONLY,
-    "get_issue": READ_ONLY,
-    "get_issue_work_context": READ_ONLY,
-    "get_issue_history": READ_ONLY,
-    "get_attention_ranking": READ_ONLY,
-    "get_fleet_metrics": READ_ONLY,
-    "list_issue_comments": READ_ONLY,
-    "get_issue_state": READ_ONLY,
-    "recent_events": READ_ONLY,
-    "wait_for_events": READ_ONLY,
-    "whoami": READ_ONLY,
-    "list_notifications": READ_ONLY,
-    "list_priority_notifications": READ_ONLY,
-    "notification_priority_summary": READ_ONLY,
-    "get_watch_preference": READ_ONLY,
-    "begin_run": READ_ONLY,
-    "current_run": READ_ONLY,
-    "list_activity_runs": READ_ONLY,
-    "list_run_events": READ_ONLY,
-    "get_run_lineage": READ_ONLY,
-    "get_run_replay": READ_ONLY,
-    "get_run_fork_contract": READ_ONLY,
-    "list_dispatches": READ_ONLY,
-    "get_issue_runbook": READ_ONLY,
-    "my_desk": READ_ONLY,
-    "my_office": READ_ONLY,
-    "get_project_floor": READ_ONLY,
-    "get_project_brief": READ_ONLY,
-    "get_project_review_queue": READ_ONLY,
-    "list_workers": READ_ONLY,
-    "list_run_controls": READ_ONLY,
-    "get_run_control": READ_ONLY,
-    "get_agent_budget": READ_ONLY,
-    "get_issue_lease": READ_ONLY,
-    "list_subtasks": READ_ONLY,
-    "list_issue_links": READ_ONLY,
-    "list_sprints": READ_ONLY,
-    "get_sprint": READ_ONLY,
-    "list_labels": READ_ONLY,
-    "list_projects": READ_ONLY,
-    "list_spaces": READ_ONLY,
-    "list_pages": READ_ONLY,
-    "get_page": READ_ONLY,
-    "find_pages_by_title": READ_ONLY,
-    "page_backlinks": READ_ONLY,
-    "page_outgoing_links": READ_ONLY,
-    "list_page_versions": READ_ONLY,
-    "get_page_version": READ_ONLY,
-    # personal state and agent lifecycle — any write scope
-    "mark_notification_read": ANY_WRITE_SCOPE,
-    "mark_notifications_read": ANY_WRITE_SCOPE,
-    "watch": ANY_WRITE_SCOPE,
-    "unwatch": ANY_WRITE_SCOPE,
-    "set_watch_preference": ANY_WRITE_SCOPE,
-    "clear_watch_preference": ANY_WRITE_SCOPE,
-    "advance_desk_cursor": ANY_WRITE_SCOPE,
-    "heartbeat_agent_run": ANY_WRITE_SCOPE,
-    "worker_heartbeat": ANY_WRITE_SCOPE,
-    "acknowledge_run_control": ANY_WRITE_SCOPE,
-    "decline_run_control": ANY_WRITE_SCOPE,
-    "complete_run_control": ANY_WRITE_SCOPE,
-    "undo_action": ANY_WRITE_SCOPE,
-    # writes EITHER module depending on source_kind; the route still enforces
-    # the precise scope, this only decides presentation
-    "link_mention": ANY_WRITE_SCOPE,
-    # Aegis writes
-    "create_issue": tokens.ISSUE_WRITE_SCOPE,
-    "update_issue": tokens.ISSUE_WRITE_SCOPE,
-    "set_issue_placement": tokens.ISSUE_WRITE_SCOPE,
-    "assign_issue": tokens.ISSUE_WRITE_SCOPE,
-    "delegate_issue": tokens.ISSUE_WRITE_SCOPE,
-    "request_candidate_review": tokens.ISSUE_WRITE_SCOPE,
-    "claim_issue": tokens.ISSUE_WRITE_SCOPE,
-    "claim_next_ready": tokens.ISSUE_WRITE_SCOPE,
-    "yield_claim": tokens.ISSUE_WRITE_SCOPE,
-    "resume_claim_handoff": tokens.ISSUE_WRITE_SCOPE,
-    "complete_claim": tokens.ISSUE_WRITE_SCOPE,
-    "decline_delegation": tokens.ISSUE_WRITE_SCOPE,
-    "comment_on_issue": tokens.ISSUE_WRITE_SCOPE,
-    "archive_issue": tokens.ISSUE_WRITE_SCOPE,
-    "unarchive_issue": tokens.ISSUE_WRITE_SCOPE,
-    "bulk_update_issues": tokens.ISSUE_WRITE_SCOPE,
-    "set_issue_parent": tokens.ISSUE_WRITE_SCOPE,
-    "link_issues": tokens.ISSUE_WRITE_SCOPE,
-    "unlink_issues": tokens.ISSUE_WRITE_SCOPE,
-    "create_sprint": tokens.ISSUE_WRITE_SCOPE,
-    "update_sprint": tokens.ISSUE_WRITE_SCOPE,
-    "start_sprint": tokens.ISSUE_WRITE_SCOPE,
-    "complete_sprint": tokens.ISSUE_WRITE_SCOPE,
-    "delete_sprint": tokens.ISSUE_WRITE_SCOPE,
-    "set_issue_sprint": tokens.ISSUE_WRITE_SCOPE,
-    "create_label": tokens.ISSUE_WRITE_SCOPE,
-    "attach_label": tokens.ISSUE_WRITE_SCOPE,
-    "detach_label": tokens.ISSUE_WRITE_SCOPE,
-    "start_playbook": tokens.ISSUE_WRITE_SCOPE,
-    "dispatch_to_icarus": tokens.ISSUE_WRITE_SCOPE,
-    # Mentor writes
-    "create_page": tokens.DOCS_WRITE_SCOPE,
-    "open_my_notebook": tokens.DOCS_WRITE_SCOPE,
-    "update_page": tokens.DOCS_WRITE_SCOPE,
-    "archive_page": tokens.DOCS_WRITE_SCOPE,
-    "unarchive_page": tokens.DOCS_WRITE_SCOPE,
-    "label_page": tokens.DOCS_WRITE_SCOPE,
-    "unlabel_page": tokens.DOCS_WRITE_SCOPE,
-    "restore_page_version": tokens.DOCS_WRITE_SCOPE,
-    "record_run_learning": tokens.DOCS_WRITE_SCOPE,
-    # operator/admin surfaces (admin-gated reads included, so a non-admin
-    # session does not carry tools that can only answer 403)
-    #
-    # Admin-gated READS: each route below carries the admin dependency
-    # (core/activity_api.py chain, chain/verify, agent-runs;
-    # aegis/automation_api.py rules; aegis/fleet_work_api.py active-work).
-    # tests/test_mcp_surface_slim.py walks every read-scoped tool with a seat
-    # token and fails on a 403, so a new admin read cannot be mapped `read`.
-    "activity_chain_status": tokens.ADMIN_SCOPE,
-    "verify_activity_chain": tokens.ADMIN_SCOPE,
-    "get_agent_run_health": tokens.ADMIN_SCOPE,
-    "get_fleet_active_work": tokens.ADMIN_SCOPE,
-    "list_automation_rules": tokens.ADMIN_SCOPE,
-    "get_automation_rule": tokens.ADMIN_SCOPE,
-    "list_automation_failures": tokens.ADMIN_SCOPE,
-    "list_security_events": tokens.ADMIN_SCOPE,
-    "agent_answerability": tokens.ADMIN_SCOPE,
-    "list_approvals": tokens.ADMIN_SCOPE,
-    "list_users": tokens.ADMIN_SCOPE,
-    "onboard_agent": tokens.ADMIN_SCOPE,
-    "pause_agent": tokens.ADMIN_SCOPE,
-    "resume_agent": tokens.ADMIN_SCOPE,
-    "revoke_agent_tokens": tokens.ADMIN_SCOPE,
-    "offboard_agent": tokens.ADMIN_SCOPE,
-    "create_automation_rule": tokens.ADMIN_SCOPE,
-    "set_automation_rule_enabled": tokens.ADMIN_SCOPE,
-    "delete_automation_rule": tokens.ADMIN_SCOPE,
-    "request_worker_kill": tokens.ADMIN_SCOPE,
-    "cancel_worker_kill": tokens.ADMIN_SCOPE,
-    "create_run_control": tokens.ADMIN_SCOPE,
-    "decide_approval": tokens.ADMIN_SCOPE,
-    "set_approval_policy": tokens.ADMIN_SCOPE,
-    "set_agent_budget": tokens.ADMIN_SCOPE,
-    "clear_agent_budget": tokens.ADMIN_SCOPE,
-}
 
 _WRITE_SCOPES = frozenset(
     {tokens.ISSUE_WRITE_SCOPE, tokens.DOCS_WRITE_SCOPE, tokens.ADMIN_SCOPE}
 )
+_SCOPE_VOCABULARY = frozenset({READ_ONLY, ANY_WRITE_SCOPE}) | _WRITE_SCOPES
 
-# --- tool hints ----------------------------------------------------------------
-#
-# Every registered tool carries MCP tool annotations. readOnlyHint is DERIVED,
-# never written per tool: a tool reads when its TOOL_SCOPES entry is READ_ONLY or
-# it is one of the admin-scoped reads below. tests/test_mcp_tool_hints.py checks
-# the result against the HTTP verbs each tool's client calls use (GET reads), so a
-# write cannot be marked read-only.
-ADMIN_READS: frozenset[str] = frozenset(
-    {
-        "activity_chain_status",
-        "verify_activity_chain",
-        "get_agent_run_health",
-        "get_fleet_active_work",
-        "list_automation_rules",
-        "get_automation_rule",
-        "list_automation_failures",
-        "list_security_events",
-        "agent_answerability",
-        "list_approvals",
-        "list_users",
-    }
-)
+# Hints: every registered tool carries MCP tool annotations. A tool scoped
+# READ_ONLY reads, and needs no hints; an admin read says hints=READS. A write
+# says whether it is destructive and idempotent. tests/test_mcp_tool_hints.py
+# checks the result against the HTTP verbs each tool's client calls use (GET
+# reads), so a write cannot be marked read-only.
 
 
 class WriteHint(NamedTuple):
@@ -485,142 +330,345 @@ class WriteHint(NamedTuple):
     idempotent: bool
 
 
-_ADDS = WriteHint(destructive=False, idempotent=False)
-_SETS = WriteHint(destructive=False, idempotent=True)
-_ERASES = WriteHint(destructive=True, idempotent=True)
+READS: Final = "reads"
+ADDS = WriteHint(destructive=False, idempotent=False)
+SETS = WriteHint(destructive=False, idempotent=True)
+ERASES = WriteHint(destructive=True, idempotent=True)
 
-# One entry per write tool. Registration fails closed: a write tool with no
-# entry raises at build time, like a tool with no TOOL_SCOPES entry.
-WRITE_HINTS: dict[str, WriteHint] = {
-    # acknowledgements move a marker forward; what they acknowledge stays readable
-    "mark_notification_read": _SETS,
-    "mark_notifications_read": _ADDS,  # a repeat also marks newer arrivals
-    "advance_desk_cursor": _SETS,
-    "acknowledge_run_control": _SETS,
-    "decline_run_control": _SETS,  # a settled control refuses a repeat
-    "complete_run_control": _SETS,
-    # personal state
-    "watch": _SETS,
-    "unwatch": _ERASES,  # deletes the watch's preference with it
-    "set_watch_preference": _ERASES,  # replaces it; no history is kept
-    "clear_watch_preference": _ERASES,
-    # liveness: every call refreshes last-seen (and usage counts again)
-    "heartbeat_agent_run": _ADDS,
-    "worker_heartbeat": _ADDS,
-    "undo_action": _SETS,  # inverses are reversible; a repeat is refused
-    # rewrites the next unlinked mention; an issue body keeps no history
-    "link_mention": WriteHint(destructive=True, idempotent=False),
-    # Aegis
-    "create_issue": _ADDS,
-    "update_issue": _ERASES,  # an issue's title and body keep no history
-    "set_issue_placement": _SETS,
-    "assign_issue": _SETS,
-    "delegate_issue": _SETS,
-    "request_candidate_review": _SETS,  # an identical request returns its receipt
-    "claim_issue": _ADDS,  # a repeat with the generation renews the lease
-    "claim_next_ready": _ADDS,
-    "yield_claim": _SETS,
-    "resume_claim_handoff": _SETS,
-    "complete_claim": _SETS,
-    "decline_delegation": _SETS,
-    "comment_on_issue": _ADDS,
-    "archive_issue": _SETS,
-    "unarchive_issue": _SETS,
-    "bulk_update_issues": _SETS,  # these fields' previous values are in the trail
-    "set_issue_parent": _SETS,
-    "link_issues": _SETS,
-    "unlink_issues": _SETS,
-    "create_sprint": _ADDS,
-    "update_sprint": _ERASES,  # goal and dates are overwritten, not quoted
-    "start_sprint": _SETS,
-    "complete_sprint": _SETS,
-    "delete_sprint": _ERASES,
-    "set_issue_sprint": _SETS,
-    "create_label": _SETS,  # a second label of that name is refused
-    "attach_label": _SETS,
-    "detach_label": _SETS,
-    "start_playbook": _ADDS,
-    "dispatch_to_icarus": _ADDS,
-    # Mentor: every page edit is snapshotted into its version history
-    "create_page": _ADDS,
-    "open_my_notebook": _SETS,
-    "update_page": _ADDS,  # each call cuts a version, even unchanged text
-    "archive_page": _SETS,
-    "unarchive_page": _SETS,
-    "label_page": _SETS,
-    "unlabel_page": _SETS,
-    "restore_page_version": _SETS,
-    "record_run_learning": _ADDS,
-    # operator
-    "onboard_agent": _SETS,  # the same email (or name-derived email) is refused
-    "pause_agent": _SETS,
-    "resume_agent": _SETS,
-    "revoke_agent_tokens": _ERASES,
-    "offboard_agent": _ERASES,
-    "create_automation_rule": _ADDS,
-    "set_automation_rule_enabled": _SETS,
-    "delete_automation_rule": _ERASES,
-    "request_worker_kill": _SETS,
-    "cancel_worker_kill": _SETS,
-    "create_run_control": _ADDS,
-    "decide_approval": _SETS,
-    "set_approval_policy": _SETS,
-    "set_agent_budget": _SETS,  # usage and window survive; each limit is audited
-    "clear_agent_budget": _ERASES,  # drops the window's usage count
-}
-
-
-def is_read_only(name: str) -> bool:
-    """Whether a tool only reads: its scope is READ_ONLY, or it is an admin read."""
-    return TOOL_SCOPES[name] == READ_ONLY or name in ADMIN_READS
-
-
-def tool_annotations(name: str) -> ToolAnnotations:
-    """The MCP hints for one tool; a write tool without a WRITE_HINTS entry
-    raises, so a new write cannot ship without saying what it does."""
-    if is_read_only(name):
-        return ToolAnnotations(readOnlyHint=True)
-    try:
-        hint = WRITE_HINTS[name]
-    except KeyError:
-        raise RuntimeError(
-            f"MCP write tool {name!r} has no WRITE_HINTS entry; every write tool "
-            "must declare whether it is destructive and idempotent"
-        ) from None
-    return ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=hint.destructive,
-        idempotentHint=hint.idempotent,
-    )
-
-
-# --- response budgets -----------------------------------------------------------
+# Profiles: ATHENA_MCP_PROFILE names the set of tools a session carries. A
+# profile is an INTERSECTION with the scope filter: it can hide a tool the token
+# could use, never show one it could not, and the REST layer stays the boundary
+# either way. `full` (the default) is the scope filter alone and carries every
+# tool.
 #
-# Every tool in the `seat`, `seat+knowledge` and `conductor` profiles answers
-# within DEFAULT_RESPONSE_BUDGET characters of the JSON text a client receives.
-# A list over budget keeps the rows that fit and says `truncated` with the `next`
-# arguments; an object's long text or nested list is cut with a `_truncated`
-# entry naming the call that reads the rest (athena.mcp.results). A larger budget
-# is declared here only, one commented line per tool, and reviewed like a scope.
+# `seat` is the core loop a seat's real run needs: orient, find work, read one
+# issue, claim, heartbeat, comment, complete or yield, acknowledge what you
+# handled, answer run controls. `seat+knowledge` adds pages, learnings, labels
+# and links. `conductor` adds assignment, delegation, dependencies and visible
+# project observation to the core loop, without administrative tools.
+# None carries `mark_notifications_read`: K2 forbids bulk acknowledgement, so a
+# seat under a profile cannot see the bulk tool at all (the targeted
+# `mark_notification_read` stays).
+#
+# The composition rule: a tool declares the narrowest profiles that carry it,
+# and declaring a profile also puts it in every profile built on that one
+# (PROFILE_BASES). So a seat tool says profiles=SEAT and `seat+knowledge` and
+# `conductor` carry it too; a tool for knowledge work and for conductors says
+# profiles=(KNOWLEDGE, CONDUCTOR); a tool only `full` carries says FULL_ONLY.
+PROFILE_ENV = "ATHENA_MCP_PROFILE"
+FULL_ONLY = "full"
+SEAT = "seat"
+KNOWLEDGE = "seat+knowledge"
+CONDUCTOR = "conductor"
+# Each narrower profile and the profile it is built on, in PROFILES order.
+PROFILE_BASES: Mapping[str, str | None] = MappingProxyType(
+    {SEAT: None, KNOWLEDGE: SEAT, CONDUCTOR: SEAT}
+)
+
+# Response budgets: every tool in the `seat`, `seat+knowledge` and `conductor`
+# profiles answers within DEFAULT_RESPONSE_BUDGET characters of the JSON text a
+# client receives. A list over budget keeps the rows that fit and says
+# `truncated` with the `next` arguments; an object's long text or nested list is
+# cut with a `_truncated` entry naming the call that reads the rest
+# (athena.mcp.results). A larger budget is declared at the tool (budget=...),
+# with a comment saying why, and reviewed like a scope. A tool only `full`
+# carries has no budget: it answers as its REST route does.
 # tests/test_mcp_response_budget.py calls every budgeted tool against a seeded
 # large-content workspace and fails on any answer above its budget.
 DEFAULT_RESPONSE_BUDGET = 16_000
-RESPONSE_BUDGET_EXCEPTIONS: dict[str, int] = {
-    # The one packet read before work: the issue, its twenty newest comments and
-    # recent activity in one answer. On the budget test's issue (sixty comments),
-    # 16,000 leaves the description 938 characters beside twenty comment excerpts
-    # and three events; 32,000 leaves it 16,936. The rest is one get_issue away.
-    "get_issue_work_context": 32_000,
-}
-BUDGETED_PROFILES = ("seat", "seat+knowledge", "conductor")
+BUDGETED_PROFILES = (SEAT, KNOWLEDGE, CONDUCTOR)
+
+
+class ToolDeclaration(NamedTuple):
+    """What one tool declared at its definition, checked by ``declare``."""
+
+    scope: str
+    # FULL_ONLY alone, or the narrower profiles that carry the tool.
+    profiles: tuple[str, ...]
+    # None when the tool only reads.
+    hints: WriteHint | None
+    # A declared budget above the default, or None.
+    budget: int | None
+    # Registered with mutation_tool: the description ends with RETRY_POINTER.
+    retry_pointer: bool
+
+    @property
+    def read_only(self) -> bool:
+        return self.hints is None
+
+    def carried_by(self, profile: str) -> bool:
+        """Whether the named narrower profile carries this tool: it declares
+        that profile or one the profile is built on."""
+        return any(p in self.profiles for p in (profile, *_built_on(profile)))
+
+    @property
+    def response_budget(self) -> int | None:
+        """Characters an answer may take, or None when no budgeted profile
+        carries the tool (the full surface answers as the REST route does)."""
+        if self.profiles == (FULL_ONLY,):
+            return None
+        return self.budget if self.budget is not None else DEFAULT_RESPONSE_BUDGET
+
+
+def _built_on(profile: str) -> list[str]:
+    """The profiles a narrower profile is built on, nearest first."""
+    bases: list[str] = []
+    current = PROFILE_BASES[profile]
+    while current is not None:
+        bases.append(current)
+        current = PROFILE_BASES[current]
+    return bases
+
+
+_UNSET: Any = object()
+_DECLARATION_KEYS = frozenset({"scope", "profiles", "hints", "budget"})
+
+
+def declare(
+    name: str,
+    *,
+    scope: Any = _UNSET,
+    profiles: Any = _UNSET,
+    hints: Any = _UNSET,
+    budget: Any = _UNSET,
+    retry_pointer: bool = False,
+) -> ToolDeclaration:
+    """Check one tool's declaration, refusing anything missing or contradictory.
+
+    Fail-closed on purpose: every server build runs this for every tool, so a
+    tool that does not say what its token needs, who carries it, or (as a write)
+    what it does breaks the build and every test that builds a server."""
+
+    def refuse(problem: str) -> NoReturn:
+        raise RuntimeError(f"MCP tool {name!r} {problem}")
+
+    if scope is _UNSET:
+        refuse(
+            "declares no scope; every tool must declare what its token needs: "
+            "scope=READ_ONLY, ANY_WRITE_SCOPE or a tokens scope"
+        )
+    if scope not in _SCOPE_VOCABULARY:
+        refuse(f"declares scope {scope!r}, not one of {sorted(_SCOPE_VOCABULARY)}")
+
+    if profiles is _UNSET:
+        refuse(
+            "declares no profiles; name the narrowest profiles that carry it "
+            "(SEAT, KNOWLEDGE, CONDUCTOR), or FULL_ONLY when only `full` does"
+        )
+    if isinstance(profiles, str):
+        named: tuple[str, ...] = (profiles,)
+    elif isinstance(profiles, tuple):
+        named = profiles
+    else:
+        refuse(f"declares profiles={profiles!r}; give a profile name or a tuple")
+    if not named:
+        refuse("declares no profiles; say FULL_ONLY when only `full` carries it")
+    unknown = [p for p in named if p != FULL_ONLY and p not in PROFILE_BASES]
+    if unknown:
+        refuse(
+            f"declares unknown profiles {unknown}; choose from "
+            f"{[FULL_ONLY, *PROFILE_BASES]}"
+        )
+    if FULL_ONLY in named and len(named) > 1:
+        refuse("declares FULL_ONLY beside other profiles; `full` carries every tool")
+    if len(set(named)) != len(named):
+        refuse(f"names a profile twice in {named}")
+    implied = sorted(
+        p for p in named if p != FULL_ONLY and set(_built_on(p)) & set(named)
+    )
+    if implied:
+        refuse(
+            f"names {implied}, which a profile they are built on already "
+            "carries; declare only the narrowest profiles"
+        )
+
+    if hints is _UNSET:
+        if scope != READ_ONLY:
+            refuse(
+                "declares no hints; a tool not scoped READ_ONLY says hints=READS "
+                "if it only reads, or whether it is destructive and idempotent "
+                "(ADDS, SETS, ERASES or a WriteHint)"
+            )
+        declared_hints: WriteHint | None = None
+    elif hints == READS:
+        if scope not in (READ_ONLY, tokens.ADMIN_SCOPE):
+            refuse(f"declares hints=READS with the write scope {scope!r}")
+        declared_hints = None
+    elif isinstance(hints, WriteHint):
+        if scope == READ_ONLY:
+            refuse("is scoped READ_ONLY but declares write hints")
+        declared_hints = hints
+    else:
+        refuse(
+            f"declares hints={hints!r}; use READS, ADDS, SETS, ERASES or a WriteHint"
+        )
+    if retry_pointer and declared_hints is None:
+        refuse("is registered with mutation_tool but only reads; use tool")
+
+    if budget is _UNSET:
+        declared_budget = None
+    elif named == (FULL_ONLY,):
+        refuse(
+            "declares a response budget, but no budgeted profile carries it; "
+            "the full surface answers as the REST route does"
+        )
+    elif (
+        not isinstance(budget, int)
+        or isinstance(budget, bool)
+        or budget <= DEFAULT_RESPONSE_BUDGET
+    ):
+        refuse(
+            f"declares budget={budget!r}; a declared budget is a number of "
+            f"characters above DEFAULT_RESPONSE_BUDGET ({DEFAULT_RESPONSE_BUDGET})"
+        )
+    else:
+        declared_budget = budget
+
+    return ToolDeclaration(
+        scope=scope,
+        profiles=named,
+        hints=declared_hints,
+        budget=declared_budget,
+        retry_pointer=retry_pointer,
+    )
+
+
+ToolSink = Callable[[Callable[..., Any], ToolDeclaration], Any]
+
+
+def _decorators(sink: ToolSink) -> tuple[Callable[..., Any], Callable[..., Any]]:
+    """The ``tool`` and ``mutation_tool`` decorators the tools_*.py registrars
+    take, handing each declared function to ``sink``. A bare ``@tool`` (no
+    declaration) raises."""
+
+    def decorator(retry_pointer: bool) -> Callable[..., Any]:
+        kind = "mutation_tool" if retry_pointer else "tool"
+
+        def declared_tool(function: Any = None, /, **declaration: Any) -> Any:
+            if function is not None:
+                raise RuntimeError(
+                    f"MCP tool {function.__name__!r} has no declaration; write "
+                    f"@{kind}(scope=..., profiles=...) at its definition"
+                )
+
+            def register(function: Callable[..., Any]) -> Any:
+                name = function.__name__
+                unknown = sorted(set(declaration) - _DECLARATION_KEYS)
+                if unknown:
+                    raise RuntimeError(
+                        f"MCP tool {name!r} declares unknown keys {unknown}; "
+                        f"a declaration takes {sorted(_DECLARATION_KEYS)}"
+                    )
+                return sink(
+                    function,
+                    declare(name, retry_pointer=retry_pointer, **declaration),
+                )
+
+            return register
+
+        return declared_tool
+
+    return decorator(False), decorator(True)
+
+
+def _register_all(tool: Any, mutation_tool: Any, client: Any) -> None:
+    """Run every tools_*.py registrar, in the order the tools are listed."""
+    from athena.mcp.tools_read import register_read_tools
+    from athena.mcp.tools_admin import register_admin_tools
+    from athena.mcp.tools_work import register_work_tools
+    from athena.mcp.tools_pages import register_page_tools
+
+    register_read_tools(tool, mutation_tool, client)
+    register_admin_tools(tool, mutation_tool, client)
+    register_work_tools(tool, mutation_tool, client)
+    register_page_tools(tool, mutation_tool, client)
+
+
+@cache
+def declared() -> Mapping[str, ToolDeclaration]:
+    """Every tool's declaration by name, in registration order: the registrars
+    run with decorators that only record (no client, no server)."""
+    found: dict[str, ToolDeclaration] = {}
+
+    def record(function: Callable[..., Any], declaration: ToolDeclaration) -> Any:
+        if function.__name__ in found:
+            raise RuntimeError(f"MCP tool {function.__name__!r} is defined twice")
+        found[function.__name__] = declaration
+        return function
+
+    _register_all(*_decorators(record), None)
+    return MappingProxyType(found)
+
+
+def _annotations(declaration: ToolDeclaration) -> ToolAnnotations:
+    if declaration.hints is None:
+        return ToolAnnotations(readOnlyHint=True)
+    return ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=declaration.hints.destructive,
+        idempotentHint=declaration.hints.idempotent,
+    )
+
+
+def is_read_only(name: str) -> bool:
+    """Whether a tool only reads: scoped READ_ONLY, or an admin read."""
+    return declared()[name].read_only
+
+
+def tool_annotations(name: str) -> ToolAnnotations:
+    """The MCP hints for one tool, from its declaration."""
+    return _annotations(declared()[name])
 
 
 def response_budget(name: str) -> int | None:
     """The tool's response budget in characters, or None for a tool no budgeted
     profile carries (the full surface answers as the REST route does)."""
-    if not any(name in (PROFILES[profile] or ()) for profile in BUDGETED_PROFILES):
-        return None
-    return RESPONSE_BUDGET_EXCEPTIONS.get(name, DEFAULT_RESPONSE_BUDGET)
+    declaration = declared().get(name)
+    return None if declaration is None else declaration.response_budget
+
+
+# The derived views. Each is computed from the declarations on access, read-only,
+# and kept under the name the hand-written table had, so scripts and tests that
+# import it keep working; none is a place to declare anything.
+def _profile(profile: str) -> frozenset[str]:
+    return frozenset(n for n, d in declared().items() if d.carried_by(profile))
+
+
+def _profiles() -> Mapping[str, frozenset[str] | None]:
+    return MappingProxyType(
+        {FULL_ONLY: None, **{profile: _profile(profile) for profile in PROFILE_BASES}}
+    )
+
+
+_DERIVED_VIEWS: Mapping[str, Callable[[], Any]] = MappingProxyType(
+    {
+        "TOOL_SCOPES": lambda: MappingProxyType(
+            {name: d.scope for name, d in declared().items()}
+        ),
+        "WRITE_HINTS": lambda: MappingProxyType(
+            {name: d.hints for name, d in declared().items() if d.hints is not None}
+        ),
+        "ADMIN_READS": lambda: frozenset(
+            name
+            for name, d in declared().items()
+            if d.scope == tokens.ADMIN_SCOPE and d.read_only
+        ),
+        "RESPONSE_BUDGET_EXCEPTIONS": lambda: MappingProxyType(
+            {name: d.budget for name, d in declared().items() if d.budget is not None}
+        ),
+        "PROFILES": _profiles,
+        "SEAT_PROFILE": lambda: _profile(SEAT),
+        "CONDUCTOR_PROFILE": lambda: _profile(CONDUCTOR),
+    }
+)
+
+
+def __getattr__(name: str) -> Any:
+    try:
+        view = _DERIVED_VIEWS[name]
+    except KeyError:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
+    return view()
 
 
 def _issue_reader(issue_id: int, offset: int) -> dict[str, Any]:
@@ -780,93 +828,6 @@ def _tool_visible(required: str, scopes: frozenset[str] | None) -> bool:
     return required in scopes
 
 
-# --- tool profiles -----------------------------------------------------------
-#
-# ATHENA_MCP_PROFILE names the set of tools a session carries. A profile is an
-# INTERSECTION with the scope filter above: it can hide a tool the token could
-# use, never show one it could not, and the REST layer stays the boundary
-# either way. `full` (the default) is the scope filter alone: today's surface.
-#
-# `seat` is the core loop a seat's real run needs: orient, find work, read one
-# issue, claim, heartbeat, comment, complete or yield, acknowledge what you
-# handled, answer run controls. `seat+knowledge` adds pages, learnings, labels
-# and links. `conductor` adds assignment, delegation, dependencies and visible
-# project observation to the core loop, without administrative tools.
-# None carries `mark_notifications_read`: K2 forbids bulk
-# acknowledgement, so a seat under a profile cannot see the bulk tool at all
-# (the targeted `mark_notification_read` stays).
-#
-# The core loop includes claim_next_ready and wait_for_events, now registered
-# alongside the explicit claim and immediate-read operations.
-PROFILE_ENV = "ATHENA_MCP_PROFILE"
-SEAT_PROFILE: frozenset[str] = frozenset(
-    {
-        "my_desk",
-        "advance_desk_cursor",
-        "list_my_delegated_work",
-        "search_work",
-        "get_issue",
-        "get_issue_work_context",
-        "list_issue_comments",
-        "get_issue_lease",
-        "claim_issue",
-        "yield_claim",
-        "resume_claim_handoff",
-        "complete_claim",
-        "decline_delegation",
-        "update_issue",
-        "comment_on_issue",
-        "create_issue",
-        "heartbeat_agent_run",
-        "current_run",
-        "list_notifications",
-        "mark_notification_read",
-        "list_run_controls",
-        "acknowledge_run_control",
-        "complete_run_control",
-        "decline_run_control",
-        "claim_next_ready",
-        "wait_for_events",
-    }
-)
-KNOWLEDGE_PROFILE: frozenset[str] = frozenset(
-    {
-        "search",
-        "get_page",
-        "list_pages",
-        "create_page",
-        "update_page",
-        "record_run_learning",
-        "get_issue_runbook",
-        "list_projects",
-        "attach_label",
-        "list_labels",
-        "link_issues",
-    }
-)
-CONDUCTOR_PROFILE: frozenset[str] = SEAT_PROFILE | frozenset(
-    {
-        "get_attention_ranking",
-        "get_project_floor",
-        "get_project_brief",
-        "get_project_review_queue",
-        "get_issue_history",
-        "assign_issue",
-        "request_candidate_review",
-        "delegate_issue",
-        "set_issue_parent",
-        "list_subtasks",
-        "link_issues",
-    }
-)
-PROFILES: dict[str, frozenset[str] | None] = {
-    "full": None,
-    "seat": SEAT_PROFILE,
-    "seat+knowledge": SEAT_PROFILE | KNOWLEDGE_PROFILE,
-    "conductor": CONDUCTOR_PROFILE,
-}
-
-
 def profile_from_env(
     environ: Mapping[str, str] = os.environ,
 ) -> frozenset[str] | None:
@@ -877,12 +838,13 @@ def profile_from_env(
     name = environ.get(PROFILE_ENV, "").strip()
     if not name:
         return None
+    profiles = _profiles()
     try:
-        return PROFILES[name]
+        return profiles[name]
     except KeyError:
         raise ValueError(
             f"{PROFILE_ENV}={name!r} is not a profile; choose one of: "
-            + ", ".join(PROFILES)
+            + ", ".join(profiles)
         ) from None
 
 
@@ -954,8 +916,8 @@ def build_server(
     """Build the MCP server, binding every tool to a pre-built Athena client.
     Separated from main() so tests can inject a TestClient-backed AthenaClient.
 
-    ``scopes`` narrows registration to the tools that token class can use
-    (``TOOL_SCOPES``): a read-scoped agent gets the read surface, not ~70
+    ``scopes`` narrows registration to the tools that token class can use (each
+    tool's declared scope): a read-scoped agent gets the read surface, not ~70
     mutation tools that could only answer 403. None — the default — registers
     everything, so embedding callers and tests get the full deterministic
     surface unless they opt in; ``main()`` opts in by wiring ``probe_scopes``.
@@ -981,67 +943,34 @@ def build_server(
 
         return guarded
 
-    def _required_scope(function) -> str:
-        """The tool's declared scope — refusing to register an unmapped tool.
-        Fail-closed on purpose: a new tool with no ``TOOL_SCOPES`` entry breaks
-        the build (and every test that builds a server), so the policy screen
-        above cannot silently fall behind the tool list."""
-        try:
-            return TOOL_SCOPES[function.__name__]
-        except KeyError:
-            raise RuntimeError(
-                f"MCP tool {function.__name__!r} has no TOOL_SCOPES entry; "
-                "every tool must declare what its token needs"
-            ) from None
+    registered: set[str] = set()
 
-    def _registered(function) -> ToolAnnotations | None:
-        """The tool's hints when this session carries it, else None. Scope first
-        and hints second, both fail-closed for every tool whether or not this
-        session carries it; then the profile."""
+    def register(function, declaration: ToolDeclaration):
+        """Register one declared tool with the shared one-object and error
+        contract, when this session carries it: scope first, then the profile.
+        The declaration was checked (fail-closed) before this runs, for every
+        tool whether or not the session carries it."""
         name = function.__name__
-        visible = _tool_visible(_required_scope(function), token_scopes)
-        annotations = tool_annotations(name)
-        if visible and _in_profile(name, profile):
-            return annotations
-        return None
-
-    def _add(function, annotations: ToolAnnotations, doc: str | None = None):
-        name = function.__name__
+        if name in registered:
+            raise RuntimeError(f"MCP tool {name!r} is defined twice")
+        registered.add(name)
+        if not (
+            _tool_visible(declaration.scope, token_scopes)
+            and _in_profile(name, profile)
+        ):
+            return function
         shaped = _one_object(
             preserve_athena_errors(function),
-            read_only=is_read_only(name),
-            budget=response_budget(name),
+            read_only=declaration.read_only,
+            budget=declaration.response_budget,
         )
-        if doc is not None:
-            shaped.__doc__ = doc
-        return mcp.tool(annotations=annotations)(shaped)
+        if declaration.retry_pointer:
+            # A write's pointer to the shared retry-key contract, which the
+            # server instructions state once (SERVER_INSTRUCTIONS).
+            shaped.__doc__ = f"{function.__doc__.rstrip()}\n\n{RETRY_POINTER}"
+        return mcp.tool(annotations=_annotations(declaration))(shaped)
 
-    def tool(function):
-        """Register a tool with the shared one-object and error contract."""
-        annotations = _registered(function)
-        if annotations is None:
-            return function
-        return _add(function, annotations)
-
-    def mutation_tool(function):
-        """Register a write tool with a pointer to the shared retry-key contract,
-        which the server instructions state once (``SERVER_INSTRUCTIONS``)."""
-        annotations = _registered(function)
-        if annotations is None:
-            return function
-        return _add(
-            function, annotations, f"{function.__doc__.rstrip()}\n\n{RETRY_POINTER}"
-        )
-
-    from athena.mcp.tools_read import register_read_tools
-    from athena.mcp.tools_admin import register_admin_tools
-    from athena.mcp.tools_work import register_work_tools
-    from athena.mcp.tools_pages import register_page_tools
-
-    register_read_tools(tool, mutation_tool, client)
-    register_admin_tools(tool, mutation_tool, client)
-    register_work_tools(tool, mutation_tool, client)
-    register_page_tools(tool, mutation_tool, client)
+    _register_all(*_decorators(register), client)
     _answer_refusals_as_one_object(mcp)
     return mcp
 

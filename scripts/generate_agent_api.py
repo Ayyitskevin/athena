@@ -5,8 +5,10 @@ them) drift apart when any of them is maintained by hand. This generator
 derives the one table OpenAPI cannot produce — which MCP tool needs which
 token scope and which REST call it performs — from the code itself:
 
-- the tool list and scopes come from ``athena.mcp.server.TOOL_SCOPES``
-  (registration is fail-closed on that dict, so it cannot under-report);
+- the tool list and scopes come from each tool's declaration at its definition
+  in ``mcp/tools_*.py``, read through ``athena.mcp.server.TOOL_SCOPES`` (a view
+  derived from the declarations; registration is fail-closed on them, so it
+  cannot under-report);
 - each tool's REST calls are read from the tool bodies in ``mcp/tools_*.py``
   (which ``AthenaClient`` methods it calls) joined to the HTTP verb + path
   literals in ``client.py``;
@@ -111,11 +113,12 @@ def client_method_calls() -> dict[str, list[str]]:
 
 
 def tool_client_methods() -> dict[str, list[str]]:
-    """Map each @tool / @mutation_tool function to the client methods its body
-    calls (in first-seen order, deduplicated).
+    """Map each @tool(...) / @mutation_tool(...) function to the client methods
+    its body calls (in first-seen order, deduplicated).
 
-    Tool functions live in ``mcp/tools_*.py``. ``server.py`` only keeps
-    ``TOOL_SCOPES`` and ``build_server``, which calls those registrars.
+    Tool functions, with their declarations, live in ``mcp/tools_*.py``;
+    ``server.py`` checks the declarations and ``build_server`` calls the
+    registrars.
     """
     if not TOOL_MODULES:
         raise SystemExit("mcp/tools_*.py is missing; tool bodies have nowhere to live")
@@ -126,8 +129,11 @@ def tool_client_methods() -> dict[str, list[str]]:
             if not isinstance(node, ast.FunctionDef):
                 continue
             if not any(
-                isinstance(d, ast.Name) and d.id in ("tool", "mutation_tool")
-                for d in node.decorator_list
+                isinstance(name, ast.Name) and name.id in ("tool", "mutation_tool")
+                for name in (
+                    d.func if isinstance(d, ast.Call) else d
+                    for d in node.decorator_list
+                )
             ):
                 continue
             if node.name in tools:
@@ -308,8 +314,8 @@ def render() -> str:
     lines += [
         "---",
         "",
-        f"*{len(TOOL_SCOPES)} tools. Generated from `mcp/server.py` "
-        "(`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` "
+        f"*{len(TOOL_SCOPES)} tools. Generated from `mcp/tools_*.py` (each "
+        "tool's declared scope and hints, and its body) and `mcp/client.py` "
         "(verb + path literals); the registration path is fail-closed, so a "
         "tool missing here cannot exist in the server either.*",
         "",

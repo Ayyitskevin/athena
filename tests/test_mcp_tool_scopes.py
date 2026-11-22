@@ -3,8 +3,10 @@
 An agent session used to carry all ~123 tools regardless of what its token could
 do — a read-scoped agent hauled ~10k tokens of mutation docstrings whose only
 possible answer was 403. ``build_server`` now registers only the tools the
-session's token can use, driven by ``TOOL_SCOPES``: the whole policy on one
-screen, audited against the REST layer's route dependencies.
+session's token can use, driven by the scope each tool declares at its
+definition (``TOOL_SCOPES`` is the derived view; docs/AGENT_API.md puts the
+whole policy on one screen), audited against the REST layer's route
+dependencies.
 
 Two properties these tests defend, and the order matters:
 
@@ -14,8 +16,8 @@ Two properties these tests defend, and the order matters:
     unreachable Athena at MCP startup must not change what exists, only who
     answers 403 later.
   * **The map cannot fall behind the tool list.** Registering a tool with no
-    entry raises at build time, so every server-building test in the suite is
-    also a completeness check.
+    declared scope raises at build time, so every server-building test in the
+    suite is also a completeness check.
 """
 
 import asyncio
@@ -54,13 +56,19 @@ def test_every_registered_tool_is_mapped_and_nothing_stale_remains():
 
 
 def test_an_unmapped_tool_refuses_to_build(monkeypatch):
-    trimmed = dict(mcp_server.TOOL_SCOPES)
-    trimmed.pop("my_desk")
-    monkeypatch.setattr(mcp_server, "TOOL_SCOPES", trimmed)
+    # my_desk's declaration, with its scope dropped: the build refuses.
+    declare = mcp_server.declare
+
+    def without_scope(name, **declaration):
+        if name == "my_desk":
+            declaration.pop("scope")
+        return declare(name, **declaration)
+
+    monkeypatch.setattr(mcp_server, "declare", without_scope)
     with pytest.raises(RuntimeError) as caught:
         mcp_server.build_server(_NoWhoamiStub(), scopes=None)
     assert "my_desk" in str(caught.value)
-    assert "TOOL_SCOPES" in str(caught.value)
+    assert "declares no scope" in str(caught.value)
 
 
 def test_scope_vocabulary_is_closed():

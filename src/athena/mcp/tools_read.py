@@ -7,10 +7,21 @@ from __future__ import annotations
 from typing import Literal
 
 from athena.aegis import fleet_attention, fleet_metrics, fleet_work, issue_narrative
+from athena.core import tokens
 from athena.mcp import results
 from athena.mcp.results import ListResult, listing, paged, window
 from athena.mcp.server import (
+    ADDS,
+    ANY_WRITE_SCOPE,
+    CONDUCTOR,
+    ERASES,
+    FULL_ONLY,
+    KNOWLEDGE,
     MAX_COMMENT_CHARS,
+    READS,
+    READ_ONLY,
+    SEAT,
+    SETS,
     AttentionLimit,
     AttentionWindowHours,
     AutomationScheduleAt,
@@ -43,6 +54,7 @@ from athena.mcp.server import (
     WatchPreferencePriority,
     WatchTargetId,
     WorkspaceSearchLimit,
+    WriteHint,
 )
 
 # The page size the search tool asks /search for, and the inbox's REST cap.
@@ -97,7 +109,7 @@ def _comment_row(
 def register_read_tools(tool, mutation_tool, client) -> None:
     # --- search & read ------------------------------------------------------
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=KNOWLEDGE)
     def search(
         query: str, kind: str | None = None, offset: ListOffset = 0
     ) -> ListResult:
@@ -106,7 +118,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         hits = client.search(query, kind=kind, limit=SEARCH_LIMIT, offset=offset)
         return paged(hits, limit=SEARCH_LIMIT, offset=offset)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def search_workspace(
         query: str, limit_per_kind: WorkspaceSearchLimit | None = None
     ) -> dict:
@@ -127,7 +139,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         groups empty — `query.text` shows exactly what was text-searched."""
         return client.search_workspace(query, limit_per_kind=limit_per_kind)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def list_issues(
         status: str | None = None,
         project: str | None = None,
@@ -159,7 +171,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         )
         return paged([results.summary(row) for row in rows], limit=limit, offset=offset)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=SEAT)
     def search_work(q: str, limit: int = 50, offset: int = 0) -> ListResult:
         """Find issues with a work query — the precise way to ask for work.
 
@@ -182,13 +194,13 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         rows = client.search_work(q, limit=limit, offset=offset)
         return paged([results.summary(row) for row in rows], limit=limit, offset=offset)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def count_work(q: str) -> dict:
         """How many issues a work query matches, ignoring paging — so a bounded
         page can be reported as "50 of 340" rather than as the whole answer."""
         return client.count_work(q)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def read_page_embeds(page_id: int) -> ListResult:
         """Resolve a Mentor page's live embeds to DATA, as you.
 
@@ -204,7 +216,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         the data is resolved per reader."""
         return listing(client.page_embeds(page_id))
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def resolve_embeds(text: str) -> ListResult:
         """Resolve embed directives in arbitrary text, as you.
 
@@ -213,14 +225,14 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         render an error — without writing them first."""
         return listing(client.resolve_embeds(text))
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def embed_help() -> dict:
         """The embed vocabulary as data: every kind, its keys, and the limits.
         Emitted by the parser itself, so it cannot drift from what actually
         renders."""
         return client.embed_help()
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def link_graph(
         kind: str, id: int, depth: int | None = None, max_nodes: int | None = None
     ) -> dict:
@@ -239,7 +251,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         what does it reach."""
         return client.link_graph(kind, id, depth, max_nodes)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def related_items(kind: str, id: int, limit: int | None = None) -> dict:
         """What cites what this cites, but is NOT linked to it yet.
 
@@ -257,7 +269,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         linked, the sibling issue solving the same subsystem."""
         return client.related_items(kind, id, limit)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def project_timeline(
         project_id: ProjectId,
         max_per_lane: int | None = None,
@@ -284,7 +296,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             project_id, max_per_lane=max_per_lane, max_items=max_items
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def unlinked_mentions(kind: str, id: int, limit: int | None = None) -> dict:
         """Documents whose text NAMES this issue/page without linking to it.
 
@@ -300,7 +312,15 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         connect them, instead of hoping someone links it later."""
         return client.unlinked_mentions(kind, id, limit)
 
-    @tool
+    # Writes EITHER module depending on source_kind; the route still enforces
+    # the precise scope, this only decides presentation. Destructive and not
+    # idempotent: it rewrites the next unlinked mention, and an issue body keeps
+    # no history.
+    @tool(
+        scope=ANY_WRITE_SCOPE,
+        profiles=FULL_ONLY,
+        hints=WriteHint(destructive=True, idempotent=False),
+    )
     def link_mention(
         source_kind: str, source_id: int, target_kind: str, target_id: int
     ) -> dict:
@@ -317,14 +337,14 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         read."""
         return client.link_mention(source_kind, source_id, target_kind, target_id)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def query_help() -> dict:
         """The work-query vocabulary as data: every field, its accepted values,
         and the limits. Emitted by the parser itself, so it cannot drift from
         what search_work actually accepts."""
         return client.query_help()
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=SEAT)
     def list_my_delegated_work(
         include_closed: bool = False,
         limit: DelegationLimit = 50,
@@ -345,7 +365,9 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             item["issue"] = results.summary(item["issue"])
         return inbox
 
-    @tool
+    # An admin read: the route carries the admin dependency
+    # (aegis/fleet_work_api.py).
+    @tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=READS)
     def get_fleet_active_work(
         agent_id: FleetAgentId | None = None,
         limit: FleetWorkLimit = fleet_work.DEFAULT_LIMIT,
@@ -364,7 +386,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             agent_id=agent_id, limit=limit, attention_state=attention_state
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=SEAT)
     def get_issue(
         ref: str | None = None,
         issue_id: int | None = None,
@@ -378,7 +400,11 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         issue = client.get_issue(_issue_ref(ref, issue_id))
         return results.from_offset(issue, "body", body_offset)
 
-    @tool
+    # The one packet read before work: the issue, its twenty newest comments and
+    # recent activity in one answer. On the budget test's issue (sixty comments),
+    # 16,000 leaves the description 938 characters beside twenty comment excerpts
+    # and three events; 32,000 leaves it 16,936. The rest is one get_issue away.
+    @tool(scope=READ_ONLY, profiles=SEAT, budget=32_000)
     def get_issue_work_context(
         ref: str | None = None, issue_id: int | None = None, brief: bool = False
     ) -> dict:
@@ -397,7 +423,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             return client.get_issue_work_context(reference, brief=True)
         return client.get_issue_work_context(reference)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=CONDUCTOR)
     def get_issue_history(
         issue_id: int,
         limit: IssueHistoryLimit = issue_narrative.DEFAULT_LIMIT,
@@ -407,7 +433,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         lanes are reported instead of presented as complete."""
         return client.get_issue_history(issue_id, limit=limit)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=CONDUCTOR)
     def get_attention_ranking(
         signals: list[fleet_attention.AttentionSignal] | None = None,
         window_hours: AttentionWindowHours = fleet_attention.DEFAULT_WINDOW_HOURS,
@@ -424,7 +450,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             limit=limit,
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def get_fleet_metrics(
         start: FleetMetricDate | None = None,
         end: FleetMetricDate | None = None,
@@ -445,7 +471,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             actor_limit=actor_limit,
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=SEAT)
     def list_issue_comments(
         issue_id: int,
         offset: ListOffset = 0,
@@ -464,14 +490,14 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             offset=offset,
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def get_issue_state(issue_id: int, as_of_event_id: int | None = None) -> dict:
         """Reconstruct an issue's lifecycle state from the activity log. Pass
         as_of_event_id to time-travel to the state at that activity checkpoint; omit
         it for the current lifecycle state. Content fields are intentionally absent."""
         return client.get_issue_state(issue_id, as_of_event_id=as_of_event_id)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def recent_events(
         after: int | None = None,
         kind: str | None = None,
@@ -509,7 +535,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             limit=limit,
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=SEAT)
     def wait_for_events(
         after: int | None = None,
         wait: WaitSeconds = 25,
@@ -551,7 +577,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             limit=limit,
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def whoami() -> dict:
         """Who am I? Your identity (id, email, role, agent flag), the acting
         token's effective scopes (null means the auth is not scope-limited), your
@@ -562,7 +588,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         whoami when you only need the scopes or the run id."""
         return {**client.whoami(), "run": client.current_run()}
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=SEAT)
     def list_notifications(
         unread: bool = False, limit: int = 50, offset: ListOffset = 0
     ) -> ListResult:
@@ -578,7 +604,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             cap=NOTIFICATION_LIST_CAP,
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def list_priority_notifications(
         unread: bool = False,
         min_priority: NotificationPriority | None = None,
@@ -598,17 +624,19 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             limit=limit,
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def notification_priority_summary(unread: bool = False) -> dict:
         """Count YOUR visible notifications by resolved priority and mute state."""
         return client.notification_priority_summary(unread=unread)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def get_watch_preference(target_kind: WatchKind, target_id: WatchTargetId) -> dict:
         """Read YOUR priority, mute, and digest preference for one active watch."""
         return client.get_watch_preference(target_kind, target_id)
 
-    @mutation_tool
+    # An acknowledgement moves a marker forward; what it acknowledges stays
+    # readable.
+    @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=SEAT, hints=SETS)
     def mark_notification_read(
         notification_id: WatchTargetId,
         idempotency_key: IdempotencyKey | None = None,
@@ -622,7 +650,8 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             notification_id, idempotency_key=idempotency_key
         )
 
-    @mutation_tool
+    # Not idempotent: a repeat also marks newer arrivals.
+    @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=FULL_ONLY, hints=ADDS)
     def mark_notifications_read() -> dict:
         """Mark ALL unread notifications in YOUR inbox as read, including rows not shown
         in a bounded read and arrivals since that read (returns the cleared count).
@@ -630,7 +659,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         deliberate, never implied by reading the desk or completing work."""
         return client.mark_all_notifications_read()
 
-    @mutation_tool
+    @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def watch(target_kind: WatchKind, target_id: WatchTargetId) -> None:
         """Subscribe YOUR inbox to a target so you learn it changed without
         re-reading it.
@@ -648,14 +677,16 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         time, so the notifications simply never surface."""
         return client.watch(target_kind, target_id)
 
-    @mutation_tool
+    # Destructive: deletes the watch's preference with it.
+    @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=FULL_ONLY, hints=ERASES)
     def unwatch(target_kind: WatchKind, target_id: WatchTargetId) -> None:
         """Unsubscribe YOUR inbox from a target you are watching. Errors 404 if
         you were not watching it — the refusal distinguishes "stopped" from
         "was never subscribed", which a silent success would blur."""
         return client.unwatch(target_kind, target_id)
 
-    @mutation_tool
+    # Destructive: replaces the preference; no history is kept.
+    @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=FULL_ONLY, hints=ERASES)
     def set_watch_preference(
         target_kind: WatchKind,
         target_id: WatchTargetId,
@@ -676,7 +707,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=FULL_ONLY, hints=ERASES)
     def clear_watch_preference(
         target_kind: WatchKind,
         target_id: WatchTargetId,
@@ -687,7 +718,8 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             target_kind, target_id, idempotency_key=idempotency_key
         )
 
-    @mutation_tool
+    # Liveness: every call refreshes last-seen (and usage counts again).
+    @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=SEAT, hints=ADDS)
     def heartbeat_agent_run(run_id: RunId, usage: dict | None = None) -> dict:
         """Report that this authenticated agent is still working on `run_id`.
         Athena binds the heartbeat to the token's actor and its own server clock;
@@ -699,7 +731,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         interval only once because repeating it counts it again."""
         return client.heartbeat_agent_run(run_id, usage)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def begin_run(
         run_id: RunId,
         parent_run_id: RunId | None = None,
@@ -718,32 +750,38 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             fork_from_event_id=fork_from_event_id,
         )
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=SEAT)
     def current_run() -> dict:
         """Read the run identity this session is currently stamping on writes:
         {run_id, parent_run_id, fork_from_event_id}."""
         return client.current_run()
 
-    @tool
+    # An admin read: the route carries the admin dependency
+    # (core/activity_api.py).
+    @tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=READS)
     def get_agent_run_health(agent_id: int | None = None) -> dict:
         """Read the admin-only fleet cockpit rollup: each agent's bounded recent
         runs, cooperative check-ins, replay posture, lineage counts, and totals.
         Check-ins are self-reports; they do not prove an OS process is alive."""
         return client.get_agent_run_health(agent_id=agent_id)
 
-    @tool
+    # An admin read: the route carries the admin dependency
+    # (aegis/automation_api.py).
+    @tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=READS)
     def list_automation_rules() -> ListResult:
         """List every admin-only automation rule with its event or schedule
         configuration, progress, failure health, and enabled state."""
         return listing(client.list_automation_rules())
 
-    @tool
+    # An admin read: the route carries the admin dependency
+    # (aegis/automation_api.py).
+    @tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=READS)
     def get_automation_rule(rule_id: int) -> dict:
         """Get one admin-only automation rule by id, including schedule progress,
         configuration errors, failure health, and enabled state."""
         return client.get_automation_rule(rule_id)
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=ADDS)
     def create_automation_rule(
         name: str,
         trigger_verb: str,
@@ -774,7 +812,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def set_automation_rule_enabled(
         rule_id: int,
         enabled: bool,
@@ -788,7 +826,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @mutation_tool
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=ERASES)
     def delete_automation_rule(
         rule_id: int, idempotency_key: IdempotencyKey | None = None
     ) -> dict | None:
@@ -799,13 +837,15 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    @tool
+    # An admin read: the route carries the admin dependency
+    # (aegis/automation_api.py).
+    @tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=READS)
     def list_automation_failures() -> ListResult:
         """Read the admin-only exception list of automation rules whose actions have
         failed. Failure counts are cumulative; inspect the rule before intervening."""
         return listing(client.list_automation_failures())
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def list_activity_runs(
         actor_id: int, gap_seconds: int = 1800, limit: int = 200
     ) -> ListResult:
@@ -823,7 +863,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             return {"items": runs, "count": len(runs), "truncated": True, "next": None}
         return listing(runs, truncated=True, next={"limit": wider})
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def list_run_events(
         run_id: str, before_id: int | None = None, limit: int = 100
     ) -> ListResult:
@@ -835,13 +875,13 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             return listing(events)
         return listing(events, truncated=True, next={"before_id": events[-1]["id"]})
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def get_run_lineage(run_id: str) -> dict:
         """Read a tagged run's causal tree: ancestors, the focal run's replayable
         events, and descendant runs spawned from it."""
         return client.get_run_lineage(run_id)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def get_run_replay(run_id: str) -> dict:
         """Export one run as its portable replay ARTIFACT: the events in replay
         order plus lineage placement and a determinism contract, frozen from one
@@ -850,7 +890,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         unknown runs are a clean not-found."""
         return client.get_run_replay(run_id)
 
-    @tool
+    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def get_run_fork_contract(
         run_id: str, fork_from_event_id: int, fork_run_id: str
     ) -> dict:

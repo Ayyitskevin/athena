@@ -5,11 +5,12 @@ not tell a read from a write, or a write it may safely retry from one that
 destroys something. A hint is worse than none when it is wrong: a write marked
 read-only would be called without the care a write needs.
 
-So: readOnlyHint is generated (the read scope plus a short admin-read list) and
-checked here against the HTTP verbs each tool's client calls really use, as
-``scripts/generate_agent_api.py`` derives them; destructive and idempotent
-hints are declared once per write tool in ``WRITE_HINTS``, and a write tool
-without an entry refuses to build.
+So: readOnlyHint is generated (the read scope plus the admin reads, which
+declare hints=READS) and checked here against the HTTP verbs each tool's client
+calls really use, as ``scripts/generate_agent_api.py`` derives them;
+destructive and idempotent hints are declared once per write tool, at its
+definition (``WRITE_HINTS`` is the derived view), and a write tool without
+them refuses to build.
 """
 
 from __future__ import annotations
@@ -95,8 +96,8 @@ def test_read_only_is_the_read_scope_plus_the_admin_reads():
 
 def test_a_read_only_tool_makes_only_get_calls_and_a_write_makes_another():
     # WHY: the cross-check that makes the generated hint trustworthy. A write
-    # mapped `read` (or added to ADMIN_READS) would be marked read-only; its
-    # client call's verb says otherwise, and this fails.
+    # declared `read` (or an admin write declared READS) would be marked
+    # read-only; its client call's verb says otherwise, and this fails.
     calls = _rest_calls()
     assert set(calls) == set(mcp_server.TOOL_SCOPES)
     lying_reads = {
@@ -115,11 +116,17 @@ def test_a_read_only_tool_makes_only_get_calls_and_a_write_makes_another():
 
 
 def test_the_cross_check_would_catch_a_write_marked_read_only(monkeypatch):
-    # The negative self-test: map a POST tool `read`, and the check above fails.
+    # The negative self-test: declare a POST tool `read`, and the check above fails.
     calls = _rest_calls()
     assert calls["comment_on_issue"] == ["POST /issues/{issue_id}/comments"]
-    scopes = {**mcp_server.TOOL_SCOPES, "comment_on_issue": mcp_server.READ_ONLY}
-    monkeypatch.setattr(mcp_server, "TOOL_SCOPES", scopes)
+    declared = mcp_server.declared()
+    lying = {
+        **declared,
+        "comment_on_issue": declared["comment_on_issue"]._replace(
+            scope=mcp_server.READ_ONLY, hints=None
+        ),
+    }
+    monkeypatch.setattr(mcp_server, "declared", lambda: lying)
     assert mcp_server.is_read_only("comment_on_issue")
     with pytest.raises(AssertionError):
         test_a_read_only_tool_makes_only_get_calls_and_a_write_makes_another()
@@ -133,15 +140,21 @@ def test_write_hints_cover_exactly_the_write_tools():
 
 
 def test_a_write_tool_without_hints_refuses_to_build(monkeypatch):
-    # Fail-closed, like an unmapped scope: the missing entry raises even when the
-    # session would not carry the tool (here, a seat profile without it).
-    trimmed = dict(mcp_server.WRITE_HINTS)
-    trimmed.pop("delete_sprint")
-    monkeypatch.setattr(mcp_server, "WRITE_HINTS", trimmed)
+    # Fail-closed, like an undeclared scope: the missing hints raise even when
+    # the session would not carry the tool (here, a seat profile without it).
+    declare = mcp_server.declare
+
+    def without_hints(name, **declaration):
+        if name == "delete_sprint":
+            declaration.pop("hints")
+        return declare(name, **declaration)
+
+    monkeypatch.setattr(mcp_server, "declare", without_hints)
+    assert "delete_sprint" not in mcp_server.PROFILES["seat"]
     with pytest.raises(RuntimeError) as caught:
         mcp_server.build_server(_NoServer(), profile=mcp_server.PROFILES["seat"])
     assert "delete_sprint" in str(caught.value)
-    assert "WRITE_HINTS" in str(caught.value)
+    assert "declares no hints" in str(caught.value)
 
 
 def test_the_destructive_writes_are_the_ones_that_lose_something():
