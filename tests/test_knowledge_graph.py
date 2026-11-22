@@ -261,7 +261,7 @@ def test_the_link_token_falls_back_to_the_numeric_form_when_a_title_is_ambiguous
     try:
         # resolve_title_ref refuses an ambiguous title, so [[Shared Title]] would
         # record NO link — the "link it" would silently do nothing.
-        assert mentions.link_token(conn, "page", first["id"]) == (
+        assert mentions.link_token(conn, "page", first["id"], actor=None) == (
             f"[[page:{first['id']}]]"
         )
     finally:

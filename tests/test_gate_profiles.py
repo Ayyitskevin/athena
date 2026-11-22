@@ -347,3 +347,139 @@ def test_synthetic_ci_rejects_added_combine_command(synthetic_ci_workflow):
     workflow["jobs"]["test"]["steps"][0]["run"] += "\necho added-command"
     with pytest.raises(AssertionError):
         _assert_ci_stage_commands(yaml.safe_dump(workflow))
+
+
+def _child_env():
+    # A nested run must not inherit this run's pytest options, xdist or coverage.
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("PYTEST_", "COV_CORE_", "COVERAGE_"))
+    }
+
+
+def test_only_the_coverage_stage_is_memory_measured():
+    # The full suite is the stage that can exhaust memory; its receipt must say how
+    # much it used so "does the gate fit this machine?" has a measured answer.
+    assert [stage.name for stage in gate.STAGES if stage.measure_memory] == ["coverage"]
+
+
+def test_process_tree_memory_counts_every_descendant(tmp_path):
+    # The coverage stage is bash -> pytest -> xdist workers; the memory that kills a
+    # machine is the sum over that tree, not the wrapper's own small footprint.
+    grandchild = (
+        "import sys\n"
+        "held = b'x' * (80 << 20)\n"
+        "print('ready', flush=True)\n"
+        "sys.stdin.read()\n"
+    )
+    child = (
+        "import subprocess, sys\n"
+        f"subprocess.run([sys.executable, '-c', {grandchild!r}], check=True)\n"
+    )
+    with subprocess.Popen(
+        [sys.executable, "-c", child],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    ) as process:
+        assert process.stdout.readline() == "ready\n"
+        total, largest = gate._process_tree_rss(process.pid)
+        process.stdin.close()
+    assert largest >= 80 << 20
+    assert total > largest
+
+
+@pytest.mark.parametrize(
+    ("script", "reason"),
+    [
+        (
+            "print('[gw1] node down: Not properly terminated')\n"
+            "print(\"worker 'gw1' crashed while running 'tests/test_x.py::test_y'\")\n"
+            "raise SystemExit(1)\n",
+            "WORKER TERMINATED: a test worker was terminated",
+        ),
+        (
+            "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n",
+            "STAGE TERMINATED: the measured run was terminated by SIGKILL.",
+        ),
+        (
+            # bash reports a child pytest killed by SIGKILL as exit status 137.
+            "raise SystemExit(137)\n",
+            "STAGE TERMINATED: the measured run was terminated by SIGKILL.",
+        ),
+    ],
+    ids=["xdist-worker-lost", "killed", "bash-reported-kill"],
+)
+def test_terminated_stage_names_memory_and_keeps_failure(
+    monkeypatch, capsys, script, reason
+):
+    stage = gate.Stage(
+        "measured", (sys.executable, "-c", script), True, (), (), measure_memory=True
+    )
+    monkeypatch.setattr(gate, "STAGES", (stage,))
+    assert gate.run_profile("product", gate._run_stage) == 1
+    output = capsys.readouterr().out
+    assert reason in output
+    assert "usually means the machine ran out of memory" in output
+    assert "ATHENA_COVERAGE_WORKERS=2 scripts/gate.sh" in output
+    assert "PEAK MEMORY: measured: " in output
+    assert "FAILED: measured" in output
+    assert output.rstrip().endswith("GATE FAILED: measured")
+    assert "PRODUCT GATE PASS" not in output
+
+
+@pytest.mark.parametrize("returncode", [0, 1], ids=["passed", "ordinary-failure"])
+def test_measured_stage_reports_peak_without_blaming_memory(
+    monkeypatch, capsys, returncode
+):
+    stage = gate.Stage(
+        "measured",
+        (
+            sys.executable,
+            "-c",
+            f"print('stage output')\nraise SystemExit({returncode})",
+        ),
+        True,
+        (),
+        (),
+        measure_memory=True,
+    )
+    monkeypatch.setattr(gate, "STAGES", (stage,))
+    assert gate.run_profile("product", gate._run_stage) == returncode
+    output = capsys.readouterr().out
+    assert "stage output\n" in output  # The stage's own output is still shown.
+    assert "PEAK MEMORY: measured: " in output
+    assert "resident across its process tree" in output
+    assert "TERMINATED" not in output
+    assert ("PRODUCT GATE PASS" in output) == (returncode == 0)
+
+
+def test_real_xdist_worker_death_is_recognized(tmp_path):
+    # Pins the markers to what the installed pytest-xdist actually prints, so an
+    # upgrade that rewords them fails here instead of silently dropping the hint.
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "test_dies.py").write_text(
+        "import os, signal\n"
+        "def test_ok():\n    pass\n"
+        "def test_killed():\n    os.kill(os.getpid(), signal.SIGKILL)\n"
+    )
+    command = (
+        sys.executable,
+        "-m",
+        "pytest",
+        "-q",
+        "-n",
+        "2",
+        "-p",
+        "no:cacheprovider",
+        "-c",
+        str(tmp_path / "pytest.ini"),
+        "--rootdir",
+        str(tmp_path),
+        str(tmp_path / "test_dies.py"),
+    )
+    run = gate._run_measured(command, _child_env())
+    assert run.returncode == 1
+    assert run.worker_lost
+    assert "WORKER TERMINATED" in "\n".join(gate._memory_receipt("coverage", run))

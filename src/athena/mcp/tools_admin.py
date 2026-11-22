@@ -295,7 +295,11 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
 
         Pass the id of the last event you actually processed, not the newest
         one you saw — the desk's `signals.latest_visible_event_id` is what a
-        fully drained reader would use."""
+        fully drained reader would use.
+
+        Valid range: from your current `cursor.after_id` up to the newest event
+        id. A higher id is refused (422, code `cursor_ahead`, naming the newest
+        id you can see) and the cursor does not move."""
         return client.advance_desk_cursor(after_id=after_id)
 
     @tool
@@ -535,7 +539,8 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         retry by the original requester against the same target, and that retry
         re-validates everything. Deciding an already-settled request is refused
         rather than silently flipping an answer the agent may have acted on.
-        Requires an admin token."""
+        Requires a human administrator's token: an agent account is refused
+        whatever its role, and nobody decides a request they made."""
         return client.decide_approval(
             request_id,
             decision=decision,

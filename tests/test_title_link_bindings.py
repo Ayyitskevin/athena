@@ -1,6 +1,7 @@
 """Saved references retain the ID selected by the author across renames and edits."""
 
 from contextlib import closing
+import shutil
 import sqlite3
 
 import pytest
@@ -116,8 +117,15 @@ def test_legacy_proof_distinguishes_numeric_edges_conflicting_history_and_unboun
 def test_upgrade_freezes_old_body_and_evidence_before_any_new_edits(
     tmp_path, monkeypatch, migration_inventory_through
 ):
-    inventory = db.MIGRATIONS_DIR
-    migration_inventory_through("0083_issue_review_requests.sql")
+    # Pin "current" at 0084 so a later migration does not change what this
+    # upgrade applies; the baseline is that inventory without 0084.
+    inventory = migration_inventory_through("0084_title_link_bindings.sql")
+    baseline = tmp_path / "0083"
+    baseline.mkdir()
+    for migration in inventory.glob("*.sql"):
+        if migration.name < "0084":
+            shutil.copy2(migration, baseline / migration.name)
+    monkeypatch.setattr(db, "MIGRATIONS_DIR", baseline)
     with closing(db.connect(tmp_path / "upgrade.db")) as conn:
         db.migrate(conn)
         sp = seed(conn)

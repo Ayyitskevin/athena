@@ -67,7 +67,12 @@ activity reader to its `imported_at IS NULL` guard (and FORGE.md's guard
 table to the checker, via `tests/test_imported_at_guards.py`).
 `scripts/coverage.sh` runs the complete test suite with
 full-source branch coverage, writes evidence outside the checkout, and enforces
-the floors configured in `pyproject.toml`.
+the floors configured in `pyproject.toml`. It runs `ATHENA_COVERAGE_WORKERS`
+pytest-xdist workers (default 4). At the default the suite needs about
+1.5 GiB (1.40 GiB measured on 2026-11-22) of memory;
+set fewer workers on a smaller machine. The gate receipt reports the coverage
+stage's peak memory and says when a worker was terminated, which usually means
+the machine ran out of memory.
 
 ### Release-candidate supply-chain evidence
 

@@ -12,6 +12,9 @@ the test (e.g. `monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)`).
 effect immediately.
 """
 
+import functools
+
+import fastapi.dependencies.models as fastapi_dependency_models
 import httpx
 import hypothesis
 from fastapi.testclient import TestClient
@@ -21,6 +24,28 @@ from athena import config
 from athena.core import db, passwords, users_api
 
 _TEST_BOOTSTRAP_TOKEN = "test-bootstrap-token-0000000000000001"
+
+# FastAPI memoises "is this callable async/a generator?" in module-level
+# lru_caches keyed by the endpoint and dependency callables themselves. Athena's
+# route handlers are closures defined inside create_app(), so every cached key
+# keeps one whole app — routers, templates, settings — alive for the life of the
+# process: about 8 MB per app-building test, which is enough to run a full
+# `pytest -n 4` out of memory. Production builds one app per process and is
+# unaffected. The caches are found by type, not by name, so a FastAPI upgrade
+# that adds or renames one is still cleared; test_suite_memory.py fails if any
+# app outlives its test again.
+_FASTAPI_CALLABLE_CACHES = tuple(
+    cache
+    for cache in vars(fastapi_dependency_models).values()
+    if isinstance(cache, functools._lru_cache_wrapper)
+)
+
+
+@pytest.fixture(autouse=True)
+def release_each_tests_app():
+    yield
+    for cache in _FASTAPI_CALLABLE_CACHES:
+        cache.cache_clear()
 
 
 @pytest.fixture(autouse=True)

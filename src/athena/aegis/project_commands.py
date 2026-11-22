@@ -8,18 +8,21 @@ event run in one db.transaction, so a project can never be created, edited, or
 destroyed without its trail entry.
 
 Same shape as the other command modules (user_commands, comment_commands, ...).
-Authorization and the duplicate-name/key and non-empty-issues preconditions stay
-at the transport boundary (the REST/web routes already enforce them and turn a
-clash into a clean 409); the command owns the atomic write + audit. Visibility
-changes and membership already have their own audited path in project_activity;
-this fills the create / edit / delete gap.
+Authorization and the duplicate-name/key preconditions stay at the transport
+boundary (the REST/web routes enforce them and turn a clash into a clean 409).
+The delete's emptiness preconditions (no issues, no sprints) live HERE, inside
+the immediate transaction, because a check outside it races a concurrent issue
+create; they refuse with ``ProjectLifecycleCommandError("conflict")``. Every
+lifecycle event is recorded with ``commit=False``, so it commits with its write
+or not at all. Visibility changes and membership already have their own audited
+path in project_activity; this fills the create / edit / delete gap.
 """
 
 from __future__ import annotations
 
 import sqlite3
 
-from athena.aegis import project_activity, project_etags, projects
+from athena.aegis import issues, project_activity, project_etags, projects, sprints
 from athena.core import access, db, etag, identity, tokens, users
 
 _POLICY_ERROR_KINDS = (
@@ -30,6 +33,16 @@ _POLICY_ERROR_KINDS = (
     "precondition_too_large",
     "precondition_failed",
 )
+
+
+class ProjectLifecycleCommandError(Exception):
+    """A transport-neutral refusal of a project create/edit/delete. ``kind`` is a
+    closed vocabulary (today only ``conflict``) each adapter maps to a status."""
+
+    def __init__(self, kind: str, detail: str) -> None:
+        super().__init__(detail)
+        self.kind = kind
+        self.detail = detail
 
 
 class ProjectPolicyCommandError(Exception):
@@ -72,6 +85,7 @@ def create_project(
             project_id=project["id"],
             name=project["name"],
             key=project["key"],
+            commit=False,
         )
         return project
 
@@ -118,7 +132,11 @@ def update_project(
         summary = _edit_summary(before, updated)
         if summary:
             project_activity.record_project_edited(
-                conn, actor_id=actor_id, project_id=project_id, changes=summary
+                conn,
+                actor_id=actor_id,
+                project_id=project_id,
+                changes=summary,
+                commit=False,
             )
         return updated
 
@@ -127,19 +145,34 @@ def delete_project(conn: sqlite3.Connection, *, actor_id: int, project_id: int) 
     """Delete a project and record a 'deleted_project' event atomically. Returns
     True if a project was deleted, False if none had that id.
 
+    Refuses with ``ProjectLifecycleCommandError("conflict")`` while the project
+    owns any issue or sprint: we block rather than cascade or detach. Both checks
+    run under the immediate transaction's write reservation, so an issue created
+    concurrently either lands before them (and is seen) or waits until after.
+
     The event is recorded BEFORE the row is removed so its visibility scope still
     resolves from the live project; the event then OUTLIVES the target it names
-    (activity.target_id has no FK), preserving who deleted which container."""
+    (activity.target_id has no FK), preserving who deleted which container. It
+    is recorded with ``commit=False``: if the delete fails, the event goes too."""
     with db.transaction(conn, immediate=True):
         project = projects.get_project(conn, project_id)
         if project is None:
             return False
+        if issues.count_issues_in_project(conn, project_id) > 0:
+            raise ProjectLifecycleCommandError(
+                "conflict", "reassign or delete its issues first"
+            )
+        # sprints.project_id is NOT NULL with no ON DELETE, so a project owning a
+        # sprint would fail the bare DELETE at the FK. Refuse, same as issues.
+        if sprints.list_sprints(conn, project_id=project_id):
+            raise ProjectLifecycleCommandError("conflict", "delete its sprints first")
         project_activity.record_project_deleted(
             conn,
             actor_id=actor_id,
             project_id=project_id,
             name=project["name"],
             key=project["key"],
+            commit=False,
         )
         return projects.delete_project(conn, project_id, commit=False)
 

@@ -482,6 +482,10 @@ def set_budget(
             window=payload.window,
             action_limit=payload.action_limit,
         )
+    except budget_commands.BudgetCommandError as exc:
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=exc.detail
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return budget.public()
@@ -495,10 +499,15 @@ def clear_budget(
 ) -> None:
     """Remove a user's budget, returning them to unlimited, atomically with its
     `agent_budget_cleared` audit event. Idempotent: clearing an unbudgeted user
-    is a 204 that records nothing."""
+    is a 204 that records nothing. No account clears its own budget: a 403."""
     if users.get_user(conn, user_id) is None:
         raise HTTPException(status_code=404, detail="no such user")
-    budget_commands.clear_budget(conn, actor_id=actor["id"], target_user_id=user_id)
+    try:
+        budget_commands.clear_budget(conn, actor_id=actor["id"], target_user_id=user_id)
+    except budget_commands.BudgetCommandError as exc:
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=exc.detail
+        ) from exc
 
 
 @router.put("/{user_id}/paused", response_model=UserOut)

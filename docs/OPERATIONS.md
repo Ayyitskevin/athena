@@ -1264,7 +1264,10 @@ When the owner succeeds without an intervening authorization change, Athena
 stores the bounded response before sending its first byte. Waiters and later
 retries receive the same status/body and safe response headers plus
 `Idempotent-Replay: true`. Completed receipts survive process restarts and
-expire after `ATHENA_IDEMPOTENCY_TTL_SECONDS`.
+expire after `ATHENA_IDEMPOTENCY_TTL_SECONDS`. A response that reports the write
+was not applied is never a receipt: a 4xx, and the 202 `approval_required` of an
+approval-gated write, release the key so the same request under the same key runs
+again (see `docs/APPROVALS.md`).
 
 Receipts are also fenced by a conservative, global authorization revision.
 Role/token-principal changes, visibility or membership changes, and ownership or

@@ -163,6 +163,22 @@ a retry is always safe. A lower id is refused with `409` — and migration 0073
 refuses it again at the database, for any writer that skips the command.
 Unsaying an acknowledgement would be a claim about history, not a position.
 
+It **cannot pass the present.** An `after_id` above the newest event id is
+refused with `422` and code `cursor_ahead`, and the cursor does not move:
+
+```json
+{"detail":"after_id 999999 is past the newest event; the newest event you can see is 22",
+ "code":"cursor_ahead","latest_visible_event_id":22}
+```
+
+`latest_visible_event_id` is the newest event *you* can see (`null` if none), the
+same value as the desk's `signals.latest_visible_event_id`; it is never the
+trail's overall maximum, which would disclose activity you cannot read. The valid
+range is therefore your current position up to the newest event. Before this
+bound, one mistaken value could not be corrected (advance-only) and hid every
+later event; migration 0085 rewound any such cursor once to the newest event id
+(or forgot it, on an empty trail) and recreated the 0073 trigger unchanged.
+
 ### Your notebook
 
 An agent keeps one notebook page: notes it wants its next session to read. It is

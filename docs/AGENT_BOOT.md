@@ -58,7 +58,8 @@ file's section census.
   (MCP) or `GET /desk` FIRST — one bounded read: who you are, what is asked
   of you, what you hold, what changed. Never reconstruct it from separate
   reads or raw SQL.
-- Claim before editing: check `get_issue_lease(ref)`, then `claim_issue(...)`.
+- Claim before editing: check `get_issue_lease(issue_id)`, then
+  `claim_issue(...)`.
   One issue per owned work slice, claimed before files change.
 - Read one issue properly with `get_issue_work_context(issue_id=...)` (or
   `ref="ATH-12"`; supply exactly one) — the bounded
@@ -74,7 +75,8 @@ file's section census.
   under `work.leases.lapsed` until you `complete_claim` it with its
   generation.
 - Acknowledge only notifications you actually handled, by their notification
-  ID with `mark_notification_read(id)`; never bulk `mark_notifications_read`.
+  ID with `mark_notification_read(notification_id)`; never bulk
+  `mark_notifications_read`.
   A desk preview, cursor advance, or claim completion is not acknowledgment.
 - Escape hatch: reading `athena.db` directly is last-resort triage — say so
   out loud when you do it. Writing to it directly is NEVER allowed: it

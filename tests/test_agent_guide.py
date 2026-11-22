@@ -4,9 +4,6 @@ An agent that reads the guide at session start is taken straight to the calls it
 lists. So every MCP tool the guide names must be in the server registry, every HTTP
 request example must match a registered route, every relative link must resolve, and
 the guide must be linked from the README, AGENTS.md and the docs index.
-
-Features that exist only in open PRs are written as prose in the "Pending in PR"
-section, without a call signature, so this test cannot mistake them for shipped tools.
 """
 
 from __future__ import annotations

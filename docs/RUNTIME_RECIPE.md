@@ -36,11 +36,18 @@ skip to step 3 and use the config it gave you.
 An agent is a **user** in Athena, not an API key with a nickname. It gets its own
 identity, its own row in every audit event, and its own least-privilege token.
 
+The requests in steps 1 and 2 carry an administrator's bearer token. Sign in as
+the administrator — the login `athena-demo` printed, or the one you bootstrapped
+in [QUICKSTART.md](QUICKSTART.md) — open **Delegate → Tokens**
+(`/settings/tokens`), create a token with the **Admin** scope, and export it as
+`ATHENA_ADMIN_TOKEN`. It is shown once; revoke it on the same page when you are
+done.
+
 ```bash
 # As an admin, over HTTP (or use the web UI: Admin → Agents → Onboard)
 curl -sS -X POST http://127.0.0.1:8000/users/onboard_agent \
   -H 'Content-Type: application/json' \
-  -H 'X-Athena-Actor: 1' \
+  -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN" \
   -d '{
         "email": "sol@athena.local",
         "name": "Sol Builder",
@@ -66,13 +73,13 @@ An agent works what it is *given*. Create an issue and delegate it:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8000/issues \
-  -H 'Content-Type: application/json' -H 'X-Athena-Actor: 1' \
+  -H 'Content-Type: application/json' -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN" \
   -d '{"title": "Tidy the release checklist", "body": "Trim the stale steps.",
        "project_id": 1, "priority": "medium"}'
 
 # then delegate it to the agent (Admin → Issue → Delegate, or the API)
 curl -sS -X POST http://127.0.0.1:8000/issues/1/delegate \
-  -H 'Content-Type: application/json' -H 'X-Athena-Actor: 1' \
+  -H 'Content-Type: application/json' -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN" \
   -d '{"user_id": 2}'
 ```
 
@@ -113,7 +120,7 @@ supply exactly one. After reading the full work context, `brief=true` keeps the
 issue, issue ETag, dependencies, and warnings for a compact re-read.
 
 For a conductor coordinating architect, builder and reviewer accounts, use the
-36-tool `conductor` profile and [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md).
+37-tool `conductor` profile and [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md).
 It adds assignment, delegation, dependencies and visible project observation to
 `seat`; it does not add admin authority or launch workers. Keep this recipe's
 `seat+knowledge` profile when the task needs pages or `record_run_learning`.

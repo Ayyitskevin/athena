@@ -32,7 +32,8 @@ Atomic ready pickup and artifact-bound review freshness remain separate work.
 - Python client: `get_project_brief(project_id, *, limit=5)`.
 - MCP: `get_project_brief(project_id, limit=5)`, read scope only. Include in the
   full catalog and opt-in conductor profile; keep seat/knowledge memberships and
-  the default profile unchanged. A normal member conductor has 35 tools afterward.
+  the default profile unchanged. A normal member conductor had 35 tools afterward
+  (the count when this landed; [AGENT_BOOT.md](AGENT_BOOT.md) lists the current set).
 - Root authorization matches project reads: use the existing actor resolver and
   `access.can_see_project`. Hidden and nonexistent projects return identical 404
   bodies. Public/anonymous access follows existing project read policy; this

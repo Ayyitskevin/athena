@@ -25,6 +25,16 @@ The practical consequence: an approval that is granted but whose retry then fail
 (budget exhausted, ETag stale, issue since blocked) stays **unspent** — the agent
 can retry again once the other refusal is resolved.
 
+**Retry under the same `Idempotency-Key`.** The 202 `approval_required` reports
+that the write was *not* applied, so it is never stored as the key's receipt: the
+route marks it non-final and the idempotency middleware releases the key, exactly
+as it does for a 4xx. The same request under the same key therefore runs again:
+while the ask is pending it returns the same pending request (the ask is its own
+durable, idempotent record), after approval it applies once and that applied
+response becomes the receipt a later replay returns, and after a rejection it
+returns the 409 below. Concurrent same-key retries after approval still apply
+once: one runs, the others wait and replay its result.
+
 ## Single-use
 
 Consuming happens inside the retry's own transaction, so the consumption commits
@@ -92,9 +102,13 @@ Deliberately **not** gated:
 - **Part of the run story.** The ask carries the requesting run's `run_id`, so a
   pause for a human decision appears in the run's lineage rather than floating
   outside it.
-- **Operator-only.** Reading the queue, deciding a request, and setting or
-  clearing a policy are all admin-only. A gated agent cannot approve itself or
-  ungate itself.
+- **Operator-only, and human-only to decide.** Reading the queue, deciding a
+  request, and setting or clearing a policy are all admin-only. On top of that,
+  `approval_commands` itself refuses with a 403, whatever the caller's role or
+  token scope: an agent account (`is_agent`) never decides a request, nobody
+  decides a request they made, and no account sets or clears its own policy.
+  A refused attempt writes nothing, not even an audit event. So a gated agent
+  cannot approve itself or ungate itself even if it holds the admin role.
 
 ## Refusal contract
 
@@ -147,7 +161,8 @@ GET    /users/me                         # carries your own "approval_required"
 ```
 
 MCP: `list_approvals`, `decide_approval`, `set_approval_policy`, and the
-`approval_required` field in `whoami`. The browser cockpit shows a **Waiting on
+`approval_required` field in `whoami`. `decide_approval` succeeds only with a
+human administrator's token; an agent account's call is refused with a 403. The browser cockpit shows a **Waiting on
 you** queue with approve/reject controls on **Admin → Agents**, alongside
 per-agent gate toggles.
 
