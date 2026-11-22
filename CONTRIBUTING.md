@@ -392,12 +392,38 @@ login, and starts Athena. It refuses to overwrite an existing path.
    `claude/<topic>`, or `grok/<topic>`.
 2. Keep one logical change in the branch.
 3. Add tests that explain the invariant being protected.
-4. Run the complete required local gate above.
-5. Open a pull request using the repository template. State the user-visible
+4. If the change is notable to a reader of the changelog, add a fragment under
+   `changelog.d/` (see [Changelog entries](#changelog-entries)); do not edit
+   `CHANGELOG.md` by hand.
+5. Run the complete required local gate above.
+6. Open a pull request using the repository template. State the user-visible
    outcome, boundaries, verification (the gate receipt), and any AI assistance.
 
 Never push directly to `main`. Do not rewrite another contributor's branch or
 hide unrelated work in a formatting or dependency update.
+
+### Changelog entries
+
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+A pull request does not edit its `[Unreleased]` section, which parallel pull
+requests used to conflict on: it adds one file per entry to `changelog.d/`,
+named `<slug>.<category>.md`. The slug is the branch's topic in lowercase
+letters, digits and hyphens (add `-2` for a second entry); the category is one
+of `added`, `changed`, `deprecated`, `removed`, `fixed` or `security`. The file
+holds the entry exactly as it will read: one bullet in the house style
+(`- **A bold sentence.**` and then the detail), every further line and paragraph
+indented by two spaces. `changelog.d/README.md` has an example.
+`tests/test_changelog_fragments.py` validates every fragment, so the gate fails
+on a malformed one; `.venv/bin/python scripts/changelog_fragments.py check` runs
+the same check alone.
+
+The fragments are assembled before a milestone heading is cut, or whenever the
+section should be read whole, in a pull request of its own:
+`scripts/changelog_fragments.py assemble --dry-run` prints the change, and
+`assemble` writes it and deletes the assembled fragments. Each entry goes to the
+top of the first `### <Category>` heading under `[Unreleased]`, or under a new
+heading at the top of the section; the existing text is never rewritten or
+reordered.
 
 ### Bumping the version
 
