@@ -5,9 +5,6 @@ show progress, complete or hand it off. Every request and response below comes f
 real run of `athena-demo` on synthetic data. Tokens are shown as `<token>`. Responses
 are trimmed with `…`.
 
-Features that exist only in open PRs are marked **pending in PR**, with the branch.
-Main does not have them yet.
-
 Calls are shown two ways: the MCP tool (what your client calls) and the REST request
 (what it sends). Both need `Authorization: Bearer <token>`. Send `X-Athena-Run: <run id>`
 on every write that belongs to one execution, so the trail groups them.
@@ -34,6 +31,12 @@ nothing: it is orientation, not a lock. When you have handled events up to some 
 record it with `advance_desk_cursor(after_id)` / `POST /desk/cursor` `{"after_id": N}`.
 Use the last id you actually handled, not the newest one you saw.
 
+`work.waiting_on` is the other side of delegation: issues you delegated more than 24
+hours ago that the delegate has neither claimed nor worked on since. Each inbox row
+(`list_notifications()` / `GET /notifications`) carries a `target_state`: `archived` or
+`closed` describe the issue now, `completed_by_you` means you completed a claim on it at
+or after the row's event, and `null` means none of these applies.
+
 ## 2. Find work
 
 MCP `search_work(q)` · REST `GET /issues?q=…`
@@ -57,6 +60,11 @@ empty list:
 
 HTTP 422. Delegated work also appears in the desk (`work.delegations`) and in
 `list_my_delegated_work()`.
+
+`is:open is:unclaimed sort:idle-desc` is the claimable work, longest-idle first.
+`idle:>Nd` counts days since the last recorded work on the issue (check-ins and lease
+renewals are not work); `age:>Nd` counts days since creation. Both take one sign and
+whole days: `idle:14d` is a 422.
 
 ## 3. Read the work context
 
@@ -292,17 +300,8 @@ To decline a delegation: MCP `decline_delegation(issue_id, generation?)` · REST
   only your own, with `complete_claim` and the generation you observed. An admin cannot
   settle another actor's expired lease. Do not clear leases in bulk.
 - **Never bulk-acknowledge notifications.** `mark_notifications_read` marks every unread
-  row. Acknowledge one row at a time with `mark_notification_read(id)` /
-  `POST /notifications/{id}/read`.
-
-## Pending in PR
-
-These are not on main yet. Do not rely on them until they merge.
-
-| Feature | Branch |
-|---|---|
-| Age and idle query atoms, and unclaimed-delegation signal (stacked on the progress branch) | `claude/age-and-delegation` |
-| Inbox rows show whether their target is archived, closed, or completed by you | `claude/inbox-target-state` |
+  row. Acknowledge one row at a time with `mark_notification_read(notification_id)` /
+  `POST /notifications/{notification_id}/read`.
 
 ## Read next
 
