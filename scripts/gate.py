@@ -37,6 +37,8 @@ _TEST_COUNT = re.compile(r"(\d+) ([a-z]+)")
 _COVERAGE_LINE = re.compile(
     r"^(Line|Branch|Combined) coverage: (\d+)/(\d+) = ([\d.]+)% \(floor ([\d.]+)%\)"
 )
+# A floor check_coverage.py failed: below it, or outgrown ("raise the floor to X").
+_COVERAGE_FLOOR_FAILED = re.compile(r"^Coverage floor failed: (.+)$")
 PROFILES = ("quick", "product", "changed")
 DEFAULT_BASE = "origin/main"
 CHANGED_PATHS_SHOWN = 10  # The receipt lists this many changed paths, then a count.
@@ -245,7 +247,7 @@ def _run_stage(stage: Stage) -> bool | StageOutcome:
         run = _run_measured(stage.command, env)
         return StageOutcome(
             run.returncode == 0,
-            _memory_receipt(stage.name, run),
+            _memory_receipt(stage.name, run) + _floor_receipt(run.facts),
             run.facts,
             {
                 "tree_bytes": run.peak_tree_bytes,
@@ -323,7 +325,11 @@ def _run_measured(
                 sys.stdout.flush()
                 if any(marker in line for marker in WORKER_LOST_MARKERS):
                     worker_lost = True
-                if _TEST_SUMMARY.match(line) or _COVERAGE_LINE.match(line):
+                if (
+                    _TEST_SUMMARY.match(line)
+                    or _COVERAGE_LINE.match(line)
+                    or _COVERAGE_FLOOR_FAILED.match(line)
+                ):
                     facts.append(line.rstrip("\n"))
             returncode = process.wait()
         finally:
@@ -374,6 +380,15 @@ def _memory_receipt(name: str, run: MeasuredRun) -> tuple[str, ...]:
         f"worker count (default 4), for example: {WORKERS_VARIABLE}=2 scripts/gate.sh"
     )
     return tuple(lines)
+
+
+def _floor_receipt(facts: tuple[str, ...]) -> tuple[str, ...]:
+    """Each coverage floor the checker failed, as a receipt line."""
+    return tuple(
+        f"COVERAGE FLOOR FAILED: {failed.group(1)}"
+        for failed in map(_COVERAGE_FLOOR_FAILED.match, facts)
+        if failed
+    )
 
 
 def _selected_tests_stage(selection: Selection) -> Stage:

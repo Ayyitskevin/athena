@@ -143,7 +143,15 @@ a `[[guarded]]` entry (the pattern its function must carry, and why) or an
 header describes both.
 `scripts/coverage.sh` runs the complete test suite with
 full-source branch coverage, writes evidence outside the checkout, and enforces
-the floors configured in `pyproject.toml`. It runs `ATHENA_COVERAGE_WORKERS`
+the floors configured in `pyproject.toml`. The floors are a ratchet:
+`scripts/check_coverage.py` also fails when line, branch or combined coverage is
+more than half a point above its floor, with "raise the floor to X" where X is
+the measurement minus 0.25, rounded down to two decimals. Paste X into
+`[tool.athena.coverage]` in the same change; it sits below both a local run and
+CI's combined shards (which measure up to about 0.09 points higher), so one
+paste passes both. Floors only rise, and the gate receipt carries the failure
+line. The changed profile measures no coverage, so neither floors nor ratchet
+apply to it. It runs `ATHENA_COVERAGE_WORKERS`
 pytest-xdist workers (default 4). At the default the suite needs about
 1.5 GiB (1.40 GiB measured on 2026-11-22) of memory;
 set fewer workers on a smaller machine. The gate receipt reports the coverage
@@ -391,7 +399,11 @@ login, and starts Athena. It refuses to overwrite an existing path.
 1. Branch from current `main` using `kevin/<topic>`, `codex/<topic>`,
    `claude/<topic>`, or `grok/<topic>`.
 2. Keep one logical change in the branch.
-3. Add tests that explain the invariant being protected.
+3. Add tests that explain the invariant being protected. Start them from
+   `tests/support.py` (the first user, more accounts, agents, tokens of a given
+   scope set, clients that act as an account, the activity trail) rather than
+   declaring another `_bootstrap`; `tests/test_suite_conventions.py` fails if the
+   count of files that do rises, or if a test waits with `time.sleep`.
 4. If the change is notable to a reader of the changelog, add a fragment under
    `changelog.d/` (see [Changelog entries](#changelog-entries)); do not edit
    `CHANGELOG.md` by hand.

@@ -12,24 +12,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db, tokens
-from athena.main import create_app
 
-H1 = {"X-Athena-Actor": "1"}
-
-
-def _app(tmp_path, name="scopes.db"):
-    return create_app(tmp_path / name), tmp_path / name
-
-
-def _bootstrap(client):
-    client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
+from support import ADMIN, bearer, bootstrap, login, make_app
 
 
 def test_rest_mint_without_scopes_is_422_and_mints_nothing(tmp_path):
-    app, db_file = _app(tmp_path)
+    app, db_file = make_app(tmp_path, "scopes.db")
     with TestClient(app) as c:
-        _bootstrap(c)
-        r = c.post("/tokens", json={"name": "oops"}, headers=H1)
+        bootstrap(c)
+        r = c.post("/tokens", json={"name": "oops"}, headers=ADMIN)
         assert r.status_code == 422
         assert "scopes are required" in r.json()["detail"]
 
@@ -55,11 +46,11 @@ def test_legacy_stored_rows_still_read_as_full_access(tmp_path):
     assert tokens.parse_scopes(None) == (tokens.ADMIN_SCOPE,)
     assert tokens.parse_scopes("") == (tokens.ADMIN_SCOPE,)
 
-    app, db_file = _app(tmp_path)
+    app, db_file = make_app(tmp_path, "scopes.db")
     with TestClient(app) as c:
-        _bootstrap(c)
+        bootstrap(c)
         raw = c.post(
-            "/tokens", json={"name": "t", "scopes": ["admin"]}, headers=H1
+            "/tokens", json={"name": "t", "scopes": ["admin"]}, headers=ADMIN
         ).json()["token"]
         # Simulate a legacy row: blank the stored scopes for this token (the
         # column is NOT NULL; pre-scope rows were backfilled to '').
@@ -68,20 +59,15 @@ def test_legacy_stored_rows_still_read_as_full_access(tmp_path):
         conn.commit()
         conn.close()
         # The legacy token still authenticates with full access.
-        r = c.get("/users", headers={"Authorization": f"Bearer {raw}"})
+        r = c.get("/users", headers=bearer(raw))
         assert r.status_code == 200
 
 
 def test_web_form_with_no_boxes_checked_is_still_a_clear_400(tmp_path):
-    app, _ = _app(tmp_path)
+    app, _ = make_app(tmp_path, "scopes.db")
     with TestClient(app) as c:
-        _bootstrap(c)
-        c.post(
-            "/login",
-            data={"email": "a@e.com", "password": "pw"},
-            follow_redirects=False,
-        )
-        c.headers["X-CSRF-Token"] = c.cookies.get("athena_csrf", "")
+        bootstrap(c)
+        login(c, "a@e.com")
         r = c.post("/settings/tokens", data={"name": "no-boxes"})
         assert r.status_code == 400
         assert "at least one token scope" in r.text

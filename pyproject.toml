@@ -46,8 +46,9 @@ dependencies = [
 # SDK directly, so an incomplete `[dev]` environment fails instead of reporting a
 # green run with the product differentiator skipped. Installing `[dev]` therefore
 # exercises server.py the same way CI does.
-# pytest-xdist: the suite is deterministic (no time.sleep, Barrier-coordinated
-# races, per-test tmp_path databases), so it parallelizes cleanly — `pytest -n 4`
+# pytest-xdist: the suite is deterministic (no time.sleep, which
+# tests/test_suite_conventions.py enforces; Barrier- and Event-coordinated races;
+# per-test tmp_path databases), so it parallelizes cleanly — `pytest -n 4`
 # cuts the gate from ~16 min to ~3 min. Plain `pytest -q` remains valid.
 dev = [
     "build>=1.5,<1.5.1",
@@ -154,11 +155,14 @@ precision = 2
 show_missing = true
 skip_empty = false
 
-# Floors ratchet upward as real coverage rises (last: 92.84/82.73/90.56 at
-# Stage I) — set a shade below the current measurement so gains are locked in
-# without making the very next well-tested module a gate failure.
+# The floors are a ratchet (scripts/check_coverage.py): a measurement more than
+# half a point above its floor fails with "raise the floor to X", where X is the
+# measurement minus 0.25, rounded down to two decimals, so one paste passes both
+# a local run and CI's combined shards, which measure up to ~0.09 points higher.
+# Floors only rise. Last raised 2026-11-22 from a local coverage.sh run measuring
+# 94.11356/85.56075/92.15366 (previously 92.60/82.30/90.30).
 [tool.athena.coverage]
-line_floor = 92.60
-branch_floor = 82.30
-combined_floor = 90.30
+line_floor = 93.86
+branch_floor = 85.31
+combined_floor = 91.90
 excluded_line_count = 2

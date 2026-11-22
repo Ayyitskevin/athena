@@ -1,11 +1,17 @@
-"""Fail closed when Athena's full-source branch-coverage evidence drifts."""
+"""Fail closed when Athena's full-source branch-coverage evidence drifts.
+
+Each floor is also a ratchet: a measured value more than ``RATCHET_SLACK`` points
+above its floor fails with "raise the floor to X", where X is
+``suggested_floor(measured)``. Only the product profile (``scripts/coverage.sh``)
+and CI's combined shards measure coverage; the changed profile never runs this.
+"""
 
 from __future__ import annotations
 
 import argparse
 from collections import Counter
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 import json
 from pathlib import Path
 import re
@@ -28,6 +34,14 @@ ALLOWED_PRAGMAS = Counter(
         ): 1
     }
 )
+# A measured value more than this many points above its floor fails: gains are
+# locked in rather than left as room for the next change to spend.
+RATCHET_SLACK = Decimal("0.5")
+# The floor the ratchet asks for sits this far below the measurement, rounded
+# down to two decimals. CI's four combined shards measure up to about 0.09 points
+# above a local run, so one paste leaves both measurements at or above the new
+# floor and within RATCHET_SLACK of it.
+RATCHET_MARGIN = Decimal("0.25")
 COUNT_FIELDS = (
     "covered_lines",
     "num_statements",
@@ -41,6 +55,30 @@ COUNT_FIELDS = (
 
 class CoverageGateError(RuntimeError):
     """Coverage evidence or policy is incomplete, narrowed, or below its floor."""
+
+
+class CoverageFloorError(CoverageGateError):
+    """Complete evidence whose measurement is below a floor or has outgrown one."""
+
+    def __init__(
+        self,
+        failures: list[str],
+        metrics: CoverageMetrics,
+        policy: CoveragePolicy,
+        file_count: int,
+    ) -> None:
+        super().__init__("coverage floor failed: " + "; ".join(failures))
+        self.failures = tuple(failures)
+        self.metrics = metrics
+        self.policy = policy
+        self.file_count = file_count
+
+
+def suggested_floor(measured: Decimal) -> Decimal:
+    """The floor the ratchet asks for: ``measured - RATCHET_MARGIN``, rounded down
+    to two decimals."""
+
+    return (measured - RATCHET_MARGIN).quantize(Decimal("0.01"), rounding=ROUND_FLOOR)
 
 
 @dataclass(frozen=True)
@@ -317,8 +355,14 @@ def evaluate(
     ):
         if actual < floor:
             failures.append(f"{label} {actual:.5f}% < {floor}%")
+        elif actual - floor > RATCHET_SLACK:
+            failures.append(
+                f"{label} {actual:.5f}% is more than {RATCHET_SLACK} points above "
+                f"its floor {floor}%: raise the floor to {suggested_floor(actual)} "
+                f"(tool.athena.coverage.{label}_floor in pyproject.toml)"
+            )
     if failures:
-        raise CoverageGateError("coverage floor failed: " + "; ".join(failures))
+        raise CoverageFloorError(failures, metrics, policy, len(reported_files))
 
     return metrics, policy, len(reported_files)
 
@@ -340,18 +384,10 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    try:
-        metrics, policy, file_count = evaluate(
-            args.report,
-            repo_root=args.repo_root,
-            config_path=args.config,
-        )
-    except CoverageGateError as exc:
-        print(f"coverage gate failed: {exc}", file=sys.stderr)
-        return 1
-
+def _print_measurement(
+    metrics: CoverageMetrics, policy: CoveragePolicy, file_count: int
+) -> None:
+    # scripts/gate.py reads the Line, Branch and Combined lines into its receipt.
     print(f"Coverage inventory: {file_count} runtime Python files")
     print(
         "Line coverage: "
@@ -370,6 +406,29 @@ def main(argv: list[str] | None = None) -> int:
         f"{metrics.combined_percent:.5f}% (floor {policy.combined}%)"
     )
     print(f"Excluded lines: {policy.excluded_lines} (accounted existing policy)")
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        metrics, policy, file_count = evaluate(
+            args.report,
+            repo_root=args.repo_root,
+            config_path=args.config,
+        )
+    except CoverageFloorError as exc:
+        # The evidence is complete, so the measurement is still reported, and each
+        # failed floor gets a line of its own that scripts/gate.py puts in its receipt.
+        _print_measurement(exc.metrics, exc.policy, exc.file_count)
+        for failure in exc.failures:
+            print(f"Coverage floor failed: {failure}")
+        print(f"coverage gate failed: {exc}", file=sys.stderr)
+        return 1
+    except CoverageGateError as exc:
+        print(f"coverage gate failed: {exc}", file=sys.stderr)
+        return 1
+
+    _print_measurement(metrics, policy, file_count)
     return 0
 
 
