@@ -9,11 +9,13 @@ from athena.aegis.project_brief import _group, _rows
 from athena.core import access
 
 RequestLane = Literal["candidate", "review_issue", "desk"]
+#: The desk's review-request lane: at most this many rows.
+DESK_LIMIT = 20
 # Scope and output bounds are controlled by the owning read surface.
 _LANES = {
     "candidate": ("r.candidate_id = ?", 5),
     "review_issue": ("r.review_issue_id = ?", 1),
-    "desk": ("r.reviewer_id = ?", 20),
+    "desk": ("r.reviewer_id = ?", DESK_LIMIT),
 }
 
 

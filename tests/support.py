@@ -403,3 +403,235 @@ class McpAgent:
             if refusal.answer is answer:
                 refusal.followed = True
         return result
+
+
+# --- a desk with every lane at its declared maximum ---------------------------------
+#
+# tests/test_desk_budget.py and tests/test_mcp_response_budget.py (F3) measure the
+# MCP answers against a workspace where one seat's desk has every lane full, each
+# text at the longest its write path declares. The numbers come from the code that
+# declares them, so a lane that grows is measured at its new size.
+
+
+def _desk_maxima() -> dict[str, int]:
+    from athena.aegis import (
+        desk,
+        issue_drafts,
+        lease_commands,
+        ready_queue,
+        review_request_projection,
+        run_state,
+        work_progress,
+    )
+    from athena.core import agent_notebook, run_control_commands
+
+    return {
+        "title_chars": issue_drafts.MAX_TITLE_CHARS,
+        "ready": ready_queue.READY_LIMIT,
+        "review_requests": review_request_projection.DESK_LIMIT,
+        "run_controls": desk.CONTROLS_LIMIT,
+        "run_control_payload_chars": run_control_commands.MAX_PAYLOAD_CHARS,
+        "worker_kill_requests": desk.WORKER_STOPS_LIMIT,
+        "claim_handoffs": desk.HANDOFFS_LIMIT,
+        "leases": desk.LEASES_LIMIT,
+        "questions": run_state.LANE_LIMIT,
+        "waiting_on": work_progress.LANE_LIMIT,
+        "notifications": desk.NOTIFICATIONS_LIMIT,
+        "delegations": desk.DELEGATIONS_LIMIT,
+        "notebook_lines": agent_notebook.NOTEBOOK_EXCERPT_LINES,
+        "note_chars": lease_commands.MAX_CLAIM_YIELD_NOTE_CHARS,
+        "attempted_work_chars": lease_commands.MAX_HANDOFF_ATTEMPTED_WORK_CHARS,
+        "evidence_item_chars": lease_commands.MAX_HANDOFF_EVIDENCE_ITEM_CHARS,
+        "evidence_json_chars": lease_commands.MAX_HANDOFF_EVIDENCE_JSON_CHARS,
+        "question_chars": lease_commands.MAX_HANDOFF_BLOCKING_QUESTION_CHARS,
+        "resume_chars": lease_commands.MAX_HANDOFF_RESUME_INSTRUCTIONS_CHARS,
+    }
+
+
+#: Characters per worker key (the heartbeat body's declared maximum) and per
+#: notebook line, which no write path bounds.
+WORKER_KEY_CHARS = 200
+NOTEBOOK_LINE_CHARS = 2_000
+
+
+def fill_desk_lanes(
+    app: FastAPI,
+    db_file: Path,
+    *,
+    admin: TestClient,
+    seat: Mapping[str, Any],
+    other: Mapping[str, Any],
+    project_id: int,
+) -> dict[str, Any]:
+    """Fill every lane of ``seat``'s desk one row past its maximum, with texts at
+    their longest: ready work, review requests, run controls, worker stop
+    requests, claim handoffs on held leases, lapsed leases, open questions and
+    the work held back behind them, delegations waiting on ``other``, unread
+    notifications and the notebook.
+
+    ``admin`` acts as the operator (an admin client). ``seat`` and ``other`` are
+    onboarded agents; ``seat`` needs ``docs:write`` for its notebook. The caller
+    turns the token rate limit off (``config.TOKEN_RATE_LIMIT_PER_MINUTE = 0``):
+    this is several hundred requests. Returns the maxima used and the ids made."""
+    from athena import config
+
+    maxima = _desk_maxima()
+    extra = 1  # one past the lane: a lane at its maximum is clipped, not short
+    seat_id, other_id = seat["user"]["id"], other["user"]["id"]
+    as_seat = TestClient(app, headers=bearer(seat))
+    as_other = TestClient(app, headers=bearer(other))
+
+    def ok(response, status: int = 200) -> Any:
+        assert response.status_code == status, response.text[:500]
+        return response.json()
+
+    def title(tag: str) -> str:
+        head = f"{tag} "
+        return head + "t" * (maxima["title_chars"] - len(head))
+
+    def issue(tag: str, *delegates: int) -> int:
+        made = ok(
+            admin.post("/issues", json={"title": title(tag), "project_id": project_id}),
+            201,
+        )["id"]
+        for user_id in delegates:
+            ok(admin.post(f"/issues/{made}/delegate", json={"user_id": user_id}), 201)
+        return made
+
+    def claim(client: TestClient, issue_id: int) -> str:
+        tag = client.get(f"/issues/{issue_id}").headers["ETag"]
+        held = client.post(
+            f"/issues/{issue_id}/claim", json={}, headers={"If-Match": tag}
+        )
+        return ok(held, 201)["generation"]
+
+    evidence_items = maxima["evidence_json_chars"] // (
+        maxima["evidence_item_chars"] + 8
+    )
+
+    def yield_for_input(client: TestClient, issue_id: int) -> None:
+        body = {
+            "generation": claim(client, issue_id),
+            "reason": "needs_input",
+            "note": "n" * maxima["note_chars"],
+            "attempted_work": "a" * maxima["attempted_work_chars"],
+            "evidence": ["e" * maxima["evidence_item_chars"]] * evidence_items,
+            "blocking_question": "q" * maxima["question_chars"],
+            "resume_instructions": "r" * maxima["resume_chars"],
+        }
+        ok(client.post(f"/issues/{issue_id}/yield", json=body), 201)
+
+    made: dict[str, list[int]] = {}
+    made["ready"] = [
+        issue(f"ready {n}", seat_id) for n in range(maxima["ready"] + extra)
+    ]
+
+    # Review requests: one candidate, by the operator, asked of the seat on
+    # one review issue each.
+    build = issue("build")
+    tag = admin.get(f"/issues/{build}").headers["ETag"]
+    held = ok(
+        admin.post(f"/issues/{build}/claim", json={}, headers={"If-Match": tag}), 201
+    )
+    submitted = ok(
+        admin.post(
+            f"/issues/{build}/complete",
+            json={
+                "generation": held["generation"],
+                "candidate_submission": {
+                    "identity": {
+                        "kind": "git",
+                        "source": "owner/repository",
+                        "revision": "a" * 40,
+                    },
+                    "expected_previous_candidate_id": None,
+                },
+            },
+        )
+    )
+    candidate = submitted["candidate_submission"]["candidate_id"]
+    made["review_requests"] = []
+    for n in range(maxima["review_requests"] + extra):
+        review = issue(f"review {n}", seat_id)
+        ok(
+            admin.post(
+                f"/issues/{review}/review-requests",
+                json={"candidate_id": candidate, "reviewer_id": seat_id},
+            )
+        )
+        made["review_requests"].append(review)
+
+    # Stop requests on the seat's workers: as many as one agent may register.
+    for n in range(min(maxima["worker_kill_requests"], config.WORKER_MAX_PER_AGENT)):
+        key = f"w{n}-" + "k" * (WORKER_KEY_CHARS - len(f"w{n}-"))
+        worker = ok(as_seat.put("/workers/heartbeat", json={"worker_key": key}))
+        ok(admin.post(f"/workers/{worker['id']}/kill"))
+
+    # Run controls: one live steer per run, so one run each.
+    for n in range(maxima["run_controls"] + extra):
+        run_id = f"desk-max-run-{n}"
+        ok(as_seat.put("/agent-runs/heartbeat", json={"run_id": run_id}))
+        ok(
+            admin.post(
+                "/run-controls",
+                json={
+                    "run_id": run_id,
+                    "kind": "steer",
+                    "payload": "p" * maxima["run_control_payload_chars"],
+                },
+            ),
+            201,
+        )
+
+    # Claim handoffs: the other agent yields with every text at its longest,
+    # and the seat claims the issue. That fills the held-lease lane too.
+    made["handed"] = []
+    for n in range(max(maxima["claim_handoffs"], maxima["leases"]) + extra):
+        handed = issue(f"handed {n}", other_id, seat_id)
+        yield_for_input(as_other, handed)
+        claim(as_seat, handed)
+        made["handed"].append(handed)
+
+    made["lapsed"] = []
+    for n in range(maxima["leases"] + extra):
+        lapsed = issue(f"lapsed {n}", seat_id)
+        claim(as_seat, lapsed)
+        made["lapsed"].append(lapsed)
+
+    # The seat's own open questions, which also hold the work back (not_offered).
+    made["asked"] = []
+    for n in range(maxima["questions"] + extra):
+        asked = issue(f"asked {n}", seat_id)
+        yield_for_input(as_seat, asked)
+        made["asked"].append(asked)
+
+    # Work the seat delegated that its delegate has not picked up.
+    made["waiting"] = []
+    for n in range(maxima["waiting_on"] + extra):
+        waiting = issue(f"waiting {n}")
+        ok(admin.put(f"/issues/{waiting}/assignee", json={"assignee_id": seat_id}))
+        ok(as_seat.post(f"/issues/{waiting}/delegate", json={"user_id": other_id}), 201)
+        made["waiting"].append(waiting)
+
+    notebook = ok(as_seat.post("/desk/notebook"), 201)["page"]
+    lines = ["l" * NOTEBOOK_LINE_CHARS] * (maxima["notebook_lines"] + extra)
+    ok(as_seat.patch(f"/pages/{notebook['id']}", json={"body": "\n".join(lines)}))
+
+    conn = db.connect(db_file)
+    try:
+        for issue_id in made["lapsed"]:
+            conn.execute(
+                "UPDATE issue_leases SET expires_at = '2000-01-01 00:00:00' "
+                "WHERE issue_id = ?",
+                (issue_id,),
+            )
+        for issue_id in made["waiting"]:
+            conn.execute(
+                "UPDATE issue_contributors SET added_at = '2000-01-01 00:00:00' "
+                "WHERE issue_id = ?",
+                (issue_id,),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"maxima": maxima, "issues": made, "candidate_id": candidate}

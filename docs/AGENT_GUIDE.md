@@ -38,7 +38,8 @@ row's own tool (`get_issue`, `get_page`), or a comment's with
 `conductor` profiles every answer fits a budget of 16,000 characters
 (`get_issue_work_context` 32,000). An answer the budget cut says so: a list by
 `truncated`, an object by `_truncated`, which names each cut field with its whole size
-and `next`, the tool and arguments that read the rest (for a body, `body_offset`).
+and `next`, the tool and arguments that read the rest (for a body, `body_offset`;
+for the desk and a project floor, `section` and `offset`).
 Never write back a body you read cut: read the rest first.
 
 ## 1. Orient with the desk

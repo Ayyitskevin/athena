@@ -225,6 +225,12 @@ DigestWindowMinutes = Annotated[
 MuteUntil = Annotated[str, Field(max_length=notifications.MAX_MUTE_UNTIL_CHARS)]
 # Where a list starts: the offset a truncated list's `next` names.
 ListOffset = Annotated[int, Field(strict=True, ge=0)]
+# A place in a sectioned answer (the desk, a floor), as a `_truncated` key
+# names it: keys and row indexes.
+AnswerSection = Annotated[
+    str,
+    Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$"),
+]
 # Where a body is read from: the offset a `_truncated` entry's `next` names.
 BodyOffset = Annotated[int, Field(strict=True, ge=0)]
 # A comment body read through a list: at most what one budgeted answer holds.
@@ -370,11 +376,13 @@ PROFILE_BASES: Mapping[str, str | None] = MappingProxyType(
 # client receives. A list over budget keeps the rows that fit and says
 # `truncated` with the `next` arguments; an object's long text or nested list is
 # cut with a `_truncated` entry naming the call that reads the rest
-# (athena.mcp.results). A larger budget is declared at the tool (budget=...),
-# with a comment saying why, and reviewed like a scope. A tool only `full`
-# carries has no budget: it answers as its REST route does.
+# (athena.mcp.results). What the declared cuts leave over budget is cut by shape
+# (results.shrink), which always ends within it. A larger budget is declared at
+# the tool (budget=...), with a comment saying why, and reviewed like a scope. A
+# tool only `full` carries has no budget: it answers as its REST route does.
 # tests/test_mcp_response_budget.py calls every budgeted tool against a seeded
-# large-content workspace and fails on any answer above its budget.
+# large-content workspace whose seat desk has every lane at its declared
+# maximum, and fails on any answer above its budget.
 DEFAULT_RESPONSE_BUDGET = 16_000
 BUDGETED_PROFILES = (SEAT, KNOWLEDGE, CONDUCTOR)
 
@@ -700,8 +708,9 @@ def _budget_cuts(
 
     The long texts are an issue's or a page's body (the rest is read by
     body_offset) and the work-context packet's description and comments; the
-    long lists are the packet's activity, the desk's delegation lane, the
-    delegation inbox and the event feed, each continued by its own paging."""
+    long lists are the packet's activity, the delegation inbox and the event
+    feed, each continued by its own paging. The desk declares none: its lanes
+    are cut by shape (``_budget_rest``)."""
     base = int(arguments.get("body_offset") or 0)
     if _is_issue(result):
         start = base if name == "get_issue" else 0
@@ -719,17 +728,6 @@ def _budget_cuts(
         ]
     if name == "get_issue_work_context" and isinstance(result.get("issue"), dict):
         return _work_context_cuts(result)
-    if name == "my_desk":
-        return [
-            results.Cut(
-                ("work", "delegations", "items"),
-                lambda kept: {
-                    "tool": "list_my_delegated_work",
-                    "arguments": {"offset": kept},
-                },
-                _mark_desk_delegations_cut,
-            )
-        ]
     if name == "list_my_delegated_work":
         offset = int(arguments.get("offset") or 0)
         return [
@@ -810,8 +808,90 @@ def _work_context_cuts(packet: dict[str, Any]) -> list[results.Cut]:
     ]
 
 
-def _mark_desk_delegations_cut(fitted: dict[str, Any], kept: int) -> None:
-    fitted["work"]["delegations"].update(has_more=True, next_offset=kept)
+# The desk's lanes that a seat tool pages on its own: the structural cut names
+# that tool; every other place in the desk is read on by my_desk(section=...).
+_DESK_LANE_READERS: Mapping[tuple[str, ...], Callable[[int], dict[str, Any]]] = (
+    MappingProxyType(
+        {
+            ("work", "delegations", "items"): lambda kept: {
+                "tool": "list_my_delegated_work",
+                "arguments": {"offset": kept},
+            },
+            ("signals", "notifications"): lambda kept: {
+                "tool": "list_notifications",
+                "arguments": {"unread": True, "offset": kept},
+            },
+            ("asks", "run_controls", "items"): lambda kept: {
+                "tool": "list_run_controls",
+                "arguments": {"state": "open", "offset": kept},
+            },
+        }
+    )
+)
+# The desk keeps the head of its ready lane (what claim_next_ready serves next)
+# and its identity block whole.
+DESK_READY_KEPT = 3
+_DESK_KEEP: Mapping[results.Path, int] = MappingProxyType(
+    {
+        ("work", "ready", "items"): DESK_READY_KEPT,
+        ("identity", "scopes"): results.WHOLE,
+        ("identity", "approval_required"): results.WHOLE,
+    }
+)
+
+
+# The object answers a tool reads one place of (`section`, `offset`), and the
+# arguments a section read repeats: the structural cut of either names that
+# read for what it cut.
+_SECTIONED: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {"my_desk": (), "get_project_floor": ("project_id",)}
+)
+
+
+def _budget_rest(
+    name: str, result: dict[str, Any], arguments: Mapping[str, Any]
+) -> results.Reader | None:
+    """The call that reads on from a structural cut (results.shrink), or None
+    for a tool no call reads on. A sectioned tool reads every place of its
+    answer by `section`; the desk reads three lanes by their own paging tool."""
+    if name not in _SECTIONED:
+        return None
+    fixed = {key: arguments[key] for key in _SECTIONED[name]}
+
+    def read(section: str, offset: int) -> dict[str, Any]:
+        return {
+            "tool": name,
+            "arguments": {**fixed, "section": section, "offset": offset},
+        }
+
+    section = arguments.get("section")
+    if section is None:
+
+        def whole(path: results.Path, kept: int) -> dict[str, Any] | None:
+            lane = _DESK_LANE_READERS.get(tuple(str(step) for step in path))
+            if name == "my_desk" and lane is not None:
+                return lane(kept)
+            return read(results.dotted(path), kept)
+
+        return whole
+    start = int(arguments.get("offset") or 0)
+
+    def one_section(path: results.Path, kept: int) -> dict[str, Any] | None:
+        head, *tail = path or ("",)
+        if head in ("items", "text") and not tail:
+            return read(section, start + kept)
+        if head == "items":
+            row, *inner = tail
+            return read(results.dotted((section, start + int(row), *inner)), kept)
+        if head == "value":
+            return read(results.dotted((section, *tail)), kept)
+        return read(section, start)
+
+    return one_section
+
+
+def _budget_keep(name: str) -> Mapping[results.Path, int] | None:
+    return _DESK_KEEP if name == "my_desk" else None
 
 
 def _tool_visible(required: str, scopes: frozenset[str] | None) -> bool:
@@ -1023,7 +1103,12 @@ def _one_object(function, *, read_only: bool, budget: int | None = None):
                     "not its declared result shape"
                 )
             if shape is ObjectShape and budget is not None:
-                return results.fit_object(result, _budget_cuts(name, result, kwargs))
+                return results.fit_object(
+                    result,
+                    _budget_cuts(name, result, kwargs),
+                    rest=_budget_rest(name, result, kwargs),
+                    keep=_budget_keep(name),
+                )
             return result
 
     shaped.__signature__ = signature.replace(  # type: ignore[attr-defined]

@@ -61,6 +61,17 @@ a half-second wake bound).
 | `signals` | unread notifications, `events_since_cursor`, `latest_visible_event_id` | 10 notifications, count capped at 500 |
 | `cursor` | your stored position, or `null` | — |
 
+**Over MCP the desk fits its budget.** `my_desk` answers within 16,000
+characters whatever the lanes hold. A desk over it is cut by shape: the largest
+lists and texts give up rows and characters first, the ready lane keeps at least
+its first three rows and the identity block stays whole. Each cut is named under
+`_truncated` with its whole size and `next`, the call that reads on: the lane's
+own tool for delegations (`list_my_delegated_work`), notifications
+(`list_notifications`) and run controls (`list_run_controls`), and otherwise
+`my_desk(section=<the cut's key>, offset=<what was kept>)`, which answers that
+one place of a fresh desk read: a list's rows or a text from `offset`. REST
+`GET /desk` is not cut.
+
 **It composes, it does not compute.** Every lane calls the reader that already
 owns that surface with *your* visibility applied — the same run-control inbox
 `list_run_controls` serves, the same delegation list, the same worker registry,

@@ -17,12 +17,14 @@ server around each call with ``budget``): a list over budget keeps the rows
 that fit, says ``truncated`` and names the ``next`` arguments that resume
 after them; ``fit_object`` cuts an object's long text or nested list the same
 honest way, recording each cut under ``_truncated`` with the tool call that
-reads the rest. Nothing is cut without saying so.
+reads the rest. An object still over budget after those declared cuts is cut by
+its shape (``shrink``), which always ends within the budget. Nothing is cut
+without saying so.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 import copy
@@ -280,18 +282,35 @@ def _render(
     return fitted
 
 
-def fit_object(result: dict[str, Any], cuts: Sequence[Cut]) -> dict[str, Any]:
-    """``result`` within the call's budget, cutting only the places in ``cuts``.
+def fit_object(
+    result: dict[str, Any],
+    cuts: Sequence[Cut],
+    *,
+    rest: Reader | None = None,
+    keep: Mapping[Path, int] | None = None,
+) -> dict[str, Any]:
+    """``result`` within the call's budget: the declared ``cuts`` first, then,
+    if it is still over, the structural cut (:func:`shrink`).
 
-    The places are listed least valuable first. Each is cut in turn, down to its
-    floor, until the object fits; the place that makes it fit keeps as much as
-    still fits. Every cut is recorded under ``_truncated[path]`` with the size
-    the answer carried and the call that reads on. An object the listed cuts
-    cannot bring within budget is returned cut to every floor, over budget, and
-    never cut anywhere unlisted."""
+    The declared places are listed least valuable first. Each is cut in turn,
+    down to its floor, until the object fits; the place that makes it fit keeps
+    as much as still fits. Every cut is recorded under ``_truncated[path]`` with
+    the size the answer carried and the call that reads on. An object the
+    declared cuts cannot bring within budget is handed to :func:`shrink`, which
+    always ends within it: ``rest`` names the call that reads what it cuts and
+    ``keep`` the lists that keep more than one row."""
     limit = _BUDGET.get()
     if limit is None or serialized_size(result) <= limit:
         return result
+    fitted = _fit_declared(result, cuts, limit)
+    if serialized_size(fitted) <= limit:
+        return fitted
+    return shrink(fitted, limit, rest=rest, keep=keep)
+
+
+def _fit_declared(
+    result: dict[str, Any], cuts: Sequence[Cut], limit: int
+) -> dict[str, Any]:
     kept: dict[int, int] = {}
 
     def fits(index: int, amount: int) -> bool:
@@ -311,6 +330,342 @@ def fit_object(result: dict[str, Any], cuts: Sequence[Cut]) -> dict[str, Any]:
         )
         break
     return _render(result, cuts, kept)
+
+
+# --- the structural cut ---------------------------------------------------------
+#
+# The declared cuts know where an answer's bulk usually is. They cannot know
+# every place: a desk lane at its maximum, a title no write path bounds, a
+# notebook line. What is still over budget after them is cut here, by shape,
+# and the cut always ends within the budget.
+
+#: A place in an answer: dict keys, and list indexes below a list.
+Path = tuple[str | int, ...]
+#: ``rest(path, kept)``: the call that reads what follows the first ``kept``
+#: rows (a list) or characters (a text) at ``path``, or None when no tool does.
+Reader = Callable[[Path, int], dict[str, Any] | None]
+
+#: A text reached through objects alone is cut only when it is longer than
+#: twice this, and then no shorter than this: the short texts an answer explains
+#: itself with (a lane's ``meaning``) stay whole.
+TEXT_FLOOR = 1_000
+
+
+#: A ``keep`` floor that keeps a list whole.
+WHOLE = 2**31
+
+
+@dataclass
+class _Plan:
+    lists: dict[Path, int]  # rows kept, per list
+    texts: dict[Path, int]  # characters kept, per long text outside a row
+    cap: int | None = None  # characters kept by every text inside a row
+
+
+def _places(
+    value: Any, path: Path = (), in_row: bool = False
+) -> Iterator[tuple[Path, Any]]:
+    """Every list, at any depth (a list inside a row is a place of its own,
+    named with the row's index), and every text longer than twice
+    :data:`TEXT_FLOOR` reached through objects alone, outside any
+    ``_truncated`` record."""
+    if isinstance(value, list):
+        for index, row in enumerate(value):
+            yield from _places(row, (*path, index), True)
+        return
+    if not isinstance(value, dict):
+        return
+    for key, inner in value.items():
+        if key == TRUNCATED_KEY:
+            continue
+        here = (*path, key)
+        if isinstance(inner, list):
+            yield here, inner
+            yield from _places(inner, here, True)
+        elif isinstance(inner, str) and not in_row and len(inner) > 2 * TEXT_FLOOR:
+            yield here, inner
+        elif isinstance(inner, dict):
+            yield from _places(inner, here, in_row)
+
+
+def _get(value: Any, path: Path) -> Any:
+    """The value at ``path`` (keys and row indexes), or None where it is gone."""
+    for step in path:
+        if isinstance(step, int):
+            if not isinstance(value, list) or step >= len(value):
+                return None
+            value = value[step]
+        elif isinstance(value, dict) and step in value:
+            value = value[step]
+        else:
+            return None
+    return value
+
+
+def _nested(path: Path) -> bool:
+    return any(isinstance(step, int) for step in path)
+
+
+def dotted(path: Path) -> str:
+    """A path as the ``_truncated`` key and the desk's section name write it."""
+    return ".".join(str(step) for step in path)
+
+
+def _build(value: Any, path: Path, plan: _Plan, in_row: bool) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: inner
+            if key == TRUNCATED_KEY
+            else _build(inner, (*path, key), plan, in_row)
+            for key, inner in value.items()
+        }
+    if isinstance(value, list):
+        rows = value[: plan.lists.get(path, len(value))]
+        return [
+            _build(row, (*path, index), plan, True) for index, row in enumerate(rows)
+        ]
+    if isinstance(value, str):
+        if in_row:
+            kept = len(value) if plan.cap is None else min(len(value), plan.cap)
+        else:
+            kept = plan.texts.get(path, len(value))
+        return value[:kept]
+    return value
+
+
+def _first_capped(rows: list[Any], cap: int) -> int | None:
+    """The index of the first row holding a text longer than ``cap``."""
+
+    def longer(value: Any) -> bool:
+        if isinstance(value, str):
+            return len(value) > cap
+        if isinstance(value, dict):
+            return any(
+                longer(inner) for key, inner in value.items() if key != TRUNCATED_KEY
+            )
+        if isinstance(value, list):
+            return any(longer(inner) for inner in value)
+        return False
+
+    return next((index for index, row in enumerate(rows) if longer(row)), None)
+
+
+def _flag_cut_list(parent: dict[str, Any], key: str, kept: int) -> None:
+    """The fields beside a cut list that say whether it is whole."""
+    if key == "items" and isinstance(parent.get("clipped"), bool):
+        parent["clipped"] = True
+    if isinstance(parent.get(f"{key}_clipped"), bool):
+        parent[f"{key}_clipped"] = True
+    if "has_more" in parent:
+        parent["has_more"] = True
+    if "next_offset" in parent:
+        parent["next_offset"] = kept
+
+
+def _render_plan(
+    result: dict[str, Any],
+    places: list[tuple[Path, Any]],
+    plan: _Plan,
+    rest: Reader,
+) -> dict[str, Any]:
+    """``result`` with ``plan`` applied and every cut recorded."""
+    fitted = _build(result, (), plan, False)
+    marks: dict[str, Any] = dict(fitted.get(TRUNCATED_KEY) or {})
+
+    def mark(name: str, unit: str, total: int, reader: dict[str, Any] | None) -> None:
+        entry = dict(marks.get(name) or {})
+        entry.setdefault(unit, total)
+        entry["next"] = reader
+        marks[name] = entry
+
+    for path, whole in places:
+        if isinstance(whole, list):
+            if _nested(path) and _get(fitted, path) is None:
+                continue  # its row went with its list, whose own mark says so
+            kept = plan.lists.get(path, len(whole))
+            if kept < len(whole):
+                mark(dotted(path), "total_items", len(whole), rest(path, kept))
+                parent = _get(fitted, path[:-1])
+                if isinstance(parent, dict):
+                    _flag_cut_list(parent, str(path[-1]), kept)
+            if plan.cap is not None and not _nested(path):
+                first = _first_capped(whole[:kept], plan.cap)
+                if first is not None:
+                    marks[f"{dotted(path)}[*]"] = {
+                        "max_chars": plan.cap,
+                        "next": rest((*path, first), 0),
+                    }
+        else:
+            kept = plan.texts.get(path, len(whole))
+            if kept < len(whole):
+                mark(dotted(path), "total_chars", len(whole), rest(path, kept))
+    if marks:
+        fitted[TRUNCATED_KEY] = marks
+    return fitted
+
+
+def _longest_row_text(places: list[tuple[Path, Any]]) -> int:
+    def longest(value: Any) -> int:
+        if isinstance(value, str):
+            return len(value)
+        if isinstance(value, dict):
+            return max(
+                (longest(v) for k, v in value.items() if k != TRUNCATED_KEY), default=0
+            )
+        if isinstance(value, list):
+            return max((longest(v) for v in value), default=0)
+        return 0
+
+    return max(
+        (
+            longest(whole)
+            for path, whole in places
+            if isinstance(whole, list) and not _nested(path)
+        ),
+        default=0,
+    )
+
+
+def shrink(
+    result: dict[str, Any],
+    limit: int,
+    *,
+    rest: Reader | None = None,
+    keep: Mapping[Path, int] | None = None,
+) -> dict[str, Any]:
+    """``result`` cut by its shape until it is within ``limit``. It always ends
+    within it, and always as one object.
+
+    1. Balance: the largest list (at any depth, a row's own list included) or
+       long text is halved, again and again, down to its floor: one row
+       (``keep[path]`` rows where given) for a list, :data:`TEXT_FLOOR`
+       characters for a text. The last one halved then keeps as much as still
+       fits.
+    2. Cap: the texts inside the rows still kept are cut to the longest length
+       that fits.
+    3. Drop: lists not in ``keep`` give up their last rows, largest first, and
+       then the kept lists do.
+    4. Should even that not fit (an object of very many keys), the answer is
+       replaced by one record that says so.
+
+    Every cut is recorded under ``_truncated``: a list with ``total_items``, a
+    text with ``total_chars``, the texts capped inside a list's rows as
+    ``<list>[*]`` with ``max_chars``, each with the ``next`` call ``rest``
+    names (null when no tool reads it). A list inside a row is named with the
+    row's index (``sections.0.chairs``)."""
+    reader: Reader = rest if rest is not None else (lambda path, kept: None)
+    floors = dict(keep or {})
+    places = list(_places(result))
+    plan = _Plan(
+        lists={path: len(v) for path, v in places if isinstance(v, list)},
+        texts={path: len(v) for path, v in places if isinstance(v, str)},
+    )
+
+    def fits() -> bool:
+        return serialized_size(_render_plan(result, places, plan, reader)) <= limit
+
+    def done() -> dict[str, Any]:
+        return _render_plan(result, places, plan, reader)
+
+    def floor(path: Path, whole: Any) -> int:
+        if isinstance(whole, list):
+            return min(floors.get(path, 1), len(whole))
+        return TEXT_FLOOR
+
+    def table(path: Path) -> dict[Path, int]:
+        return plan.lists if path in plan.lists else plan.texts
+
+    def settle(path: Path, low: int, high: int) -> None:
+        """Keep the most at ``path`` in [low, high] that fits; low fits."""
+
+        def fits_at(amount: int) -> bool:
+            table(path)[path] = amount
+            return fits()
+
+        table(path)[path] = _largest_fitting(fits_at, low, high)
+
+    if fits():
+        return done()
+
+    # 1. Balance: halve the largest place above its floor until it fits.
+    while True:
+        shown = _build(result, (), plan, False)
+        candidates = [
+            (serialized_size(_get(shown, path)), path, whole)
+            for path, whole in places
+            if table(path)[path] > floor(path, whole) and _get(shown, path) is not None
+        ]
+        if not candidates:
+            break
+        _, path, whole = max(candidates, key=lambda row: row[0])
+        before = table(path)[path]
+        table(path)[path] = max(floor(path, whole), before // 2)
+        if fits():
+            settle(path, table(path)[path], before - 1)
+            return done()
+
+    # 2. Cap the texts in the rows that are left.
+    def capped(amount: int) -> bool:
+        plan.cap = amount
+        return fits()
+
+    if capped(0):
+        plan.cap = _largest_fitting(capped, 0, _longest_row_text(places))
+        return done()
+
+    # 3. Drop rows: the lists not kept first, largest first; then the kept ones.
+    lists = [
+        (path, whole)
+        for path, whole in places
+        if isinstance(whole, list) and not _nested(path)
+    ]
+    lists.sort(key=lambda row: (row[0] in floors, -serialized_size(row[1])))
+    for path, _whole in lists:
+        before = plan.lists[path]
+        plan.lists[path] = 0
+        if fits():
+            settle(path, 0, before - 1)
+            plan.cap = _largest_fitting(capped, 0, _longest_row_text(places))
+            return done()
+
+    # 4. Nothing of this shape fits: one record says so.
+    return {
+        TRUNCATED_KEY: {
+            "*": {"total_chars": serialized_size(result), "next": reader((), 0)}
+        }
+    }
+
+
+def section(answer: dict[str, Any], name: str, offset: int) -> dict[str, Any]:
+    """One place of ``answer``, by the dotted name a ``_truncated`` key gives
+    it (object keys, and row indexes in a list): a list's rows from ``offset``,
+    a text from character ``offset``, or any other value whole. A name that
+    reaches nothing is refused, never answered empty."""
+    if offset < 0:
+        raise ValueError("offset must not be negative")
+    value: Any = answer
+    for step in name.split("."):
+        if isinstance(value, dict) and step in value and step != TRUNCATED_KEY:
+            value = value[step]
+        elif isinstance(value, list) and step.isdigit() and int(step) < len(value):
+            value = value[int(step)]
+        else:
+            raise ValueError(f"no section {name!r} in this answer")
+    if isinstance(value, list):
+        return {
+            "section": name,
+            "offset": offset,
+            "total_items": len(value),
+            "items": value[offset:],
+        }
+    if isinstance(value, str):
+        return {
+            "section": name,
+            "offset": offset,
+            "total_chars": len(value),
+            "text": value[offset:],
+        }
+    return {"section": name, "value": value}
 
 
 # --- the declared shapes -------------------------------------------------------
