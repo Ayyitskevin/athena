@@ -18,8 +18,8 @@ routes `/openapi.json` also lists, and it declares per operation the bearer sche
 `Idempotency-Key`, `If-Match` and `ETag`, the run headers and this refusal body.
 A failure that never reached Athena (a bad argument, say) is the same object, with
 `status_code` null and an MCP-side code such as `invalid_arguments`.
-Write bodies refuse a field they do not declare (422 `validation_error`), so a
-misspelt field is never silently dropped. A filter whose values are a closed set
+JSON write bodies refuse a field they do not declare (422 `validation_error`), so
+a misspelt field is never silently dropped. A filter whose values are a closed set
 (`kind` on search, `priority` on the issue list, `state` on dispatches) refuses an
 unknown value with 422 and names the allowed ones; a configured name such as a
 status or label still just matches nothing.

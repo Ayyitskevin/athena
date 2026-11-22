@@ -19,6 +19,7 @@ from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor
 from athena.core.refusals import Refusal
+from athena.core.request_models import RequestBody
 
 router = APIRouter(prefix="/webhooks", tags=["core"])
 
@@ -38,7 +39,7 @@ CODE_BY_KIND: dict[str, str] = {
 }
 
 
-class WebhookCreate(BaseModel):
+class WebhookCreate(RequestBody):
     url: str
     # Optional filter: deliver only events whose target_kind matches (e.g. "issue"
     # or "page"). Omit to receive every event.
@@ -65,7 +66,7 @@ class WebhookCreated(WebhookOut):
     secret: str
 
 
-class WebhookUpdate(BaseModel):
+class WebhookUpdate(RequestBody):
     # Pause (false) or resume (true) delivery without deleting the row (and its
     # cursor). The only mutable field — url/secret/event_kind are fixed at creation.
     active: bool

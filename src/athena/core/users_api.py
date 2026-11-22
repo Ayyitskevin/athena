@@ -106,7 +106,7 @@ def _bootstrap_token_matches(presented: str | None) -> bool:
     return secrets.compare_digest(expected.encode("ascii"), presented_bytes)
 
 
-class UserCreate(BaseModel):
+class UserCreate(RequestBody):
     email: str = Field(min_length=1, max_length=users.MAX_EMAIL_CHARS)
     name: str = Field(min_length=1, max_length=users.MAX_NAME_CHARS)
     # Optional: set it to enable browser login. Omit for agent/API-only users.
@@ -117,15 +117,15 @@ class UserCreate(BaseModel):
     is_agent: bool = False
 
 
-class UserRoleUpdate(BaseModel):
+class UserRoleUpdate(RequestBody):
     role: Role
 
 
-class UserAgentUpdate(BaseModel):
+class UserAgentUpdate(RequestBody):
     is_agent: bool
 
 
-class UserPasswordReset(BaseModel):
+class UserPasswordReset(RequestBody):
     password: str
 
 

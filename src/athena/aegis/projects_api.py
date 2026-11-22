@@ -44,17 +44,23 @@ from athena.aegis.rest_support import (
     if_match_values,
 )
 from athena.core.refusals import Refusal
+from athena.core.request_models import RequestBody
 
 
-class ProjectCreate(BaseModel):
+class ProjectCreate(RequestBody):
     name: str
     # The issue-key prefix (e.g. "ATH" -> ATH-1, ATH-2). Required on create and
     # the canonical short identity; validated for shape and uniqueness below.
     key: str
     description: str = ""
+    # 'public' | 'private', validated like PUT /projects/{id}/visibility. Omit it
+    # for the deployment's default (ATHENA_DEFAULT_VISIBILITY). The create command
+    # applies it in the create's own transaction, so a project asked for as
+    # private is never public, even for an instant.
+    visibility: str | None = None
 
 
-class ProjectEdit(BaseModel):
+class ProjectEdit(RequestBody):
     # A partial edit of the project itself (not an issue's link to it — that is
     # ProjectUpdate above). Send any subset; unset fields are left unchanged.
     name: str | None = None
@@ -62,7 +68,7 @@ class ProjectEdit(BaseModel):
     description: str | None = None
 
 
-class ProjectPolicyUpdate(BaseModel):
+class ProjectPolicyUpdate(RequestBody):
     block_agent_closes_when_blocked: StrictBool
 
 
@@ -82,14 +88,14 @@ class ProjectOut(BaseModel):
     block_agent_closes_when_blocked: bool = False
 
 
-class VisibilityUpdate(BaseModel):
+class VisibilityUpdate(RequestBody):
     # The privacy flag for a project/space: 'public' | 'private'. A dedicated body
     # (not folded into the project edit) because flipping privacy is creator-OR-admin,
     # while editing name/key/description stays creator-only — different gates.
     visibility: str
 
 
-class MemberAdd(BaseModel):
+class MemberAdd(RequestBody):
     user_id: int
 
 
@@ -103,7 +109,7 @@ class MemberOut(BaseModel):
     added_at: str
 
 
-class StatusCreate(BaseModel):
+class StatusCreate(RequestBody):
     name: str
     category: str  # 'todo' | 'doing' | 'done'
 
@@ -126,6 +132,19 @@ def _validate_key(key: str) -> str:
             code="validation_error",
         )
     return normalized
+
+
+def _validate_visibility(value: str) -> str:
+    """Normalize a requested project visibility, or raise 422: one rule for the
+    create body and the visibility PUT."""
+    visibility = value.strip().lower()
+    if visibility not in ("public", "private"):
+        raise Refusal(
+            status_code=422,
+            detail="visibility must be 'public' or 'private'",
+            code="validation_error",
+        )
+    return visibility
 
 
 def _tagged_project(project: dict, response: Response) -> dict:
@@ -183,20 +202,24 @@ def create_project(
             status_code=422, detail="project name is required", code="validation_error"
         )
     key = _validate_key(payload.key)
+    visibility = (
+        None if payload.visibility is None else _validate_visibility(payload.visibility)
+    )
     if projects.get_project_by_name(conn, name) is not None:
         raise Refusal(status_code=409, detail="project already exists", code="conflict")
     if projects.get_project_by_key(conn, key) is not None:
         raise Refusal(
             status_code=409, detail="project key already in use", code="conflict"
         )
-    # The command owns the insert, its default statuses, AND the atomic
-    # 'created_project' audit event — a workspace container never appears silently.
+    # The command owns the insert, its default statuses, the requested visibility,
+    # AND the atomic audit events — a workspace container never appears silently.
     return project_commands.create_project(
         conn,
         actor_id=actor["id"],
         name=name,
         key=key,
         description=payload.description,
+        visibility=visibility,
     )
 
 
@@ -448,13 +471,7 @@ def set_project_visibility(
 ) -> dict:
     # Creator or admin only (404 if missing, 403 otherwise).
     project = _project_for_privacy(conn, project_id, actor)
-    visibility = payload.visibility.strip().lower()
-    if visibility not in ("public", "private"):
-        raise Refusal(
-            status_code=422,
-            detail="visibility must be 'public' or 'private'",
-            code="validation_error",
-        )
+    visibility = _validate_visibility(payload.visibility)
     # Setting it to what it already is is a no-op — no write, no audit event.
     if visibility == project["visibility"]:
         return project

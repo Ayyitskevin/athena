@@ -104,13 +104,13 @@ def open_notebook(
     return {"page": _tagged_page(conn, page, response), "created": created}
 
 
-class SpaceCreate(BaseModel):
+class SpaceCreate(RequestBody):
     key: str
     name: str
     description: str = ""
 
 
-class SpaceUpdate(BaseModel):
+class SpaceUpdate(RequestBody):
     key: str | None = None
     name: str | None = None
     description: str | None = None
@@ -128,14 +128,14 @@ class SpaceOut(BaseModel):
     visibility: str = "public"
 
 
-class VisibilityUpdate(BaseModel):
+class VisibilityUpdate(RequestBody):
     # The space privacy flag: 'public' | 'private'. Defined here (not imported from
     # Aegis) so Mentor keeps no dependency on a sibling feature module — same reason
     # LabelOut is redefined above.
     visibility: str
 
 
-class MemberAdd(BaseModel):
+class MemberAdd(RequestBody):
     user_id: int
 
 
@@ -195,7 +195,7 @@ class PageUpdate(RequestBody):
     body: str | None = None
 
 
-class ParentUpdate(BaseModel):
+class ParentUpdate(RequestBody):
     # null = move to the top level (no parent). Kept a dedicated body, like the
     # issue assignee/project PUTs, so "remove the parent" (null) is unambiguous.
     parent_id: int | None = None
@@ -234,13 +234,13 @@ class LinkMentionIn(RequestBody):
     target_id: int
 
 
-class PageFromTemplate(BaseModel):
+class PageFromTemplate(RequestBody):
     template_id: int
     title: str
     parent_id: int | None = None
 
 
-class PageCommentCreate(BaseModel):
+class PageCommentCreate(RequestBody):
     body: str
 
 
