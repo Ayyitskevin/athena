@@ -9,11 +9,12 @@
 # First run, once per volume — `athena-serve` refuses a database that does not
 # exist, and creating the first admin is meant to be an explicit act:
 #
-#   ATHENA_BOOTSTRAP_TOKEN=$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))') \
-#     docker compose run --rm athena --bootstrap
+#   export ATHENA_BOOTSTRAP_TOKEN=$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')
+#   docker compose run --rm --name athena-bootstrap athena --bootstrap
 #
-# Then create the first user against that token, stop it, and `docker compose up -d`
-# without the token in the environment.
+# Then create the first user against that token from inside that container
+# (`docker exec`; docs/DOCKER.md has the request), stop it, and
+# `unset ATHENA_BOOTSTRAP_TOKEN` before `docker compose up -d`.
 
 services:
   athena:
@@ -25,13 +26,18 @@ services:
       # there is one thing to back up and it is always internally consistent.
       - athena-data:/var/lib/athena
     environment:
-      # Left unset on purpose rather than given a default:
-      #   ATHENA_BOOTSTRAP_TOKEN  — only for the one-time bootstrap run above.
-      #   ATHENA_ALLOWED_AUTHORITIES — derived in `local` mode; REQUIRED for tailnet.
       ATHENA_NETWORK_MODE: local
       ATHENA_LOG_LEVEL: INFO
-    # The image's HEALTHCHECK asks over loopback from inside the container, which is
-    # where a local-mode bind actually lives.
+      # Named without a value on purpose: Compose passes it from the shell when it
+      # is set there (the one-time bootstrap run above) and leaves it unset in the
+      # container when it is not. Compose passes only the variables listed here,
+      # and a "${ATHENA_BOOTSTRAP_TOKEN}" value would set an empty one instead.
+      ATHENA_BOOTSTRAP_TOKEN:
+      # Left out on purpose rather than given a default:
+      #   ATHENA_ALLOWED_AUTHORITIES — derived in `local` mode; REQUIRED for tailnet.
+    # The image's HEALTHCHECK asks /healthz (liveness) over loopback from inside the
+    # container, which is where a local-mode bind actually lives. Readiness is
+    # /readyz; docs/DOCKER.md shows how to ask it.
 
     # --- reaching it from another machine -----------------------------------
     # Loopback inside a container namespace is reachable only from that namespace.
