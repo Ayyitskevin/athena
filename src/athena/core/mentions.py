@@ -36,7 +36,7 @@ from __future__ import annotations
 import re
 import sqlite3
 
-from athena.core import search
+from athena.core import access, search
 
 # How many candidate hits to pull from FTS before confirming them in Python. The
 # confirm pass drops candidates (a prefix-token match is not a phrase match), so
@@ -165,16 +165,38 @@ def _bodies(
     return {r["id"]: r["body"] for r in rows}
 
 
-def mention_text(conn: sqlite3.Connection, kind: str, target_id: int) -> str | None:
+def _visible(
+    conn: sqlite3.Connection, kind: str, target_id: int, actor: dict | None
+) -> bool:
+    """The visible-read rule for a mention target, by id: the same rule as
+    ``_page_for_read`` / ``issue_for_read``, reached through core.access so this
+    module still imports neither mentor nor aegis."""
+    if kind == "page":
+        return access.can_see_page(conn, actor, target_id)
+    if kind == "issue":
+        return access.can_see_issue(conn, actor, target_id)
+    return False
+
+
+def mention_text(
+    conn: sqlite3.Connection, kind: str, target_id: int, *, actor: dict | None
+) -> str | None:
     """The text that counts as naming this target: a page's title, or an issue's
-    key (ATH-12).
+    key (ATH-12), as ``actor`` may read it.
 
     An issue is named by its KEY, not its title — issue titles are sentences
     ("Fix the login redirect") that recur in prose constantly, so title matching
     would bury the operator in false positives. A backlog issue has no key and
     therefore no mention text; it returns None and the surface says so rather
     than showing an empty list that looks like "no mentions".
+
+    A target the actor cannot see also returns None — hidden reads as missing.
+    ``actor`` is required, not defaulted, because a caller that resolves a
+    target by a client-supplied id without it turns the title or key into an
+    oracle for private work (review SEC-2).
     """
+    if not _visible(conn, kind, target_id, actor):
+        return None
     if kind == "page":
         row = conn.execute(
             "SELECT title FROM pages WHERE id = ?", (target_id,)
@@ -192,7 +214,9 @@ def mention_text(conn: sqlite3.Connection, kind: str, target_id: int) -> str | N
     return None
 
 
-def link_token(conn: sqlite3.Connection, kind: str, target_id: int) -> str:
+def link_token(
+    conn: sqlite3.Connection, kind: str, target_id: int, *, actor: dict | None
+) -> str:
     """The reference token that links to this target, in the form an author would
     have written by hand: ``[[ATH-12]]`` for a keyed issue, ``[[Title]]`` for a
     page, falling back to the always-valid numeric ``[[kind:id]]``.
@@ -201,8 +225,12 @@ def link_token(conn: sqlite3.Connection, kind: str, target_id: int) -> str:
     prose: an edit that turns "see the Fleet operating guide" into "see the
     [[Fleet operating guide]]" reads as the author's own sentence, while
     ``[[page:41]]`` reads as machinery.
+
+    The human form is only produced for a target ``actor`` may read; for any
+    other id it is the numeric form, which carries nothing the caller did not
+    already supply. Callers check ``mention_text`` first and refuse on None.
     """
-    text = mention_text(conn, kind, target_id)
+    text = mention_text(conn, kind, target_id, actor=actor)
     if kind == "page" and text:
         # Only safe when the title round-trips: resolve_title_ref refuses an
         # ambiguous title, so a duplicated title must use the numeric form or the
@@ -248,7 +276,7 @@ def unlinked_mentions(
     Returning an unconfirmed FTS hit would be inventing a mention.
     """
     limit = max(1, min(limit, MAX_LIMIT))
-    needle = mention_text(conn, kind, target_id)
+    needle = mention_text(conn, kind, target_id, actor=actor)
     empty: dict = {
         "needle": needle,
         "token": None,
@@ -309,7 +337,7 @@ def unlinked_mentions(
     total = len(confirmed)
     return {
         "needle": needle,
-        "token": link_token(conn, kind, target_id),
+        "token": link_token(conn, kind, target_id, actor=actor),
         "items": confirmed[:limit],
         "shown": min(total, limit),
         "total": total,

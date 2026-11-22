@@ -903,10 +903,17 @@ def link_page_mention(
     page = _page_for_read(conn, page_id, actor)
     if payload.target_kind not in ("issue", "page"):
         raise HTTPException(status_code=422, detail="target_kind must be issue or page")
-    needle = mentions.mention_text(conn, payload.target_kind, payload.target_id)
+    # The target resolves through the caller's visible-read rule: a hidden target
+    # has no mention text, so it is the same 404 as a missing one — never a 409
+    # or a 200 that would confirm a private id, title, or key exists.
+    needle = mentions.mention_text(
+        conn, payload.target_kind, payload.target_id, actor=actor
+    )
     if not needle:
         raise HTTPException(status_code=404, detail="no such link target")
-    token = mentions.link_token(conn, payload.target_kind, payload.target_id)
+    token = mentions.link_token(
+        conn, payload.target_kind, payload.target_id, actor=actor
+    )
     body = mentions.linkify_first(page["body"] or "", needle, token)
     if body is None:
         # The mention the caller acted on is no longer there — the body changed

@@ -93,14 +93,18 @@ def link_page_mention(
     assert page is not None
     if target_kind not in ("issue", "page"):
         return HTMLResponse('<div class="error">Unknown target.</div>', status_code=422)
-    needle = mentions.mention_text(conn, target_kind, target_id)
+    # Hidden reads as missing: the target resolves through the viewer's
+    # visible-read rule, so a private one gets the same 404 as a missing id.
+    needle = mentions.mention_text(conn, target_kind, target_id, actor=user)
     if not needle:
         return HTMLResponse(
             '<div class="error">That link target no longer exists.</div>',
             status_code=404,
         )
     body = mentions.linkify_first(
-        page["body"] or "", needle, mentions.link_token(conn, target_kind, target_id)
+        page["body"] or "",
+        needle,
+        mentions.link_token(conn, target_kind, target_id, actor=user),
     )
     if body is None:
         # The body changed under the operator; the mention they clicked is gone.
