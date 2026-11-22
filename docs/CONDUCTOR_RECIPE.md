@@ -73,7 +73,8 @@ all eligible projects and backlog. Any active lease held by that account blocks
 queue pickup, even on another project; ordinary direct claims still allow several
 possessions. `limit` (1–5, default 1) bounds candidate attempts, never acquisitions.
 The empty outcomes are `already_holding`, `nothing_ready`, or
-`candidates_conflicted` (replacing the old client-only `lost_race`).
+`candidates_conflicted` (replacing the old client-only `lost_race`); each carries
+`review_request`, the review the desk asks of that account, or null.
 
 Choose an `idempotency_key` before a retryable pickup and preserve its credential,
 arguments and run lineage. Success and empty outcomes both replay as historical
@@ -114,7 +115,12 @@ already be assigned or delegated to it and have access to the submission.
 The queue shows the request separately from any reported verdict.
 
 The reviewer starts from `my_desk().asks.review_requests`, opens the review
-issue's full context, and claims that issue. The request supplies the candidate's
+issue's full context, and claims that issue. Because the review issue is
+`blocked_by` the build, which stays open under review, `claim_next_ready` does not
+claim it: an answer that claims nothing names the waiting request in
+`review_request`, with the `claim_issue` call (and the review issue's ETag) that
+takes it. A second request after the reviewer's own HOLD answers that completion,
+so an unblocked review issue is ready for the reviewer again. The request supplies the candidate's
 identity, the source issue URL and the original completion event ID. If the
 event has aged out of recent activity, use `wait_for_events` starting just
 before that event ID and confirm the returned ID before reading its evidence.

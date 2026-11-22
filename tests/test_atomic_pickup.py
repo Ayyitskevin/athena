@@ -281,7 +281,10 @@ def test_account_guard_includes_other_project_and_unlisted_possession(setup, con
         "attempts",
         "reason",
         "held_by_you",
+        "review_request",
     }
+    # No review is asked of this account, and the answer says so (D16).
+    assert result["review_request"] is None
     assert counts(path) == (1, 1)
 
 

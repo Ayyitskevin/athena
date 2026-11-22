@@ -1,8 +1,8 @@
 # Work awaiting an answer is not ready
 
 Date: 2026-11-22. This is the decision date.
-Status: Accepted, owner instruction (D3).
-Superseded-by: None.
+Status: Accepted, owner instruction (D3). Superseded in part on 2026-11-22: what answers a completion only.
+Superseded-by: [A review request answers the reviewer's completion](2026-11-22-review-request-answers.md), for what answers a completion. The rest of this record stands.
 
 ## Context
 

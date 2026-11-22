@@ -84,7 +84,12 @@ An issue is **ready for you** when all of these hold:
   Either hold lifts when a newer comment, status change, assignment change or claim
   is made by an account other than the one that settled it. The Automation actor's
   events and imported history never count. `blocked` and `capacity` yields hold
-  nobody back.
+  nobody back. A completion is also answered by a review request: when the
+  issue's newest request names you, was made by another account after your
+  completion, and asks about the source's current candidate, the issue is ready
+  for you again. It lifts no `needs_input` hold, answers for nobody it does not
+  name, and a request you cannot see answers nothing
+  ([decision](decisions/2026-11-22-review-request-answers.md)).
 
 The lane never offers work a claim would refuse. Three rules worth knowing:
 - **A blocker you cannot see still blocks.** The lane does not say what it is.
@@ -125,8 +130,27 @@ No-acquisition outcomes are:
 - `already_holding`: the account has any active lease, across all projects,
   including hidden, done and archived issues. Only its count is returned.
 - `nothing_ready`: no eligible candidate exists in the requested scope.
+
 - `candidates_conflicted`: all attempted candidates conflicted. This replaces the
   old client-only `lost_race` result; selection and acquisition are now serialized.
+
+Every no-acquisition outcome also carries `review_request`: null, or the newest
+review request naming you that `asks.review_requests` shows as `requested`, with
+the call that claims its review issue. Pickup does not claim a review: the recipe
+links a review issue `blocked_by` the build it reviews, and that blocker keeps
+its meaning, so the answer names the review instead.
+
+```json
+{"request_id": 7, "review_issue_id": 12, "candidate_id": 3, "source_issue_id": 11,
+ "pending_total": 1,
+ "next": {"tool": "claim_issue",
+          "arguments": {"issue_id": 12, "if_match": "\"<the review issue's ETag>\""},
+          "hint": "pickup does not take a review; ..."}}
+```
+
+`if_match` is the review issue's ETag when the answer was made; a replayed receipt
+carries it as it was, so a 412 means read the issue again. `pending_total` counts
+the waiting requests among the desk lane's newest, not every request ever made.
 
 Overlapping pickup calls for one account cannot acquire different issues while
 its first possession remains active, including calls using different tokens or

@@ -516,6 +516,7 @@ def test_claim_next_ready_with_nothing_ready_refuses_cleanly(tmp_path):
                 "reason": "nothing_ready",
                 "ready_total": 0,
                 "attempts": [],
+                "review_request": None,
             }
         finally:
             tc.__exit__(None, None, None)

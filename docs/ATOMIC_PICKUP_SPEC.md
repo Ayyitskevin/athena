@@ -80,6 +80,15 @@ another account that is not Automation. Pickup selects through that predicate, s
 such an issue yields `nothing_ready` when it is the only candidate. Receipts,
 replay, the account guard and direct `claim_issue` are unchanged.
 
+Amended again 2026-11-22 by
+[the review-request decision](decisions/2026-11-22-review-request-answers.md):
+a pending review request naming the caller, made by another account after the
+caller's completion, also answers that completion. Each no-acquisition outcome
+carries `review_request`, the newest waiting request the caller's desk shows with
+the `claim_issue` call for its review issue, or null. It is part of the receipt
+and replays as recorded. Pickup still claims only through the ready predicate, so
+a review issue with an open blocker is named, never claimed.
+
 Order remains delegated-to-me first, then descending priority, creation time and
 issue ID (both ascending). `project_id` optionally restricts candidates to one visible existing
 project. Omitted/null means all eligible projects plus backlog; it does not mean

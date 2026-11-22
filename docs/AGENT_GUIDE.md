@@ -138,7 +138,11 @@ issue, it is not offered to you again. After any account yields an issue with
 account other than the one that completed or yielded it comments, changes its status
 or assignment, or claims it. Automation and imported history do not count. Until then
 the desk lists it under `work.waiting_on_operator.not_offered`, with the reason
-`completed_by_you` or `awaiting_answer`. A direct `claim_issue` still works. See
+`completed_by_you` or `awaiting_answer`. A direct `claim_issue` still works. A
+completed issue is also ready for you again when another account requests your
+review on it, as a conductor does after a HOLD. Pickup never claims a review whose
+issue is blocked; when it claims nothing and the desk asks you for a review, its
+`review_request` names the request and the `claim_issue` call that takes it. See
 [DESK.md](DESK.md#the-ready-lane).
 
 For a direct claim of an issue you chose and read, two values guard it:

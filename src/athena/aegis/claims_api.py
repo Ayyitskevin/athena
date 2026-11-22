@@ -212,20 +212,52 @@ class ReadyClaimAcquired(ReadyClaimBase):
     open_handoff: ReadyClaimHandoff | None
 
 
-class ReadyClaimHolding(ReadyClaimBase):
+class ReadyClaimReviewCall(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    issue_id: int
+    if_match: str
+
+
+class ReadyClaimReviewNext(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    tool: Literal["claim_issue"]
+    arguments: ReadyClaimReviewCall
+    hint: str
+
+
+class ReadyClaimReviewRequest(BaseModel):
+    """A review the desk asks of this account, which pickup does not claim."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    request_id: int
+    review_issue_id: int
+    candidate_id: int
+    source_issue_id: int
+    pending_total: int = Field(ge=1)
+    next: ReadyClaimReviewNext
+
+
+class ReadyClaimNothing(ReadyClaimBase):
     claimed: Literal[False]
+    # The newest review request naming you that is still waiting, with the
+    # call that claims its review issue; null when the desk holds none (D16).
+    review_request: ReadyClaimReviewRequest | None
+
+
+class ReadyClaimHolding(ReadyClaimNothing):
     reason: Literal["already_holding"]
     held_by_you: int = Field(ge=1)
 
 
-class ReadyClaimEmpty(ReadyClaimBase):
-    claimed: Literal[False]
+class ReadyClaimEmpty(ReadyClaimNothing):
     reason: Literal["nothing_ready"]
     ready_total: Literal[0]
 
 
-class ReadyClaimConflicted(ReadyClaimBase):
-    claimed: Literal[False]
+class ReadyClaimConflicted(ReadyClaimNothing):
     reason: Literal["candidates_conflicted"]
 
 

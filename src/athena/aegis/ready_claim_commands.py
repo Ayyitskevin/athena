@@ -15,6 +15,7 @@ from athena.aegis import (
     lease_commands,
     leases,
     ready_queue,
+    review_request_projection,
     work_context,
 )
 from athena.aegis.issue_commands import IssueCommandError, _require_issue_writer
@@ -23,6 +24,49 @@ from athena.core.ids import MAX_SQLITE_INTEGER
 
 SCHEMA = "athena.ready_claim.v1"
 MAX_ATTEMPTS = 5
+
+
+def waiting_review(
+    conn: sqlite3.Connection, *, actor: dict, now: datetime
+) -> dict | None:
+    """The review the desk is asking this account for, named by an answer that
+    claims nothing (D16): the newest visible request naming the caller that is
+    still ``requested``, and the claim that takes its review issue. Pickup does
+    not claim it: the review issue may be blocked by the build it reviews, and
+    a blocker keeps its meaning. The desk's own read decides, so a request the
+    caller cannot see reads as absent and the two never disagree."""
+    lane = review_request_projection.visible_requests(
+        conn, actor=actor, lane="desk", scope_id=int(actor["id"]), now=now
+    )
+    pending = [
+        row for row in (lane or {}).get("items", []) if row["status"] == "requested"
+    ]
+    if not pending:
+        return None
+    request = pending[0]
+    issue = issues.get_issue(conn, request["review_issue_id"])
+    assert issue is not None  # the projection read it under this snapshot
+    return {
+        "request_id": request["request_id"],
+        "review_issue_id": request["review_issue_id"],
+        "candidate_id": request["candidate_id"],
+        "source_issue_id": request["source_issue_id"],
+        # Requests still waiting among the desk lane's newest, not a count of
+        # every request ever made.
+        "pending_total": len(pending),
+        "next": {
+            "tool": "claim_issue",
+            "arguments": {
+                "issue_id": request["review_issue_id"],
+                "if_match": issue_etags.current_etag(conn, issue),
+            },
+            "hint": (
+                "pickup does not take a review; claim its review issue directly "
+                "(if_match is its ETag at this answer, so a 412 means re-read "
+                "it), then read the source's work context"
+            ),
+        },
+    }
 
 
 def claim_next_ready(
@@ -86,13 +130,25 @@ def claim_next_ready(
         held = leases.count_active_leases_held_by(
             conn, holder_id=int(actor["id"]), now=now
         )
+        # Every answer that claims nothing names a review the desk is asking
+        # for, or says null: present on each, so absence is never a default.
         if held:
-            return {**result, "reason": "already_holding", "held_by_you": held}
+            return {
+                **result,
+                "reason": "already_holding",
+                "held_by_you": held,
+                "review_request": waiting_review(conn, actor=actor, now=now),
+            }
         lane = ready_queue.build_ready(
             conn, actor=actor, now=now, limit=limit, project_id=project_id
         )
         if not lane["items"]:
-            return {**result, "reason": "nothing_ready", "ready_total": 0}
+            return {
+                **result,
+                "reason": "nothing_ready",
+                "ready_total": 0,
+                "review_request": waiting_review(conn, actor=actor, now=now),
+            }
         for item in lane["items"]:
             issue_id = item["issue"]["id"]
             issue = issues.get_issue(conn, issue_id)
@@ -124,4 +180,8 @@ def claim_next_ready(
                 "previous_lease": item["previous_lease"],
                 "open_handoff": item["open_handoff"],
             }
-        return {**result, "reason": "candidates_conflicted"}
+        return {
+            **result,
+            "reason": "candidates_conflicted",
+            "review_request": waiting_review(conn, actor=actor, now=now),
+        }

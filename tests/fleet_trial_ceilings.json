@@ -1,8 +1,8 @@
 {
-  "note": "Ceilings for tests/test_fleet_trial.py, per role and in total: tool_calls counts every MCP tool call the scripted agent makes in one run of the conductor recipe, bytes_received the UTF-8 bytes of the text content of every answer, single_acks the calls that acknowledge one notification. All are the measured values, identical over five runs, with no headroom. A requirement that removes calls lowers them in the same commit; raise one only with a stated reason in the same PR. The reviewer's scratch run against a live demo (2026-11-22) counted the same 142 calls and 39 acknowledgements and 382,369 bytes: its longer ids and names, and put-down drains that re-read each seat's feed from its first cursor, account for the difference.",
-  "conductor": {"tool_calls": 73, "bytes_received": 137141, "single_acks": 23},
-  "design": {"tool_calls": 19, "bytes_received": 60041, "single_acks": 2},
-  "build": {"tool_calls": 27, "bytes_received": 65446, "single_acks": 6},
-  "review": {"tool_calls": 23, "bytes_received": 96624, "single_acks": 8},
-  "total": {"tool_calls": 142, "bytes_received": 359252, "single_acks": 39}
+  "note": "Ceilings for tests/test_fleet_trial.py, per role and in total: tool_calls counts every MCP tool call the scripted agent makes in one run of the conductor recipe, bytes_received the UTF-8 bytes of the text content of every answer, single_acks the calls that acknowledge one notification. All are the measured values, identical over five runs, with no headroom. A requirement that removes calls lowers them in the same commit; raise one only with a stated reason in the same PR. The reviewer's scratch run against a live demo (2026-11-22) counted the same 142 calls and 39 acknowledgements and 382,369 bytes: its longer ids and names, and put-down drains that re-read each seat's feed from its first cursor, account for the difference. F2 lowered bytes_received by 1,177 (from 359,252): the desk's ready-lane and not_offered meanings were shortened when they gained the review-request answer, and each desk read carries 107 fewer characters.",
+  "conductor": {"tool_calls": 73, "bytes_received": 136927, "single_acks": 23},
+  "design": {"tool_calls": 19, "bytes_received": 59720, "single_acks": 2},
+  "build": {"tool_calls": 27, "bytes_received": 65125, "single_acks": 6},
+  "review": {"tool_calls": 23, "bytes_received": 96303, "single_acks": 8},
+  "total": {"tool_calls": 142, "bytes_received": 358075, "single_acks": 39}
 }

@@ -185,11 +185,11 @@ why = """\
 [[guarded]]
 module = "ready_queue.py"
 function = "awaiting_answer_sql"
-pattern = '(?s)rqs\.imported_at IS NULL.*rqa\.imported_at IS NULL'
+pattern = '(?s)rqs\.imported_at IS NULL.*rqe\.imported_at IS NULL.*rqk\.imported_at IS NULL.*rqa\.imported_at IS NULL'
 why = """\
     the ready rule's settlement and its answer are both native acts: an \
     imported claim_completed must not hold work back from an account, and an \
-    imported comment must not hand it back"""
+    imported comment, review request or candidate must not hand it back"""
 
 [[guarded]]
 module = "ready_queue.py"

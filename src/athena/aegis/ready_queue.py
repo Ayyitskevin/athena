@@ -21,7 +21,13 @@ An issue is READY for an actor when every one of these holds:
    comment, status change, assignment change or claim on the issue, native, by
    an account other than the settler and not the Automation actor. Yields for
    ``blocked`` or ``capacity`` exclude nobody. Direct ``claim_issue`` ignores
-   this rule (and its claim is itself an answer).
+   this rule (and its claim is itself an answer). A pending review request
+   also answers a completion, for the account it names and nobody else
+   (decision record ``docs/decisions/2026-11-22-review-request-answers.md``):
+   the issue's newest request names the completer, was made by another account
+   after the completion, is native, and asks about the source's current
+   candidate, with both of its events visible to the completer. It lifts no
+   ``needs_input`` hold and changes no blocker.
 
 Order: delegated to me first, then priority (urgent first), then age (oldest
 first), then id. One definition serves three surfaces: the ``is:ready`` query
@@ -77,9 +83,9 @@ def _now(now: datetime | None) -> datetime:
     return current.astimezone(UTC)
 
 
-def awaiting_answer_sql(actor_id: int) -> tuple[str, list]:
+def awaiting_answer_sql(conn: sqlite3.Connection, actor: dict) -> tuple[str, list]:
     """Rule 6's exclusion, true when the issue (alias ``i``) awaits an answer
-    that ``actor_id`` may not supply by picking the work up again.
+    that ``actor`` may not supply by picking the work up again.
 
     One correlated read per candidate, both over ``idx_activity_target``
     (target_kind, target_id, id): the newest native settlement by walking the
@@ -88,7 +94,24 @@ def awaiting_answer_sql(actor_id: int) -> tuple[str, list]:
     IS NULL`` on both reads); the Automation actor is recognised exactly as the
     commands recognise it (its fixed email on an agent account) and never
     answers. Ordering is by activity id, never by timestamp, so two events in
-    the same second cannot tie."""
+    the same second cannot tie.
+
+    A completion is also answered by a pending review request naming the
+    completer (D16), read from ``issue_review_requests`` rather than as an
+    answer verb: the ``review_requested`` event does not carry whom it names,
+    and an answer verb would lift a ``needs_input`` hold and answer for every
+    account. The request is the issue's newest, names the completer, its event
+    is native, newer than the completion and by another account, and it asks
+    about the source issue's current candidate; its request and candidate
+    events pass the completer's event visibility, as the desk's
+    ``asks.review_requests`` lane requires, so a request the completer cannot
+    see answers nothing."""
+    request_gate, request_params = access.event_visibility_clause(
+        conn, actor, alias="rqe"
+    )
+    candidate_gate, candidate_params = access.event_visibility_clause(
+        conn, actor, alias="rqk"
+    )
     sql = (
         "EXISTS (SELECT 1 FROM activity rqw WHERE rqw.id = ("
         "SELECT rqs.id FROM activity rqs "
@@ -96,6 +119,20 @@ def awaiting_answer_sql(actor_id: int) -> tuple[str, list]:
         f"AND rqs.verb IN ({_SETTLEMENT_LIST}) AND rqs.imported_at IS NULL "
         "ORDER BY rqs.id DESC LIMIT 1) "
         "AND CASE WHEN rqw.verb = 'claim_completed' THEN rqw.actor_id = ? "
+        "AND NOT EXISTS (SELECT 1 FROM issue_review_requests rqr "
+        "JOIN activity rqe ON rqe.id = rqr.request_event_id "
+        "JOIN issue_review_candidates rqc ON rqc.id = rqr.candidate_id "
+        "JOIN activity rqk ON rqk.id = rqc.completion_event_id "
+        "WHERE rqr.review_issue_id = i.id AND rqr.id = (SELECT MAX(rqm.id) "
+        "FROM issue_review_requests rqm WHERE rqm.review_issue_id = i.id) "
+        "AND rqr.reviewer_id = rqw.actor_id AND rqr.request_event_id > rqw.id "
+        "AND rqe.imported_at IS NULL AND rqe.visibility_restricted = 0 "
+        "AND rqe.actor_id != rqw.actor_id "
+        "AND rqk.imported_at IS NULL AND rqk.visibility_restricted = 0 "
+        "AND rqc.id = (SELECT MAX(rql.id) FROM issue_review_candidates rql "
+        "WHERE rql.issue_id = rqc.issue_id)"
+        f"{f' AND ({request_gate})' if request_gate else ''}"
+        f"{f' AND ({candidate_gate})' if candidate_gate else ''}) "
         "ELSE EXISTS (SELECT 1 FROM issue_claim_handoffs rqh "
         "WHERE rqh.yield_event_id = rqw.id AND rqh.reason = 'needs_input') END "
         "AND NOT EXISTS (SELECT 1 FROM activity rqa "
@@ -106,7 +143,12 @@ def awaiting_answer_sql(actor_id: int) -> tuple[str, list]:
         "AND rqa.actor_id NOT IN (SELECT rqu.id FROM users rqu "
         "WHERE rqu.email = ? AND rqu.is_agent = 1)))"
     )
-    return sql, [int(actor_id), AUTOMATION_ACTOR_EMAIL]
+    return sql, [
+        int(actor["id"]),
+        *request_params,
+        *candidate_params,
+        AUTOMATION_ACTOR_EMAIL,
+    ]
 
 
 def _claimable_clauses(
@@ -148,7 +190,7 @@ def ready_clause(
     clauses, params = _claimable_clauses(actor, now=now, category_expr=category_expr)
     # Last, so the cheap column and lease tests discard most rows before the
     # correlated trail reads run.
-    awaiting, awaiting_params = awaiting_answer_sql(int(actor["id"]))
+    awaiting, awaiting_params = awaiting_answer_sql(conn, actor)
     clauses.append(f"NOT {awaiting}")
     params.extend(awaiting_params)
     return "(" + " AND ".join(clauses) + ")", params
@@ -287,12 +329,11 @@ def _build_ready(
             "issues you could claim now, in claim order (delegated to you, then "
             "priority, then oldest): visible, to-do or doing, no live lease, no "
             "blocker that is not done (a blocker you cannot see still blocks), "
-            "you are the assignee, a delegated contributor or an admin, and it is "
-            "not awaiting an answer: not after an unanswered needs_input yield, "
-            "and not after your own completion until another account comments, "
-            "changes status or assignment, or claims it. `total` counts the same "
-            "rule before `limit` and is what claim_next_ready can serve. A read, "
-            "not a reservation: the claim command decides between two claimants."
+            "you are the assignee, a delegated contributor or an admin, and not "
+            "awaiting an answer (the desk's not_offered says why). `total` counts "
+            "the same rule before `limit` and is what claim_next_ready can serve. "
+            "A read, not a reservation: the claim command decides between two "
+            "claimants."
         ),
     }
 
@@ -312,7 +353,7 @@ def build_not_offered(
         status_column="i.status", category_column="rps.category"
     )
     clauses, params = _claimable_clauses(actor, now=current, category_expr=category)
-    awaiting, awaiting_params = awaiting_answer_sql(int(actor["id"]))
+    awaiting, awaiting_params = awaiting_answer_sql(conn, actor)
     clauses.append(awaiting)
     params.extend(awaiting_params)
     vis_sql, vis_params = _visibility(conn, actor)
@@ -367,11 +408,11 @@ def build_not_offered(
         "meaning": (
             "issues claim_next_ready will not offer you yet, though every other "
             "ready rule holds. awaiting_answer: the newest settlement is a "
-            "needs_input yield, so it is offered to no account; "
-            "completed_by_you: you completed it, so it is not offered back to you. "
-            "Either lifts when an account other than the one that settled it "
-            "(Automation excluded) comments, changes its status or assignment, or "
-            "claims it. claim_issue still works directly."
+            "needs_input yield, offered to no account; completed_by_you: you "
+            "completed it, not offered back to you. Either lifts when another "
+            "account (not Automation) comments, changes its status or assignment, "
+            "or claims it; completed_by_you also when another account requests "
+            "your review on it. claim_issue still works directly."
         ),
     }
 

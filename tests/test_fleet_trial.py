@@ -31,6 +31,9 @@ An agent that cannot take the recipe's next step from what it reads stops (it
 raises ``Stalled``), and the trial still reads the four issues: skip a step,
 such as the operator's answer, and it is the "all done" assertion that fails.
 
+One scenario holds a requirement that has landed: F2 (after the reviewer's
+HOLD and a second request, the reviewer's desk and pickup agree).
+
 Three more scenarios state behaviour the fleet needs and does not have yet,
 each marked ``@unmet`` until its requirement in
 docs/plans/ATHENA_IN_USE_SPEC.md lands: C6 (disjoint path fences on an instance
@@ -766,6 +769,110 @@ def test_the_ceilings_file_says_how_it_may_change():
         assert all(isinstance(value, int) for value in ceilings[role].values()), role
     for name in MEASURES:  # the total is the sum of the roles, not a fifth guess
         assert ceilings["total"][name] == sum(ceilings[role][name] for role in ROLES)
+
+
+# --- F2: what the desk asks, pickup serves or names -------------------------------
+
+
+def test_f2_after_a_hold_and_a_second_request_desk_and_pickup_agree(fleet):
+    """FLEET-4, second case: the reviewer reported HOLD, the builder resubmitted
+    and the conductor asked again. The desk asked for the review while the ready
+    lane held the issue back as ``completed_by_you`` and pickup answered
+    ``nothing_ready``. Under D16 the second request answers the reviewer's own
+    completion: the desk asks, the ready lane offers, pickup takes it."""
+    build_id = fleet.issue("Build", assignee="conductor", delegate="build")
+    review_id = fleet.issue("Review", assignee="conductor", delegate="review")
+
+    async def scene(fleet: Fleet, agents: dict[str, FleetAgent]) -> None:
+        conductor, build, review = (
+            agents[role] for role in ("conductor", "build", "review")
+        )
+
+        async def submit(previous: int | None, revision: str) -> int:
+            context = await build.call("get_issue_work_context", issue_id=build_id)
+            claim = await build.call(
+                "claim_issue", issue_id=build_id, if_match=context["issue_etag"]
+            )
+            done = await build.call(
+                "complete_claim",
+                issue_id=build_id,
+                generation=claim["generation"],
+                verdict="PASS",
+                candidate_submission={
+                    "identity": {
+                        "kind": "git",
+                        "source": "fleet/f2",
+                        "revision": revision,
+                    },
+                    "expected_previous_candidate_id": previous,
+                },
+            )
+            return done["candidate_submission"]["candidate_id"]
+
+        async def ask(candidate: int) -> None:
+            await conductor.call(
+                "request_candidate_review",
+                review_issue_id=review_id,
+                candidate_id=candidate,
+                reviewer_id=review.user_id,
+            )
+
+        async def reviewer_view() -> tuple[list[int], list, dict, dict]:
+            desk = await review.call("my_desk")
+            asked = [
+                row["candidate_id"]
+                for row in (desk["asks"].get("review_requests") or {}).get("items", [])
+                if row["status"] == "requested"
+            ]
+            ready = desk["work"]["ready"]
+            not_offered = {
+                row["issue"]["id"]: row["reason"]
+                for row in desk["work"]["waiting_on_operator"]["not_offered"]["items"]
+            }
+            return (
+                asked,
+                [row["issue"]["id"] for row in ready["items"]],
+                ready,
+                not_offered,
+            )
+
+        first = await submit(None, "1" * 40)
+        await ask(first)
+        picked = await review.call("claim_next_ready", idempotency_key="f2-review-1")
+        assert picked["claimed"] and picked["issue"]["id"] == review_id, picked
+        await review.call(
+            "complete_claim",
+            issue_id=review_id,
+            generation=picked["lease"]["generation"],
+            verdict="HOLD",
+            review_candidate_id=first,
+        )
+        second = await submit(first, "2" * 40)
+        await ask(second)
+
+        asked, ready_ids, ready, not_offered = await reviewer_view()
+        assert asked == [second], asked
+        # The baseline: ready_total 0 and not_offered completed_by_you.
+        assert ready_ids == [review_id] and ready["total"] == 1, ready
+        assert review_id not in not_offered, not_offered
+        again = await review.call("claim_next_ready", idempotency_key="f2-review-2")
+        assert again["claimed"] is True and again["issue"]["id"] == review_id, again
+        await review.call(
+            "complete_claim",
+            issue_id=review_id,
+            generation=again["lease"]["generation"],
+            verdict="PASS",
+            review_candidate_id=second,
+        )
+        # Fulfilled: the desk stops asking and pickup names nothing.
+        asked, ready_ids, _ready, not_offered = await reviewer_view()
+        assert asked == [] and ready_ids == [], (asked, ready_ids)
+        assert not_offered == {review_id: "completed_by_you"}, not_offered
+        empty = await review.call("claim_next_ready", idempotency_key="f2-review-3")
+        assert empty["reason"] == "nothing_ready" and empty["review_request"] is None
+
+    agents = play(fleet, scene, roles=("conductor", "build", "review"))
+    assert [r.tool for agent in agents.values() for r in agent.meter.refusals] == []
 
 
 # --- what the fleet needs next: C6, C4, C5 ----------------------------------------

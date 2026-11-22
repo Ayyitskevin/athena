@@ -1620,7 +1620,9 @@ class AthenaClient:
         pickup while this account holds any active lease; direct claims retain
         their multiple-possession policy. limit (1-5) bounds candidate attempts,
         not acquisitions. Refusal outcomes are already_holding, nothing_ready,
-        or candidates_conflicted; transport errors propagate unchanged.
+        or candidates_conflicted, each with ``review_request`` (the review the
+        desk asks of this account and the claim that takes it, or None);
+        transport errors propagate unchanged.
 
         A keyed response is a historical receipt, including lease.active and
         tags. Replays never renew or reacquire; read current context before work.
