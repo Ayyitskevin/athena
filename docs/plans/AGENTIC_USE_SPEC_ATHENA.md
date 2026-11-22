@@ -1,9 +1,12 @@
 # Agentic use: review findings and improvement specification
 
 Date: 2026-11-21. Review baseline: `99a0286ba12c7b9250348a61819827ce943f01b9`.
-Status: **proposed, not accepted.** Nothing here is a decision until the owner
-accepts it. Several requirements change or extend an accepted decision; each
-says so and names the decision it needs under "Decisions for the owner".
+Status: **decisions accepted; Wave 0 authorized.** On 2026-11-22 the owner
+accepted all fifteen decisions as recommended and authorized Wave 0 only. See
+[the decision record](../decisions/2026-11-22-agentic-use-decisions.md). The
+later waves remain proposals for when to build, not whether the design holds.
+Several requirements change or extend an earlier accepted decision; each says
+so and names the decision it relies on under "Decisions for the owner".
 Evidence: [reports/repo-review-2026-11-21.md](reports/repo-review-2026-11-21.md).
 Finding IDs such as `MCP-1` refer to that report.
 
@@ -475,8 +478,9 @@ but it is close enough that it needs its own decision (D12).
 
 ## Waves
 
-One requirement ID is one PR, in order within a wave. Every fix lands with its
-regression test.
+One requirement ID is one change with its own commit, in order within a wave.
+Every fix lands with its regression test. Wave 0 lands as one commit per
+requirement on the branch that carries this document.
 
 | Wave | Content | Needs a decision first |
 |---|---|---|
@@ -515,7 +519,9 @@ moves most.
 
 ## Decisions for the owner
 
-| ID | Decision | Recommendation |
+All fifteen were accepted as recommended on 2026-11-22.
+
+| ID | Decision | Recommendation (accepted) |
 |---|---|---|
 | D1 | Should an unset `ATHENA_MCP_PROFILE` mean `seat` instead of `full`? | Not yet. Emit the profile explicitly (A7) and revisit once every printed config carries one. |
 | D2 | REST conventions: normalise refusal bodies into one envelope or only add `code`; and which paging vocabulary new endpoints use. | Add `code` everywhere now and normalise later, if at all. For paging, an opaque `cursor` in, `next_cursor` and `has_more` out. |
