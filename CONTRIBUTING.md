@@ -101,7 +101,15 @@ profile, which runs everything, is what catches it.
 ## Development setup
 
 Athena supports Python 3.12 (`>=3.12,<3.13`). It is the only Python version
-verified in CI. From a clean checkout, run the required gate:
+verified in CI. `scripts/bootstrap.sh` prepares a fresh checkout in one step: it
+fetches full history (a shallow clone has no merge base for `--profile changed`)
+and builds `.venv` with exactly the first five commands below, skipping the
+install while `pyproject.toml`, the two constraints files and the script itself
+are unchanged since it last succeeded. A Claude Code cloud session runs it at
+start (`.claude/hooks/session-start.sh`); every other lane runs it by hand.
+`tests/test_bootstrap.py` holds the script to this block.
+
+From a clean checkout, run the required gate:
 
 ```bash
 python3.12 -m venv .venv

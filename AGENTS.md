@@ -10,6 +10,36 @@ equivalent) — including its canonical **Permission Boundaries** block, which
 this file narrows for Athena (the PR-gate below is that narrowing). This file
 adds the rules **specific to Athena** and wins on Athena-specific conflicts.
 
+**When no machine-level handbook is present** (a cloud container, a fresh
+machine, a runtime that has none), the rules below stand in for it. They are a
+floor drawn from this repository's own rules and accepted decisions, not a copy
+of the handbook; where a handbook is present, it governs.
+
+- **Stay in this repository.** Read and write only this checkout and its GitHub
+  repository. Never touch another repository, a live service or another
+  agent's working directory.
+- **Branch and PR.** Work on your lane's branch, never push `main`, and land
+  every change through a PR (see "Branch, PR, and merge").
+- **The owner's acts stay the owner's.** Do not create or push a tag, publish a
+  release or a container image, set a prune verdict, answer an item in
+  [`docs/DECISIONS_PENDING.md`](docs/DECISIONS_PENDING.md), close another
+  lane's PR or delete branches.
+- **Ask before anything destructive or hard to undo:** rewriting history on a
+  shared branch, deleting files or data you did not create, changing repository
+  settings.
+- **No secrets in the record.** Never commit a credential or put one in a log,
+  a PR, an issue or a document.
+- **Do not weaken the gate.** Never lower a coverage floor, extend
+  `ALLOWED_PRAGMAS`, add a checker exemption, or skip or delete a test to get
+  green. Fix the code or add the test.
+- **Migrations are forward-only**, and hidden things read as missing (404),
+  never as forbidden (403).
+
+Prepare a fresh checkout with `scripts/bootstrap.sh`: full history, and the
+`.venv` built as [CONTRIBUTING.md](CONTRIBUTING.md) builds it. A Claude Code
+cloud session runs it at start through the committed `.claude/` hook, and
+`.claude/settings.json` allow-lists the gate and the bootstrap, nothing else.
+
 ---
 
 ## Mission (what we are building)
