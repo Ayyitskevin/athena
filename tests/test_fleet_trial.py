@@ -38,7 +38,8 @@ Three more scenarios state behaviour the fleet needs and does not have yet,
 each marked ``@unmet`` until its requirement in
 docs/plans/ATHENA_IN_USE_SPEC.md lands: C6 (disjoint path fences on an instance
 with no root catalog), C4 (a lapsed lease is an event the conductor receives)
-and C5 (what the conductor gates on is what the requested reviewer reported).
+and C5 (what the conductor gates on is what the requested reviewer reported),
+which has landed: its mark is gone and the recipe above gates on that field.
 A marked scenario must stop by raising ``RequirementUnmet`` at the check that
 states its requirement, and its test passes when it does; any other failure,
 such as a refused setup step, is a real failure. When the requirement lands the
@@ -619,9 +620,13 @@ async def conductor_reads_verdict(
     rows = [
         row for row in queue["items"] if row["candidate"]["candidate_id"] == candidate
     ]
-    latest = (rows[0].get("latest_review") or {}) if rows else {}
+    # Gate on what the reviewer it asked reported, not the candidate's newest
+    # review by whoever wrote it (C5).
+    reported = (
+        requested_reviewer_verdict(rows[0], fleet.user_id("review")) if rows else None
+    )
     conductor.expect(
-        latest.get("reported_verdict") == verdict,
+        reported == verdict,
         f"expected a {verdict} on {candidate}, the queue says {rows}",
     )
     if verdict == "HOLD":
@@ -980,23 +985,18 @@ def test_c4_a_lapsed_lease_reaches_the_conductor_that_delegated_it(fleet):
 
 def requested_reviewer_verdict(queue_row: dict, reviewer_id: int) -> str | None:
     """What the requested reviewer reported on this candidate: what the conductor
-    gates on once C5 lands.
+    gates on, as docs/CONDUCTOR_RECIPE.md says.
 
-    C5 adds a field to the review request row, which only the requested
-    reviewer's report can move. No field carries it yet, so this reads None.
-    C5's builder: change this read to the field C5 adds, and nothing else."""
+    C5 added `reported_verdict` to the review request row: the verdict of the
+    requested reviewer's own report on that review issue about that exact
+    candidate, which no other account's review can move. None until it reports."""
     requests = (queue_row.get("review_requests") or {}).get("items", [])
     for request in requests:
         if request["reviewer_id"] == reviewer_id:
-            return request.get("reported_verdict")
+            return request["reported_verdict"]
     return None
 
 
-@unmet(
-    "C5",
-    "an account nobody asked can turn the requested reviewer's HOLD "
-    "into reported_pass, and the request row carries no verdict",
-)
 def test_c5_an_unrequested_pass_does_not_move_the_requested_hold(fleet):
     fleet.onboard("unasked", "uma")
     build_id = fleet.issue("Build", assignee="conductor", delegate="build")

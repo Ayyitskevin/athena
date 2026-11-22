@@ -306,7 +306,10 @@ source-issue work context for `review_tracking`, then follow the
 [exact-version closeout recipe](CLOSEOUT_RECIPE.md#exact-version-submission-and-review).
 The conductor/full profiles add `get_project_review_queue(project_id, limit=5)`.
 Follow each `next_cursor` as `cursor` until it is null. Every page rechecks
-visibility and the current submission. Declared identity and reported PASS grant no authority.
+visibility and the current submission. Its `review_state` follows any account's
+newest review; a conductor that requested a review gates on its request row in
+`review_requests.items[]`, whose `reported_verdict` only the named reviewer's
+report on that review issue sets. Declared identity and reported PASS grant no authority.
 
 ## 8. Hand off or yield
 

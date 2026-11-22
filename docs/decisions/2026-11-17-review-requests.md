@@ -1,6 +1,6 @@
 # Requesting an exact review
 
-**Status** Accepted on 2026-11-17 following independent specification review.
+**Status** Accepted on 2026-11-17 following independent specification review. Superseded in part on 2026-11-22: the request row's verdict only.
 
 **Context** A conductor could see a completed exact-version review, but a worker starting a new session still needed the target from the conductor.
 
@@ -10,4 +10,4 @@
 
 **Sources** Kevin requested implementation and review on 2026-11-17. See the [request specification](../REVIEW_REQUEST_SPEC.md) and [exact-version review decision](2026-11-17-exact-version-reviews.md).
 
-**Superseded-by** None.
+**Superseded-by** [A review request carries what its requested reviewer reported](2026-11-22-requested-reviewer-verdict.md), for request status being advisory only and the queue keeping verdict and request-status fields separate. The rest of this record stands.

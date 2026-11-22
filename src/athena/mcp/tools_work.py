@@ -188,7 +188,9 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         """Ask a named reviewer to review an exact candidate on an existing review issue.
         The reviewer must already be assigned or delegated and able to see the submission.
         The request appears on their desk. The reviewer claims the issue separately.
-        Each replacement candidate needs an explicit new request."""
+        Their report on that issue answers it: the request row's reported_verdict in
+        get_project_review_queue, which no other account's review moves. Each
+        replacement candidate needs an explicit new request."""
         return client.request_candidate_review(
             review_issue_id, candidate_id, reviewer_id, idempotency_key=idempotency_key
         )

@@ -112,7 +112,8 @@ To request the review, use
 `request_candidate_review(review_issue_id, candidate_id, reviewer_id)`. Use an
 open, unclaimed review issue in the same project. The named reviewer must
 already be assigned or delegated to it and have access to the submission.
-The queue shows the request separately from any reported verdict.
+The queue lists the request on the candidate's row under `review_requests`,
+and that request row is where the reviewer's answer arrives (see below).
 
 The reviewer starts from `my_desk().asks.review_requests`, opens the review
 issue's full context, and claims that issue. Because the review issue is
@@ -149,6 +150,20 @@ Athena does not verify correctness, independence or acceptance. Neither the queu
 nor brief context is a claim precondition. Selective project portability omits
 candidate/review associations; whole-database recovery retains them.
 
+**Gate on the reviewer you asked, not on `review_state`.** `review_state` and
+`latest_review` follow the candidate's newest exact-candidate review by any
+account, including one nobody asked, on any review issue. Your request is on the
+same queue row in `review_requests.items[]`: find it by `reviewer_id`. Its
+`reported_verdict` is the verdict of the requested reviewer's own report on that
+review issue about that exact candidate, and `fulfillment_event_id` is that
+report's completion event. Both are null until the reviewer reports, and no
+other account's review moves them. If the reviewer reports on the same candidate
+again, the newer report replaces the older, as it does in `latest_review`; a
+newer report without a verdict reads null. A report you cannot see reads as none.
+A replacement candidate needs its own request, which starts at null. When
+`review_state` disagrees with your request row, read that other report before
+deciding; do not act on it. The request row grants nothing either.
+
 To scan the whole queue, pass each returned `next_cursor` as `cursor` on the
 next call with the same project. Stop when it is null. A final page can still
 say `clipped` because `visible_total` counts the whole project. After an
@@ -160,11 +175,13 @@ keep the same filters and `limit` (default 50, maximum 100). Start at
 `offset=0`, advance by the number returned, and stop at a short page.
 Concurrent board edits can shift issue positions during this scan.
 
-On **HOLD**, the conductor records the concrete finding and reopens/routes the build
-slice for rework. The builder claims again, produces a new frozen candidate and
-reports its checks. The independent reviewer then reviews that new subject. Preserve
-both revisions and their reports. On **PASS**, the conductor checks the evidence
-against the operator's acceptance conditions before deliberately changing status.
+When the request row's `reported_verdict` is **HOLD** or BLOCKED, the conductor
+records the concrete finding and reopens/routes the build slice for rework. The
+builder claims again, produces a new frozen candidate and reports its checks.
+Request the review of that new subject explicitly; the independent reviewer then
+reviews it. Preserve both revisions and their reports. When it is **PASS** or
+PASS-WITH-NOTES, the conductor checks the evidence against the operator's
+acceptance conditions before deliberately changing status.
 `complete_claim` releases only the lease; `update_issue(status="done")` is separate
 and remains subject to the configured approval policy. Neither a report nor a
 status change grants permission to merge, deploy or perform other external actions.

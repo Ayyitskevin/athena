@@ -14,6 +14,9 @@ from athena.aegis.review_models import (
 )
 
 
+ReportedVerdict = Literal["PASS", "PASS-WITH-NOTES", "HOLD", "BLOCKED"]
+
+
 class ReviewSourceIssue(StrictReviewModel):
     id: int
     key: str | None
@@ -47,7 +50,7 @@ class LatestCandidateReview(StrictReviewModel):
     reported_at: str
     reported_by: Person
     report_available: bool
-    reported_verdict: Literal["PASS", "PASS-WITH-NOTES", "HOLD", "BLOCKED"] | None
+    reported_verdict: ReportedVerdict | None
     reported_findings: dict[Literal["P1", "P2", "P3"], int] | None
 
 
@@ -67,6 +70,11 @@ class ReviewRequest(StrictReviewModel):
     reviewer_id: int
     status: Literal["requested", "picked_up", "superseded", "fulfilled"]
     reviewer_holds_active_lease: bool
+    # D4: the requested reviewer's own report on this review issue about this
+    # exact candidate, newest first; null until one fulfills the request. No
+    # other account's review moves either field. A fact, not acceptance.
+    fulfillment_event_id: int | None
+    reported_verdict: ReportedVerdict | None
     identity: CandidateIdentity
     source_issue_id: int
     completion_event_id: int

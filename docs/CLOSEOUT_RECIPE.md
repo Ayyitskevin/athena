@@ -312,6 +312,16 @@ PASS is substituted. The queue does not replace the compact project brief or
 provide a claim ETag. See [REVIEW_QUEUE_SPEC.md](REVIEW_QUEUE_SPEC.md) for exact
 visibility, history and transaction boundaries.
 
+A requested review answers its request. On a review issue that carries a
+request, only the named reviewer can complete with `review_candidate_id`, and
+only for the requested candidate. Its report then shows on that request row,
+in the queue and in the review issue's full context (`review_request`), as
+`reported_verdict` with the report's `fulfillment_event_id`. An unrequested
+review of the same candidate, by any account on another issue, moves
+`review_state` and `latest_review` but never a request row. That is why the
+conductor gates on the request row; see
+[CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md#work-then-review-the-exact-artifact).
+
 Selective portability exports omit these operational candidate/review rows;
 imported completion history cannot recreate associations. Whole-database recovery
 retains them. Review, acceptance, status changes and permission to merge/deploy

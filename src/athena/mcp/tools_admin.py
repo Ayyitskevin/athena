@@ -333,7 +333,11 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         see new submissions. visible_total and clipped describe the whole queue.
         A replacement, including identical bytes, never inherits an older PASS.
         awaiting_review can also mean the latest review is not visible; unknown
-        means the visible latest report has no usable verdict. Reports are advisory,
+        means the visible latest report has no usable verdict. review_state follows
+        any account's newest review. To gate on a review you requested, read your
+        request in the row's review_requests.items[] (match reviewer_id): its
+        reported_verdict is set only by that reviewer's own report on that review
+        issue, null until then. Reports are advisory,
         not acceptance, independent verification or merge authority. This read changes
         no state and supplies no claim ETag. Workers read full get_issue_work_context
         for the exact candidate and bounded history. See docs/CONDUCTOR_RECIPE.md."""
