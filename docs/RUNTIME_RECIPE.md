@@ -107,8 +107,11 @@ in your Claude Code MCP settings:
 ```
 
 The MCP server uses the token's scopes to hide tools it cannot call; the REST
-API still enforces authorization. If the startup scope probe fails, the server
-warns and presents the full tool surface, while REST refusals remain in force.
+API still enforces authorization. If Athena rejects the token at startup (401,
+or 403 for a paused or removed account), `athena-mcp` exits with a message
+naming the cause instead of starting. If Athena cannot be reached or answers
+with a server error, the server warns and presents the full tool surface, while
+REST refusals remain in force.
 
 For this issue-and-knowledge loop, optionally add
 `"ATHENA_MCP_PROFILE": "seat+knowledge"` to the environment above. It carries 37

@@ -556,11 +556,27 @@ def _in_profile(name: str, profile: frozenset[str] | None) -> bool:
     return profile is None or name in profile
 
 
+class TokenRejected(RuntimeError):
+    """Athena answered the startup whoami with 401 or 403: it was reached and
+    refused this credential, so every tool call would fail the same way."""
+
+
+# The statuses that mean "Athena answered and refused the credential" (401: no
+# such live token; 403: the account is paused or removed), as opposed to Athena
+# being unreachable or failing, which keeps failing open.
+_REJECTED_TOKEN_STATUSES = frozenset({401, 403})
+
+
 def probe_scopes(client: AthenaClient) -> frozenset[str] | None:
     """Ask Athena what the session's token may do, failing OPEN to the full
-    surface. Filtering is ergonomics; the REST layer is the boundary — so an
-    unreachable server at MCP startup must not change which tools exist, only
-    who answers 403 later.
+    surface when Athena cannot answer. Filtering is ergonomics; the REST layer
+    is the boundary — so an unreachable or failing server at MCP startup must
+    not change which tools exist, only who answers 403 later.
+
+    A 401 or 403 is different: Athena answered and refused the token, so every
+    tool would answer the same. That raises ``TokenRejected`` and ``main()``
+    exits, because a stderr warning is invisible to the model and a session of
+    tools that all fail is worse than no session.
 
     Called by ``main()`` — the stdio entry point — and deliberately NOT by
     ``build_server`` itself: a probe hidden inside the builder would prepend a
@@ -570,14 +586,29 @@ def probe_scopes(client: AthenaClient) -> frozenset[str] | None:
         return None
     try:
         scopes = client.whoami().get("scopes")
+    except AthenaError as exc:
+        if exc.status_code in _REJECTED_TOKEN_STATUSES:
+            raise TokenRejected(
+                f"Athena rejected ATHENA_TOKEN at startup ({exc.status_code} from "
+                f"{exc.method} {exc.path}: {exc.detail}). Check that ATHENA_TOKEN "
+                "is set to the whole token, is not revoked, and was minted by the "
+                "Athena at ATHENA_BASE_URL; a 403 means the account is paused or "
+                "removed. Not starting."
+            ) from exc
+        _warn_full_surface()
+        return None
     except Exception:  # noqa: BLE001 — startup probe; the boundary is REST
-        print(
-            "athena-mcp: could not read token scopes at startup; "
-            "presenting the full tool surface",
-            file=sys.stderr,
-        )
+        _warn_full_surface()
         return None
     return None if scopes is None else frozenset(scopes)
+
+
+def _warn_full_surface() -> None:
+    print(
+        "athena-mcp: could not read token scopes at startup; "
+        "presenting the full tool surface",
+        file=sys.stderr,
+    )
 
 
 def build_server(
@@ -687,5 +718,11 @@ def main() -> None:
         base_url=base_url, token=token, run_id=run_id, parent_run_id=parent_run_id
     )
     # The session-defining call: one whoami decides which tools this token's
-    # session carries. Fails open; ATHENA_MCP_ALL_TOOLS=1 skips entirely.
-    build_server(client, scopes=probe_scopes(client), profile=profile).run()
+    # session carries. Fails open when Athena cannot answer, exits when it
+    # rejects the token; ATHENA_MCP_ALL_TOOLS=1 skips entirely.
+    try:
+        scopes = probe_scopes(client)
+    except TokenRejected as exc:
+        print(f"athena-mcp: {exc} (ATHENA_BASE_URL={base_url})", file=sys.stderr)
+        raise SystemExit(1) from None
+    build_server(client, scopes=scopes, profile=profile).run()

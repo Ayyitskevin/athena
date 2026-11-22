@@ -37,6 +37,8 @@ athena-seat-doctor --expect-scopes read,issue:write
 curl -sf -H "Authorization: Bearer $ATHENA_TOKEN" "$ATHENA_BASE_URL/desk" | head -c 400
 
 # MCP path — ask the harness to call my_desk() and report the identity lane.
+# A rejected token stops athena-mcp at startup with a message on stderr (the
+# harness's MCP log); an unreachable Athena still starts it, unfiltered.
 ```
 
 If either fails, stop: fix the wiring, do not paste the block yet.

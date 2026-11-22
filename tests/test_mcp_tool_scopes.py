@@ -19,14 +19,16 @@ Two properties these tests defend, and the order matters:
 """
 
 import asyncio
+import socket
 
 from fastapi.testclient import TestClient
+import httpx
 import pytest
 
 from athena.core import tokens
 from athena.main import create_app
 from athena.mcp import server as mcp_server
-from athena.mcp.client import AthenaClient
+from athena.mcp.client import AthenaClient, AthenaError
 
 
 class _NoWhoamiStub:
@@ -218,3 +220,127 @@ def test_non_token_auth_sees_everything(tmp_path):
             )
         )
         assert surface == set(mcp_server.TOOL_SCOPES)
+
+
+# --- a rejected token stops the server; an unreachable Athena does not ----------
+
+
+class _RefusingClient:
+    """Athena reached and answering the whoami with a refusal status."""
+
+    def __init__(self, status: int, detail: str) -> None:
+        self.status = status
+        self.detail = detail
+
+    def whoami(self):
+        raise AthenaError(
+            method="GET", path="/users/me", status_code=self.status, detail=self.detail
+        )
+
+
+@pytest.mark.parametrize(
+    ("status", "detail"),
+    [(401, "invalid or revoked token"), (403, "account is paused")],
+)
+def test_a_token_athena_refuses_is_not_presented_as_a_working_session(
+    status, detail, capsys
+):
+    # WHY: a 401/403 is Athena ANSWERING that this credential cannot act. Every
+    # tool would then fail the same way, and the old stderr warning was invisible
+    # to the model, which saw 140 tools and a wall of 401s.
+    with pytest.raises(mcp_server.TokenRejected) as rejected:
+        mcp_server.probe_scopes(_RefusingClient(status, detail))
+    message = str(rejected.value)
+    assert "rejected ATHENA_TOKEN" in message
+    assert str(status) in message and detail in message
+    assert "ATHENA_BASE_URL" in message and "revoked" in message
+    assert "presenting the full tool surface" not in capsys.readouterr().err
+
+
+def test_a_server_error_still_fails_open(capsys):
+    # WHY: a 5xx says nothing about the token; the REST layer is the boundary.
+    def respond(request):
+        return httpx.Response(503, json={"detail": "down for maintenance"})
+
+    with httpx.Client(
+        base_url="http://athena.test", transport=httpx.MockTransport(respond)
+    ) as http:
+        assert mcp_server.probe_scopes(AthenaClient(client=http)) is None
+    assert "presenting the full tool surface" in capsys.readouterr().err
+
+
+def test_an_unreachable_athena_still_fails_open_to_the_full_surface(capsys):
+    # A port nothing listens on: connection refused, the case that must not
+    # change which tools exist.
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    client = AthenaClient(base_url=f"http://127.0.0.1:{port}", token="x", timeout=2)
+    scopes = mcp_server.probe_scopes(client)
+    assert scopes is None
+    assert "presenting the full tool surface" in capsys.readouterr().err
+    assert _names(mcp_server.build_server(client, scopes=scopes)) == set(
+        mcp_server.TOOL_SCOPES
+    )
+
+
+def test_the_escape_hatch_still_skips_a_probe_that_would_be_refused(monkeypatch):
+    monkeypatch.setenv("ATHENA_MCP_ALL_TOOLS", "1")
+    assert mcp_server.probe_scopes(_RefusingClient(401, "invalid")) is None
+
+
+def _run_entry_point(monkeypatch, tmp_path, *, valid: bool):
+    """Run main() against a real app over its TestClient, recording what it
+    would build instead of serving stdio."""
+    built: list[frozenset[str] | None] = []
+
+    class _Recorder:
+        def run(self) -> None:
+            pass
+
+    def record_build(client, *, scopes=None, profile=None):
+        built.append(scopes)
+        return _Recorder()
+
+    with TestClient(create_app(tmp_path / "entry.db")) as tc:
+        tc.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
+        raw = tc.post(
+            "/tokens",
+            json={"name": "seat", "scopes": ["read", "issue:write"]},
+            headers={"X-Athena-Actor": "1"},
+        ).json()["token"]
+        bearer = raw if valid else "ath_mistyped"
+        tc.headers.update({"Authorization": f"Bearer {bearer}"})
+        monkeypatch.setenv("ATHENA_TOKEN", bearer)
+        monkeypatch.setenv("ATHENA_BASE_URL", "http://athena.test")
+        monkeypatch.delenv("ATHENA_MCP_ALL_TOOLS", raising=False)
+        monkeypatch.delenv("ATHENA_MCP_PROFILE", raising=False)
+        monkeypatch.setattr(
+            mcp_server,
+            "AthenaClient",
+            lambda **kwargs: AthenaClient(client=tc, run_id=kwargs["run_id"]),
+        )
+        monkeypatch.setattr(mcp_server, "build_server", record_build)
+        mcp_server.main()
+    return built
+
+
+def test_the_entry_point_exits_on_a_rejected_token_and_registers_nothing(
+    monkeypatch, tmp_path, capsys
+):
+    with pytest.raises(SystemExit) as stop:
+        _run_entry_point(monkeypatch, tmp_path, valid=False)
+    assert stop.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("athena-mcp: Athena rejected ATHENA_TOKEN at startup (401")
+    assert "ATHENA_BASE_URL=http://athena.test" in err
+    assert "ath_mistyped" not in err  # the credential is never echoed
+    assert "presenting the full tool surface" not in err
+
+
+def test_the_entry_point_with_a_valid_token_is_unchanged(monkeypatch, tmp_path, capsys):
+    # The positive control: the same path with the real token builds once, with
+    # the token's scopes, and says nothing on stderr.
+    built = _run_entry_point(monkeypatch, tmp_path, valid=True)
+    assert built == [frozenset({"read", "issue:write"})]
+    assert capsys.readouterr().err == ""
