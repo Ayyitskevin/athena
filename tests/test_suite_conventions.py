@@ -197,3 +197,26 @@ def test_support_client_as_takes_exactly_one_identity(tmp_path):
         support.client_as(app)
     with pytest.raises(ValueError, match="exactly one"):
         support.client_as(app, user_id=1, token="raw-secret")
+
+
+def test_no_test_is_skipped_or_expected_to_fail():
+    """The coverage gate (scripts/coverage_shards.py) requires every selected
+    test to pass in every phase, so a skip or an xfail fails the product gate
+    and hosted CI, twenty minutes in. This says so in seconds. A scenario that
+    states behaviour not built yet passes while it stops at its requirement:
+    see ``unmet`` in tests/test_fleet_trial.py."""
+    marks = {"skip", "skipif", "xfail", "importorskip"}
+    offenders = []
+    for path in _python_files():
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not (isinstance(node, ast.Attribute) and node.attr in marks):
+                continue
+            owner = node.value
+            from_pytest = isinstance(owner, ast.Name) and owner.id == "pytest"
+            from_mark = isinstance(owner, ast.Attribute) and owner.attr == "mark"
+            if from_pytest or from_mark:
+                offenders.append(f"{path.relative_to(TESTS).as_posix()}:{node.lineno}")
+    assert offenders == [], (
+        "the coverage gate accepts no skipped or expected-failure outcome; "
+        f"remove these marks: {offenders}"
+    )

@@ -32,19 +32,22 @@ raises ``Stalled``), and the trial still reads the four issues: skip a step,
 such as the operator's answer, and it is the "all done" assertion that fails.
 
 Three more scenarios state behaviour the fleet needs and does not have yet,
-each marked ``xfail(strict=True)`` until its requirement in
+each marked ``@unmet`` until its requirement in
 docs/plans/ATHENA_IN_USE_SPEC.md lands: C6 (disjoint path fences on an instance
 with no root catalog), C4 (a lapsed lease is an event the conductor receives)
 and C5 (what the conductor gates on is what the requested reviewer reported).
-Each fails only by raising ``RequirementUnmet`` at the check that states the
-requirement; any other failure, such as a refused setup step, is a real
-failure. When a requirement lands its scenario passes, the strict mark turns
-that into an error, and the mark is removed in the same change.
+A marked scenario must stop by raising ``RequirementUnmet`` at the check that
+states its requirement, and its test passes when it does; any other failure,
+such as a refused setup step, is a real failure. When the requirement lands the
+scenario runs clean, the mark turns that into a failure, and the mark is
+removed in the same change. This is not ``xfail``: the coverage gate accepts no
+skipped or expected-failure outcome, so every test here passes.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import functools
 import json
 from pathlib import Path
 from typing import Any
@@ -90,14 +93,39 @@ class Stalled(Exception):
 
 
 class RequirementUnmet(AssertionError):
-    """The behaviour a later requirement adds is absent. The xfail scenarios fail
-    with this and nothing else, so a mistake in a scenario's setup is not
+    """The behaviour a later requirement adds is absent. The ``@unmet`` scenarios
+    stop with this and nothing else, so a mistake in a scenario's setup is not
     mistaken for the missing behaviour."""
 
 
 def require(condition: bool, requirement: str) -> None:
     if not condition:
         raise RequirementUnmet(requirement)
+
+
+def unmet(requirement: str, why: str):
+    """Mark a scenario that states what ``requirement`` adds and does not hold yet.
+
+    The test passes while the scenario stops at a check of that requirement, and
+    fails once the scenario runs clean: the change that lands the requirement
+    removes the mark. ``why`` says what happens today."""
+
+    def mark(scenario):
+        @functools.wraps(scenario)
+        def test(*args: Any, **kwargs: Any) -> None:
+            try:
+                scenario(*args, **kwargs)
+            except RequirementUnmet as gap:
+                assert str(gap).startswith(f"{requirement}:"), gap
+                return
+            pytest.fail(
+                f"{requirement} holds now ({why!r} no longer happens): remove "
+                f"@unmet from {scenario.__name__} in the change that lands it"
+            )
+
+        return test
+
+    return mark
 
 
 # --- the cast ---------------------------------------------------------------------
@@ -743,10 +771,9 @@ def test_the_ceilings_file_says_how_it_may_change():
 # --- what the fleet needs next: C6, C4, C5 ----------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=RequirementUnmet,
-    reason="C6: without a root catalog a second lease declaring any path is "
+@unmet(
+    "C6",
+    "without a root catalog a second lease declaring any path is "
     "refused 409 conflict, whatever the path",
 )
 def test_c6_disjoint_paths_are_both_fenced_without_a_root_catalog(fleet, monkeypatch):
@@ -782,10 +809,9 @@ def test_c6_disjoint_paths_are_both_fenced_without_a_root_catalog(fleet, monkeyp
     play(fleet, scene, roles=("design", "build"))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=RequirementUnmet,
-    reason="C4: a lapsed lease writes no event, no notification and no attention "
+@unmet(
+    "C4",
+    "a lapsed lease writes no event, no notification and no attention "
     "row for the conductor that delegated the work",
 )
 def test_c4_a_lapsed_lease_reaches_the_conductor_that_delegated_it(fleet):
@@ -859,10 +885,9 @@ def requested_reviewer_verdict(queue_row: dict, reviewer_id: int) -> str | None:
     return None
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=RequirementUnmet,
-    reason="C5: an account nobody asked can turn the requested reviewer's HOLD "
+@unmet(
+    "C5",
+    "an account nobody asked can turn the requested reviewer's HOLD "
     "into reported_pass, and the request row carries no verdict",
 )
 def test_c5_an_unrequested_pass_does_not_move_the_requested_hold(fleet):
