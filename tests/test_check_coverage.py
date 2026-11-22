@@ -299,3 +299,50 @@ def test_wrapper_canonicalizes_relative_tmpdir_before_chdir(tmp_path):
     assert result.returncode == 1
     assert "coverage evidence must be a non-empty regular file" in result.stderr
     assert str(tmp_dir.resolve()) in result.stderr
+
+
+def _record_pytest_arguments(tmp_path: Path) -> tuple[Path, Path]:
+    # Stand in for the interpreter: record the pytest command line, write nothing.
+    record = tmp_path / "arguments.txt"
+    python = tmp_path / "python"
+    python.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{record}"\n')
+    python.chmod(0o755)
+    return python, record
+
+
+@pytest.mark.parametrize(
+    ("workers", "expected"), [("", "4"), ("2", "2")], ids=["default", "override"]
+)
+def test_wrapper_takes_worker_count_from_environment(tmp_path, workers, expected):
+    # Each xdist worker holds its own copy of the suite's memory; a smaller machine
+    # must be able to run the same full-suite gate with fewer workers.
+    python, record = _record_pytest_arguments(tmp_path)
+
+    result = _run_wrapper(
+        str(tmp_path / "evidence"),
+        extra_env={"ATHENA_PYTHON": str(python), "ATHENA_COVERAGE_WORKERS": workers},
+    )
+
+    arguments = record.read_text().splitlines()
+    assert arguments[:3] == ["-m", "pytest", "-q"]
+    assert arguments[arguments.index("-n") + 1] == expected
+    assert "--cov" in arguments
+    # The wrapper still refuses to pass without complete evidence.
+    assert result.returncode == 1
+    assert "coverage evidence must be a non-empty regular file" in result.stderr
+
+
+@pytest.mark.parametrize("workers", ["0", "-1", "two", "4 --no-cov", " 4"])
+def test_wrapper_rejects_invalid_worker_count(tmp_path, workers):
+    python, record = _record_pytest_arguments(tmp_path)
+    report_dir = tmp_path / "evidence"
+
+    result = _run_wrapper(
+        str(report_dir),
+        extra_env={"ATHENA_PYTHON": str(python), "ATHENA_COVERAGE_WORKERS": workers},
+    )
+
+    assert result.returncode == 2
+    assert "ATHENA_COVERAGE_WORKERS must be a positive integer" in result.stderr
+    assert not record.exists()
+    assert not report_dir.exists()

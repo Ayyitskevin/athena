@@ -3,6 +3,8 @@ set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 athena_python="${ATHENA_PYTHON:-$repo_root/.venv/bin/python}"
+# Each pytest-xdist worker needs its own memory; lower this on a smaller machine.
+workers="${ATHENA_COVERAGE_WORKERS:-4}"
 
 if (( $# > 1 )); then
   echo "usage: scripts/coverage.sh [fresh-report-directory]" >&2
@@ -10,6 +12,10 @@ if (( $# > 1 )); then
 fi
 if [[ ! -x "$athena_python" ]]; then
   echo "coverage gate requires an executable Python at $athena_python" >&2
+  exit 2
+fi
+if [[ ! "$workers" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ATHENA_COVERAGE_WORKERS must be a positive integer: $workers" >&2
   exit 2
 fi
 
@@ -38,7 +44,7 @@ if (( ${#report_entries[@]} > 0 )); then
 fi
 
 cd "$repo_root"
-COVERAGE_FILE="$report_dir/.coverage" "$athena_python" -m pytest -q -n 4 -ra --strict-markers \
+COVERAGE_FILE="$report_dir/.coverage" "$athena_python" -m pytest -q -n "$workers" -ra --strict-markers \
   --cov \
   --cov-config=pyproject.toml \
   --cov-report=term-missing \

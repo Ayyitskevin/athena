@@ -144,6 +144,10 @@ fit — flag the friction instead. If two agents must change the same file (e.g.
    is partial and cannot replace product evidence. The product profile does not run CI's container
    or release-candidate audit jobs; obtain those separately. If the gate changes, change
    AGENTS.md, CONTRIBUTING.md and the script together.
+   At the default four test workers the product gate needs about
+   1.5 GiB (1.40 GiB measured on 2026-11-22) of memory. On a
+   smaller machine set `ATHENA_COVERAGE_WORKERS` to fewer; the receipt says when a
+   worker was killed.
 
 2. You **ran it**: the installed `athena-serve` entrypoint passes preflight,
    boots against a real DB, and the feature works over real HTTP. The retained
