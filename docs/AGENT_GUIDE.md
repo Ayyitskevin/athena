@@ -113,11 +113,20 @@ MCP `get_issue_work_context(ref)` · REST `GET /issues/{ref}/work-context`
    "policy":"assignee, delegated contributor, or admin; creator alone is insufficient"},
    "header":"If-Match","from":"issue_etag",
    "not":"the work-context packet's top-level _etag"},
- "complete_does_not_close_issue":true,…}
+ "complete_does_not_close_issue":true,
+ "work_order":{"present":[],"missing":["goal","context","inputs","action","format","success_criteria"]},…}
 ```
 
 Take `issue_etag` from this packet. It is the same value as the `ETag` header on
 `GET /issues/{id}`.
+
+`work_order` says, before you claim, whether the issue says what done means. The
+issue template writes the body as six Markdown headings (`## Goal`, `## Context`,
+`## Inputs`, `## Action`, `## Format`, `## Success criteria`); `present` lists the
+parts with text under their heading, `missing` the rest. Headings in fenced code do
+not count, and a missing part refuses nothing: when `success_criteria` is missing,
+ask on the issue what done means. The exact rule is in
+[WORK_CONTEXT.md](WORK_CONTEXT.md#work-order).
 
 ## 4. Claim safely
 

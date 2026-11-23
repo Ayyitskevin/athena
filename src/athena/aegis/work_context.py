@@ -22,6 +22,7 @@ from athena.aegis import (
     review_queue,
     review_request_projection,
     statuses,
+    work_order,
 )
 from athena.core import (
     access,
@@ -609,11 +610,12 @@ def _has_clipping(value: Any) -> bool:
 #: call. The brief packet is a PROJECTION of the full one, never a second
 #: build, so a retained value cannot differ from the full packet's and a hidden
 #: issue stays hidden on both paths.
-BRIEF_KEYS = ("issue", "issue_etag", "dependencies", "warnings")
+BRIEF_KEYS = ("issue", "issue_etag", "dependencies", "warnings", "work_order")
 
 
 def brief_work_context(payload: dict[str, Any]) -> dict[str, Any]:
-    """The compact packet: the issue, its ETag, its dependencies and warnings."""
+    """The compact packet: the issue, its ETag, its dependencies, warnings and
+    work-order report."""
     brief: dict[str, Any] = {
         "schema": payload["schema"],
         "scope": payload["scope"],
@@ -723,6 +725,10 @@ def build_work_context(
             "runbook": runbook_hints.runbook_narration(conn, issue["id"], actor=actor),
             "complete_does_not_close_issue": True,
             "warnings": [],
+            # Which of the six work-order parts the WHOLE body has as headings
+            # (W3, D21; aegis/work_order.py states the rule). Part names only:
+            # no body text. Advisory: it refuses nothing and adds no warning.
+            "work_order": work_order.report(issue["body"]),
             "hierarchy": _hierarchy(conn, issue, actor, visible_project_ids),
             "dependencies": dependencies,
             "contributors": _contributors(conn, issue["id"]),

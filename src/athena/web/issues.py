@@ -23,6 +23,7 @@ from athena.aegis import (
     issues,
     projects,
     sprints,
+    work_order,
 )
 from athena.core import (
     access,
@@ -281,8 +282,13 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 
 
 @router.get("/aegis/issues/new", response_class=HTMLResponse)
-def new_issue_form(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    """Render the new issue creation form."""
+def new_issue_form(
+    request: Request,
+    template: str = "",
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Render the new issue creation form, its body empty or, with
+    ``?template=work-order``, the work-order template's six headings."""
     user = getattr(request.state, "user", None)
     if user is not None and not identity.can_write(user):
         return readonly_response()
@@ -292,7 +298,10 @@ def new_issue_form(request: Request, conn: sqlite3.Connection = Depends(get_conn
         context={
             "all_projects": projects.list_projects(
                 conn, access.visible_project_filter(conn, user)
-            )
+            ),
+            # The work-order template (W3), whose six headings the
+            # work-context packet recognises; any other value is a blank body.
+            "body": work_order.TEMPLATE if template == work_order.TEMPLATE_NAME else "",
         },
     )
 

@@ -11,8 +11,9 @@ follows docs/CONDUCTOR_RECIPE.md literally, as an agent that read only that
 document and the tool descriptions would:
 
 1. the conductor reads its desk and the project, then creates an outcome and
-   three slices (design, build, review), each create carrying its parent,
-   accountable owner, worker and blocker (C9), and reads the children;
+   three slices (design, build, review), each written as the issue template
+   (W3) and each create carrying its parent, accountable owner, worker and
+   blocker (C9), and reads the children;
 2. the design seat picks up its slice, yields with a question, the operator
    answers, and the seat picks it up again, resumes the handoff and completes;
 3. the build seat claims with its paths and submits a frozen candidate; the
@@ -312,9 +313,46 @@ def play(fleet: Fleet, scene, roles: tuple[str, ...] = ROLES) -> dict[str, Fleet
 # --- the trial: the recipe, one outcome, three slices -------------------------------
 
 
+def work_order_body(*parts: str) -> str:
+    """An issue body written as the issue template (W3): the six headings the
+    recipe names, each with its text."""
+    headings = ("Goal", "Context", "Inputs", "Action", "Format", "Success criteria")
+    return "\n".join(
+        f"## {heading}\n{text}" for heading, text in zip(headings, parts, strict=True)
+    )
+
+
+#: The slices' work orders: goal, action, format and success criteria; each
+#: slice's context and inputs name the outcome.
+SLICES = {
+    "design": (
+        "Design: export contract",
+        "Agree the export contract.",
+        "Draft it; ask the operator what it leaves open.",
+        "The contract, as comments here.",
+        "The operator's open points are answered.",
+    ),
+    "build": (
+        "Build: export",
+        "Implement the agreed contract.",
+        "Build it and submit a frozen candidate.",
+        "A git candidate.",
+        "The candidate is reviewed PASS by a non-author.",
+    ),
+    "review": (
+        "Review: export candidate",
+        "Review the requested candidate.",
+        "Test those exact bytes against the contract.",
+        "A completion report with a verdict.",
+        "A verdict on the requested candidate.",
+    ),
+}
+
+
 async def plan_and_delegate(fleet: Fleet, conductor: FleetAgent, workers) -> None:
     """Record intent and delegate slices: one create each sets up the outcome and
-    every slice (parent, owner, worker, blocker), then one read of the children."""
+    every slice (parent, owner, worker, blocker), then one read of the children.
+    Every issue is written as the issue template, as the recipe says (W3)."""
     project_id = fleet.project_id
     await conductor.start()
     await conductor.call("current_run")
@@ -323,22 +361,32 @@ async def plan_and_delegate(fleet: Fleet, conductor: FleetAgent, workers) -> Non
         "create_issue",
         title="Outcome: widget export",
         project_id=project_id,
-        body="Acceptance: the export contract is agreed, and its implementation "
-        "is reviewed PASS by a non-author.",
+        body=work_order_body(
+            "Widgets export as a file.",
+            "Operators asked for an export.",
+            "The widget table.",
+            "Design, build and review it, one slice each.",
+            "Three slices under this issue.",
+            "The export contract is agreed, and its implementation is reviewed "
+            "PASS by a non-author.",
+        ),
         assignee_id=conductor.user_id,
     )
     fleet.issues["outcome"] = outcome["id"]
     previous: int | None = None
-    for role, title in (
-        ("design", "Design: export contract"),
-        ("build", "Build: export"),
-        ("review", "Review: export candidate"),
-    ):
+    for role, (title, goal, action, form, done) in SLICES.items():
         made = await conductor.call(
             "create_issue",
             title=title,
             project_id=project_id,
-            body=f"Slice of {outcome['key']}.",
+            body=work_order_body(
+                goal,
+                f"Slice of {outcome['key']}.",
+                f"{outcome['key']} and its slices.",
+                action,
+                form,
+                done,
+            ),
             parent_id=outcome["id"],
             assignee_id=conductor.user_id,
             delegate_ids=[workers[role].user_id],
@@ -471,6 +519,11 @@ async def build_submits(
     else:
         await build.start()
     context = await build.call("get_issue_work_context", issue_id=issue_id)
+    # Before it claims, the seat can tell the issue says what done means.
+    build.expect(
+        "success_criteria" in context["work_order"]["present"],
+        f"no success criteria to build to: {context['work_order']}",
+    )
     previous = None
     if rework:
         tracking = context.get("review_tracking") or {}

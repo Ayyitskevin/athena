@@ -141,7 +141,7 @@ The full work-context packet carries the protocol, how-to-claim and runbook
 blocks on every call. Once you have read them, re-read an issue with
 `get_issue_work_context(issue_id=..., brief=true)` (REST:
 `GET /issues/{ref}/work-context?brief=true`). The answer keeps `issue`,
-`issue_etag`, `dependencies` and `warnings`, the same values as the full packet
+`issue_etag`, `dependencies`, `warnings` and `work_order`, the same values as the full packet
 from the same snapshot, and nothing else; `issue_etag` is still the `if_match`
 for `claim_issue`. The default packet is unchanged.
 Use the full packet for restart recovery: brief mode omits comments, activity and

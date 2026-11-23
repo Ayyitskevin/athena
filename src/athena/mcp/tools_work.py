@@ -86,7 +86,12 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         delegate_ids (agents, as delegate_issue) and blocked_by (issue ids, as
         link_issues relation blocked_by). Each is refused as its own tool would
         refuse it, and a refusal creates nothing. `_etag` is the issue's after
-        all of it."""
+        all of it.
+
+        To say what done means, write the body as the issue template: six
+        headings, ## Goal, ## Context, ## Inputs, ## Action, ## Format and
+        ## Success criteria, each with text under it. The work-context packet's
+        work_order reports which the body has; none is required."""
         return client.create_issue(
             title=title,
             body=body,

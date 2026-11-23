@@ -121,6 +121,10 @@
         </dd>
         <dt>Complete claim</dt>
         <dd>Releases the lease only. Does not mark the issue done.</dd>
+        <dt>Work order has</dt>
+        <dd>{% for part in work_order.present %}<code>{{ part }}</code>{% if not loop.last %}, {% endif %}{% else %}none of the six parts{% endfor %}</dd>
+        <dt>Work order lacks</dt>
+        <dd>{% for part in work_order.missing %}<code>{{ part }}</code>{% if not loop.last %}, {% endif %}{% else %}nothing{% endfor %}</dd>
     </dl>
     </div>
 </section>

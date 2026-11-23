@@ -38,6 +38,7 @@ FULL_KEYS = frozenset(
         "runbook",
         "complete_does_not_close_issue",
         "warnings",
+        "work_order",
         "hierarchy",
         "dependencies",
         "contributors",
@@ -51,7 +52,16 @@ FULL_KEYS = frozenset(
     }
 )
 BRIEF_KEYS = frozenset(
-    {"schema", "scope", "brief", "issue", "issue_etag", "dependencies", "warnings"}
+    {
+        "schema",
+        "scope",
+        "brief",
+        "issue",
+        "issue_etag",
+        "dependencies",
+        "warnings",
+        "work_order",
+    }
 )
 # The blocks that repeat on every call and say nothing about this issue.
 PROTOCOL_BLOCKS = frozenset(
@@ -129,7 +139,15 @@ def test_brief_keeps_the_issue_its_etag_dependencies_and_warnings_and_drops_the_
     brief = _get(board["tc"], board["issue"]["id"], brief=True).json()
     assert set(brief) == BRIEF_KEYS
     assert brief["brief"] is True
-    for key in ("schema", "scope", "issue", "issue_etag", "dependencies", "warnings"):
+    for key in (
+        "schema",
+        "scope",
+        "issue",
+        "issue_etag",
+        "dependencies",
+        "warnings",
+        "work_order",
+    ):
         assert brief[key] == full[key], key
     # The retained values are real, not empty shells.
     assert full["dependencies"]["blocked_by"]["visible_total"] == 1

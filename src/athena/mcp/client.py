@@ -353,7 +353,7 @@ class AthenaClient:
 
     def get_issue_work_context(self, ref: str, *, brief: bool = False) -> Any:
         """Get the bounded work-context packet for one visible issue. ``brief``
-        keeps only the issue, its ETag, dependencies and warnings."""
+        keeps only the issue, its ETag, dependencies, warnings and work order."""
         if brief:
             return self._result(
                 self._client.get(

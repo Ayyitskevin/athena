@@ -66,6 +66,16 @@ ETag a later guarded write takes. The separate tools stay for changes after
 creation, and every write that changes an issue answers its new `_etag`, so a
 guarded write after one needs no `get_issue_work_context` read.
 
+Write each body as the issue template
+([WORK_CONTEXT.md](WORK_CONTEXT.md#work-order)): six Markdown headings,
+`## Goal`, `## Context`, `## Inputs`, `## Action`, `## Format` and
+`## Success criteria`, each with text under it. The operator's acceptance
+conditions go under Success criteria; the outcome's key goes under each slice's
+Context. A part left out is reported missing in the issue's work context
+(`work_order.missing`), never refused. For an issue you did not write yourself,
+read that before delegating, and fix the body with `update_issue` rather than
+delegate work that does not say what done means.
+
 Dependencies guide the ready queue; an ordinary claim does not enforce that every
 blocker is done. The conductor checks prerequisite evidence before asking a worker
 to proceed. A configured blocked-issue close policy is a separate gate, not a
@@ -91,7 +101,9 @@ for finite receipt retention and fail-closed retry boundaries.
 
 ## Work, then review the exact artifact
 
-Each worker starts with its desk and full work context, reads dependency evidence,
+Each worker starts with its desk and full work context, reads dependency evidence
+and the work order (`work_order.present` should name `success_criteria`; when it
+does not, ask the conductor on the issue what done means),
 checks the current lease, then claims with the freshly read root `issue_etag` and
 its permitted paths. Being the creator alone is insufficient: the claimant must
 be assignee, delegated contributor or otherwise authorized. Record the returned
@@ -211,8 +223,9 @@ On a fresh execution, use a new run identity and start with `my_desk()`, then
 the returned run with `current_run()`. The launcher uses `ATHENA_RUN_ID` when
 supplied, otherwise it creates a new session run; the full profile also offers
 `begin_run`.
-Do not recover from `brief=true`: it contains only issue, issue ETag, dependencies
-and warnings, omitting the comments, activity and open claim handoff.
+Do not recover from `brief=true`: it contains only issue, issue ETag, dependencies,
+warnings and the work-order report, omitting the comments, activity and open claim
+handoff.
 
 Read the answer and handoff, claim against the current issue ETag, then call
 `resume_claim_handoff` with the returned exact handoff token and your new generation.

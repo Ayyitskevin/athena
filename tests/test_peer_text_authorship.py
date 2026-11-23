@@ -434,6 +434,19 @@ def test_every_classification_names_a_field_that_exists():
     assert [key for key in stale if key not in every] == []
 
 
+def test_the_work_order_report_is_a_closed_vocabulary():
+    """W3: ``work_order`` is derived from the issue body, another actor's text,
+    but names parts only. Each of its fields is a list of part names (a
+    Literal), so it needs no ``authored_by`` and no entry above; a free-text
+    field added to it would fail the walk."""
+    roots = tuple(model for models in READS.values() for model in models)
+    work_order = work_context_api.WorkOrderOut
+    for model in roots[:2]:
+        assert model.model_fields["work_order"].annotation is work_order
+    assert set(work_order.model_fields) == {"present", "missing"}
+    assert unmarked_text_fields((work_order,), {}) == []
+
+
 # --- the desk: a seeded instance, walked by lane path ---------------------------
 
 
