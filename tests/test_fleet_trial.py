@@ -409,8 +409,8 @@ async def design_asks(fleet: Fleet, design: FleetAgent) -> None:
         f"its slice was not picked up: {picked}",
     )
     await design.call("get_issue_work_context", issue_id=issue_id)
-    run = await design.call("current_run")
-    await design.call("heartbeat_agent_run", run_id=run["run_id"])
+    # The session's run is reported; no current_run read first (A12).
+    await design.call("heartbeat_agent_run")
     await design.call(
         "comment_on_issue",
         issue_id=issue_id,
@@ -544,8 +544,8 @@ async def build_submits(
         paths=BUILD_PATHS,
     )
     if not rework:
-        run = await build.call("current_run")
-        await build.call("heartbeat_agent_run", run_id=run["run_id"])
+        # The session's run is reported; no current_run read first (A12).
+        await build.call("heartbeat_agent_run")
     await build.call(
         "comment_on_issue",
         issue_id=issue_id,

@@ -247,20 +247,23 @@ def register_work_tools(tool, mutation_tool, client) -> None:
     @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=SEAT, hints=ADDS)
     def claim_issue(
         issue_id: int,
-        if_match: str,
+        if_match: str | None = None,
         generation: LeaseGeneration | None = None,
         lease_seconds: int | None = None,
         paths: list[str] | None = None,
         coordination_root: CoordinationRootSelector | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Claim or renew an issue against the exact root issue revision you
-        reviewed. if_match is the issue ETag: `_etag` from get_issue or
-        `issue_etag` from get_issue_work_context (the same value; not the
-        work-context packet's own top-level `_etag`). Omit generation to acquire
-        a free or expired lease; if you already hold the issue the call is a
-        renewal and needs your current generation (the 428 names it).
-        lease_seconds defaults to 30 minutes.
+        """Claim or renew an issue. To acquire, omit generation and pass the
+        exact root issue revision you reviewed as if_match: `_etag` from
+        get_issue or `issue_etag` from get_issue_work_context (the same value;
+        not the work-context packet's own top-level `_etag`); without it the
+        claim is refused 428. If you already hold the issue the call is a
+        renewal and needs your current generation (the 428 names it); the
+        generation alone renews, with no if_match, unless the renewal also
+        passes paths or coordination_root. lease_seconds defaults to 30 minutes.
+        The answer carries the issue's current `issue_etag` beside the lease, so a
+        renewal shows whether the issue changed since you read it.
 
         Optional `paths` declares relative POSIX files (`..` and absolute paths
         refuse). my_desk's `office.fence` says how they are compared. With no

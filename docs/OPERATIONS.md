@@ -1082,7 +1082,7 @@ an issue in a private project it cannot access.
 
 ## Claiming and yielding delegated work
 
-Before acquiring or renewing a lease, fetch `GET /issues/{id}` and copy its
+Before acquiring a lease, fetch `GET /issues/{id}` and copy its
 response `ETag` header (exposed as `_etag` by the official client), or fetch Agent
 Work Context and copy its JSON `issue_etag`. Do not use the context packet's
 top-level `_etag`. Pass the root tag, including its quotes, as the only `If-Match`
@@ -1100,7 +1100,8 @@ curl -fsS -X POST http://127.0.0.1:8000/issues/42/claim \
 
 A free or expired acquisition omits `generation` as above and receives a fresh
 opaque generation in the `201` lease body. An active same-holder renewal sends that
-exact value in the JSON body; the generation remains stable for the possession:
+exact value in the JSON body, and needs no `If-Match` unless it also sends `paths`
+or `coordination_root`; the generation remains stable for the possession:
 
 ```json
 {"generation":"0123456789abcdef0123456789abcdef"}
@@ -1113,9 +1114,10 @@ lease-read responses are private and non-cacheable and carry no response `ETag`;
 obtain a root issue validator from an issue or work-context read for the next
 guarded logical request.
 
-MCP callers pass the same value as the required `if_match` argument to
-`claim_issue`. Acquisition and same-holder renewal both require exactly one strong
-root tag. Missing input returns `428 precondition_required` without a current tag
+MCP callers pass the same value as the `if_match` argument to `claim_issue`.
+Acquisition requires exactly one strong root tag, as does a renewal that sends
+`paths` or `coordination_root`; a renewal by generation alone may omit it, and a tag
+it sends is checked. Missing input returns `428 precondition_required` without a current tag
 and with `Cache-Control: no-store`; malformed, weak, wildcard, empty, multiple, or
 duplicate input returns `400 invalid_if_match`; oversized input returns `431`; and
 a stale tag returns `412 precondition_failed` with the current root issue tag.
@@ -1243,9 +1245,10 @@ curl -fsS -X PUT http://127.0.0.1:8000/agent-runs/heartbeat \
 The caller must use bearer-token authentication, its user must be marked as an
 agent, and the token must carry at least one write scope (`issue:write`,
 `docs:write`, or `admin`). The body is intentionally strict: clients send only the
-run id, never an actor id or timestamp. MCP clients use
-`heartbeat_agent_run(run_id)` under the same authentication and authorization
-rules.
+run id, never an actor id or timestamp. A request tagged with `X-Athena-Run` may
+omit `run_id` (that run is reported); a `run_id` that differs from the header is
+refused `422 run_id_mismatch`. MCP clients use `heartbeat_agent_run()` under the
+same authentication and authorization rules; it reports on the session's run.
 
 Athena records `first_seen_at` once and refreshes the server-owned `last_seen_at`
 on every accepted PUT. Repeated PUTs are therefore intentional refreshes, not

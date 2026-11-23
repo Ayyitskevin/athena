@@ -160,8 +160,15 @@ CLAIM_IF_MATCH_OPENAPI = {
         {
             "name": "If-Match",
             "in": "header",
-            "required": True,
-            "description": "Exactly one strong root issue ETag.",
+            # Not required by every call: the holder's renewal with its current
+            # generation, naming no paths or root, may omit it (A12). Every
+            # acquisition still answers 428 without it.
+            "required": False,
+            "description": (
+                "Exactly one strong root issue ETag. Required to acquire a lease "
+                "and for a renewal that names paths or coordination_root; the "
+                "holder's renewal with its current generation alone may omit it."
+            ),
             "schema": {"type": "string"},
         }
     ]

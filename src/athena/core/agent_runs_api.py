@@ -25,12 +25,16 @@ _STATUS_BY_KIND: dict[str, int] = {
     "unauthorized": 401,
     "forbidden": 403,
     "invalid": 422,
+    "run_id_mismatch": 422,
+    "run_header_invalid": 422,
     "capacity": 409,
 }
 _CODE_BY_KIND: dict[str, str] = {
     "unauthorized": "unauthenticated",
     "forbidden": "forbidden",
     "invalid": "validation_error",
+    "run_id_mismatch": "run_id_mismatch",
+    "run_header_invalid": "run_header_invalid",
     "capacity": "capacity_reached",
 }
 
@@ -53,7 +57,10 @@ RunId = Annotated[
 class AgentRunHeartbeatIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    run_id: RunId
+    # Omitted → the run this request is tagged with (X-Athena-Run). A run_id
+    # that is not that run is refused run_id_mismatch; with no run header it is
+    # required. The command applies the rule, for every transport.
+    run_id: RunId = None
     # The command owns the usage grammar (reported_usage); keep the field opaque here.
     usage: Annotated[
         Any,
@@ -80,6 +87,10 @@ def heartbeat_agent_run(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     """Refresh the authenticated agent's run check-in using the server clock.
+
+    The run is the request's own: omit ``run_id`` and the ``X-Athena-Run``
+    header names it; a ``run_id`` that differs from that header is refused
+    ``run_id_mismatch``. Without the header, ``run_id`` is required.
 
     ``usage`` optionally reports model usage since the previous report. It is stored as
     an agent-reported fact; Athena does not meter, verify, or enforce anything from it.

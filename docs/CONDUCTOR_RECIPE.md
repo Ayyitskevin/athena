@@ -117,8 +117,9 @@ checks the current lease, then claims with the freshly read root `issue_etag` an
 its permitted paths. Being the creator alone is insufficient: the claimant must
 be assignee, delegated contributor or otherwise authorized. Record the returned
 generation and keep one stable run for this execution. Heartbeats report check-ins;
-they do not renew leases or prove progress. Renew with the exact generation and a
-fresh issue ETag. Declared paths communicate scope; they are not filesystem locks.
+they do not renew leases or prove progress; `heartbeat_agent_run()` reports on the
+session's run. Renew with the exact generation alone; a renewal that also sends
+`paths` or `coordination_root` needs a fresh issue ETag. Declared paths communicate scope; they are not filesystem locks.
 On an instance with no root catalog (the default) workers' paths are compared
 under one implicit root, in every project: disjoint fences coexist, and a path
 equal to, inside or around another active lease's is refused `fence_overlap`,

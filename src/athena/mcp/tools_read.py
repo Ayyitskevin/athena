@@ -774,8 +774,12 @@ def register_read_tools(tool, mutation_tool, client) -> None:
 
     # Liveness: every call refreshes last-seen (and usage counts again).
     @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=SEAT, hints=ADDS)
-    def heartbeat_agent_run(run_id: RunId, usage: dict | None = None) -> dict:
-        """Report that this authenticated agent is still working on `run_id`.
+    def heartbeat_agent_run(
+        run_id: RunId | None = None, usage: dict | None = None
+    ) -> dict:
+        """Report that this authenticated agent is still working on this
+        session's run. Omit run_id: the session's run (current_run) is used; a
+        run_id that is not the session's is refused run_id_mismatch.
         Athena binds the heartbeat to the token's actor and its own server clock;
         call repeatedly because every PUT intentionally refreshes last-seen state.
         usage is optional: model, input_tokens, output_tokens, cached_tokens,

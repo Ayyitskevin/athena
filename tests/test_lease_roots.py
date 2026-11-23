@@ -462,7 +462,11 @@ def test_audit_storage_failure_rolls_back_root_and_empty_transition(client):
         conn.close()
     with pytest.raises(sqlite3.IntegrityError, match="synthetic audit unavailable"):
         claim(client, item, generation=first["generation"], paths=[])
-    assert client.get(f"/issues/{item}/lease").json() == first
+    # The claim answer carries the issue's ETag beside the lease (A12); the
+    # lease read is the lease alone.
+    lease_as_claimed = {k: v for k, v in first.items() if k != "issue_etag"}
+    assert first["issue_etag"]
+    assert client.get(f"/issues/{item}/lease").json() == lease_as_claimed
     assert (
         client.get(
             "/activity", params={"target_kind": "issue", "target_id": item}

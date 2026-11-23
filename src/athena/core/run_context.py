@@ -21,6 +21,12 @@ _run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "athena_run_id", default=None
 )
 
+# The raw X-Athena-Run value as the client sent it, or None when absent. The
+# run id above is its forgiving normalization; this keeps what was sent.
+_client_run_header: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "athena_client_run_header", default=None
+)
+
 # The PARENT run id — the run that spawned the current one (lineage). None for a
 # top-level run, or any untagged request. Set/reset alongside _run_id by the
 # middleware, so every event records both which run it is and which run begot it.
@@ -113,6 +119,26 @@ def set_client_run_id(raw: str | None) -> contextvars.Token:
     if is_reserved_run_id(normalized):
         normalized = None
     return _run_id.set(normalized)
+
+
+def set_client_run_header(raw: str | None) -> contextvars.Token:
+    """Keep the raw ``X-Athena-Run`` value a client sent, before the forgiving
+    normalization above drops or reshapes it; None when no header was sent.
+    The request middleware sets it beside :func:`set_client_run_id` and MUST
+    reset it with the returned token."""
+    return _client_run_header.set(raw)
+
+
+def reset_client_run_header(token: contextvars.Token) -> None:
+    _client_run_header.reset(token)
+
+
+def get_client_run_header() -> str | None:
+    """The raw run header of the current request, or None when it sent none.
+    A command that keys state on the session's run (the heartbeat) compares it
+    with :func:`get_run_id` to tell a run that was dropped, cut short or
+    reshaped from one that was never sent."""
+    return _client_run_header.get()
 
 
 def reset_run_id(token: contextvars.Token) -> None:

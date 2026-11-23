@@ -974,7 +974,7 @@ def test_rest_claim_requires_auth(tmp_path):
         assert client.post(f"/issues/{issue['id']}/claim").status_code in (401, 403)
 
 
-def test_claim_openapi_marks_if_match_required_without_runtime_validation(tmp_path):
+def test_claim_openapi_declares_if_match_without_runtime_validation(tmp_path):
     operation = create_app(tmp_path / "openapi.db").openapi()["paths"][
         "/issues/{issue_id}/claim"
     ]["post"]
@@ -984,12 +984,18 @@ def test_claim_openapi_marks_if_match_required_without_runtime_validation(tmp_pa
         if item["in"] == "header" and item["name"].lower() == "if-match"
     ]
 
+    # Not required of every call since A12: the holder's renewal by generation
+    # alone omits it; every acquisition still answers 428 without it.
     assert parameters == [
         {
             "name": "If-Match",
             "in": "header",
-            "required": True,
-            "description": "Exactly one strong root issue ETag.",
+            "required": False,
+            "description": (
+                "Exactly one strong root issue ETag. Required to acquire a lease "
+                "and for a renewal that names paths or coordination_root; the "
+                "holder's renewal with its current generation alone may omit it."
+            ),
             "schema": {"type": "string"},
         }
     ]

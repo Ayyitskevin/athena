@@ -140,6 +140,16 @@ class LeaseOut(BaseModel):
     open_claim_handoff: ClaimHandoffOut | None = None
 
 
+class ClaimOut(LeaseOut):
+    """A claim's or renewal's answer: the lease, and beside it the issue's
+    current ETag. A holder that renews on its generation alone sends no
+    If-Match, so this is how it sees the issue changed (closed, archived,
+    re-scoped) without another read. It is not part of the lease: the lease
+    read does not carry it."""
+
+    issue_etag: str
+
+
 class ClaimIn(RequestBody):
     # How long the lease should hold before it must be renewed. Omitted → the server
     # default. Bounded by the command to [MIN, MAX] lease seconds.
@@ -535,7 +545,7 @@ def get_issue_lease(
 
 @router.post(
     "/{issue_id}/claim",
-    response_model=LeaseOut,
+    response_model=ClaimOut,
     status_code=201,
     openapi_extra=CLAIM_IF_MATCH_OPENAPI,
 )

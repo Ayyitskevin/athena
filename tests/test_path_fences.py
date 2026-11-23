@@ -318,6 +318,8 @@ def test_a_claim_without_paths_is_unchanged_beside_a_fence(world):
         "coordination_root",
         "path_fence",
         "open_claim_handoff",
+        # The issue's ETag beside the lease, on every claim answer (A12).
+        "issue_etag",
     }
 
 

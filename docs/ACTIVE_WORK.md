@@ -19,12 +19,15 @@ does not create a second run table, poll processes, or mutate work.
    only for a free/expired acquisition; pass the current lease generation for an
    active same-holder renewal. The default TTL is 1800 seconds, bounded to
    60–86400 seconds (`aegis/leases.py`, lease constants). Renew before
-   `expires_at`, with a freshly reviewed root issue ETag even after your own
-   edits; a stale tag refuses without extending the lease. An expired possession
-   needs a deliberate new acquisition, not a blind renewal retry
-   (`aegis/lease_commands.py::claim_issue`).
-5. While work continues, send `heartbeat_agent_run(run_id)` (or
+   `expires_at` with the current generation alone: an active renewal by the
+   holder needs no issue ETag unless it also sends `paths` or `coordination_root`.
+   An `If-Match` a renewal does send is still checked, and a stale tag refuses
+   without extending the lease. An expired possession needs a deliberate new
+   acquisition, not a blind renewal retry (`aegis/lease_commands.py::claim_issue`).
+5. While work continues, send `heartbeat_agent_run()` (or
    `PUT /agent-runs/heartbeat`) and make audited writes under the same run id.
+   An omitted `run_id` is the session's run (`X-Athena-Run`); a different one is
+   refused `run_id_mismatch`.
    This records that the authenticated agent reported for the run; it does not
    prove process liveness or renew the lease (`core/agent_run_commands.py::heartbeat`).
 6. Inspect **Admin → Agent Mission Control** at `/admin/agents/runs`, call
@@ -202,7 +205,10 @@ authorized for a separate gated action.
 
 Leases, typed claim handoffs, activity, account controls, check-ins, dependencies,
 and token revocation survive restart in Athena's SQLite database. Every acquisition
-and same-holder renewal requires exactly one strong root issue validator. A missing
+requires exactly one strong root issue validator, and so does a same-holder renewal
+that sends `paths` or `coordination_root`; a renewal by the holder with its exact
+current generation and neither may omit it (the generation is the fence), and one it
+sends is checked. A missing
 precondition returns `428 precondition_required` without disclosing a current tag;
 malformed input returns `400 invalid_if_match`, oversized input returns `431`, and a
 stale tag returns `412 precondition_failed` with the current root tag.
@@ -418,6 +424,9 @@ current `generation` (a repeated claim without it answers 428 and names the
 generation to the holder). What a renewal does to the declared fence:
 
 - `paths` omitted or null retains the stored root and paths.
+- A renewal that sends `paths` (an explicit `[]` included) or
+  `coordination_root` needs the root issue ETag as `If-Match`, like an
+  acquisition; one that sends neither renews on the generation alone.
 - An explicit `[]` makes the renewal issue-only, under the same generation, ETag
   and audit rules. It is never a way to bypass a conflict.
 - Changing the coordination root needs a new possession: a renewal that names a

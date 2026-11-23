@@ -562,14 +562,16 @@ class AthenaClient:
         self,
         issue_id: int,
         *,
-        if_match: str,
+        if_match: str | None = None,
         generation: str | None = None,
         lease_seconds: int | None = None,
         paths: list[str] | None = None,
         coordination_root: dict | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
-        """Claim against the exact strong root issue ETag the caller reviewed.
+        """Claim against the exact strong root issue ETag the caller reviewed,
+        or renew a held lease with its generation (``if_match`` may then be
+        omitted unless ``paths`` or ``coordination_root`` is sent).
 
         ``paths`` declares relative files. ``coordination_root`` selects a qualified
         operator mapping, not filesystem authority. Omission retains on renewal;
@@ -1438,8 +1440,13 @@ class AthenaClient:
             )
         )
 
-    def heartbeat_agent_run(self, run_id: str, usage: dict | None = None) -> Any:
+    def heartbeat_agent_run(
+        self, run_id: str | None = None, usage: dict | None = None
+    ) -> Any:
         """Refresh this authenticated agent's server-timed run check-in.
+
+        ``run_id`` omitted reports on this client's run (the ``X-Athena-Run``
+        header it sends); a different one is refused ``run_id_mismatch``.
 
         A heartbeat is intentionally not a durable-idempotency mutation: every PUT
         must reach the server so repeated calls advance the liveness observation.

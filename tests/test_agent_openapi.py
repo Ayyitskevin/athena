@@ -346,10 +346,12 @@ def test_if_match_is_declared_where_the_route_reads_it(built):
         operation = _operation(agent, method, path)
         assert _IF_MATCH_REF in _parameter_refs(operation), (method, path)
         assert {"400", "412", "431"} <= set(operation["responses"]), (method, path)
-    # The claim declared its own, required, If-Match; it is kept as declared.
+    # The claim declared its own If-Match; it is kept as declared. It is not
+    # required of every call: a generation-only renewal omits it (A12).
     claim = _operation(agent, "POST", "/issues/{issue_id}/claim")
     declared = [p for p in claim["parameters"] if p.get("name") == "If-Match"]
-    assert len(declared) == 1 and declared[0]["required"] is True
+    assert len(declared) == 1 and declared[0]["required"] is False
+    assert "renewal" in declared[0]["description"]
     assert _IF_MATCH_REF not in _parameter_refs(claim)
     # Ready pickup checks for If-Match only to refuse it: not declared.
     claim_next = _operation(agent, "POST", "/issues/claim-next")

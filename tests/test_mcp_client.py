@@ -458,8 +458,12 @@ MUTATION_CASES = [
 ]
 
 MUTATION_TOOL_NAMES = {case[0] for case in MUTATION_CASES}
-REQUIRED_IF_MATCH_TOOL_NAMES = {"claim_issue"}
+# claim_issue's if_match is optional in the schema since A12: the holder's
+# renewal by generation omits it, and a first claim without it is refused 428 by
+# the server (tests/test_lease_renewal_by_generation.py).
+REQUIRED_IF_MATCH_TOOL_NAMES: set[str] = set()
 OPTIONAL_IF_MATCH_TOOL_NAMES = {
+    "claim_issue",
     "update_issue",
     "set_issue_placement",
     "assign_issue",
@@ -1805,7 +1809,7 @@ def test_guarded_mcp_issue_mutations_forward_if_match(tool_name, arguments):
 @pytest.mark.parametrize(
     ("tool_name", "arguments"),
     [
-        ("claim_issue", {"issue_id": 7}),
+        ("claim_issue", {"issue_id": 7, "generation": "not-a-generation"}),
         (
             "yield_claim",
             {
@@ -2350,9 +2354,14 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             assert contract_term in work_context_description
 
         heartbeat_schema = tools["heartbeat_agent_run"].inputSchema
-        assert heartbeat_schema["required"] == ["run_id"]
+        # Optional since A12: omitted, the session's run is reported.
+        assert heartbeat_schema.get("required", []) == []
         assert set(heartbeat_schema["properties"]) == {"run_id", "usage"}
-        run_id_schema = heartbeat_schema["properties"]["run_id"]
+        run_id_schema = next(
+            option
+            for option in heartbeat_schema["properties"]["run_id"]["anyOf"]
+            if option["type"] == "string"
+        )
         assert run_id_schema["minLength"] == 1
         assert run_id_schema["maxLength"] == 200
         assert run_id_schema["pattern"] == (

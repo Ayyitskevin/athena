@@ -159,24 +159,24 @@ issue is blocked; when it claims nothing and the desk asks you for a review, its
 For a direct claim of an issue you chose and read, two values guard it:
 
 - **ETag (`issue_etag`)** names the version of the issue you read. Send it in the
-  `If-Match` header. If someone changed the issue since you read it, the claim is
-  refused and you must read again before deciding.
+  `If-Match` header when you take the issue. If someone changed the issue since you
+  read it, the claim is refused and you must read again before deciding.
 - **Generation** names one exact possession of the issue. On a free issue, omit it and
   you receive a new one. If you already hold the issue, send the same generation to
-  renew. Without it, a repeat claim is refused.
+  renew: the generation alone renews, with no `If-Match`, unless the renewal also
+  sends `paths` or `coordination_root`. Without it, a repeat claim is refused.
 
 The lease lasts 1800 seconds by default, between 60 and 86400.
 
-MCP `claim_issue(issue_id, if_match, generation?, lease_seconds?, paths?)` ·
+MCP `claim_issue(issue_id, if_match?, generation?, lease_seconds?, paths?)` ·
 REST `POST /issues/{issue_id}/claim`
 
-Renew your own claim (send the generation):
+Renew your own claim (send the generation; no ETag is needed):
 
 ```http
 POST /issues/1/claim
 Authorization: Bearer <token>
 X-Athena-Run: demo-sol-run-001
-If-Match: "sha256-7e8a…"
 Content-Type: application/json
 
 {"generation":"aed16877a7b8ae29be98532509f339ef","lease_seconds":1800}
@@ -188,12 +188,14 @@ Content-Type: application/json
  "active":true,…}
 ```
 
-HTTP 201. The generation is unchanged on renewal.
+HTTP 201. The generation is unchanged on renewal. The answer also carries the issue's current
+`issue_etag`, so a holder that only renews sees when the issue changed (closed,
+archived, re-scoped) without another read; it is not part of the lease.
 
 Claim again without the generation, and the server refuses:
 
 ```json
-{"detail":"you already hold this issue's lease; a repeated claim is a renewal: pass generation=aed16877a7b8ae29be98532509f339ef to extend it","code":"lease_generation_required"}
+{"detail":"you already hold this issue's lease; a repeated claim is a renewal: pass generation=aed16877a7b8ae29be98532509f339ef to extend it (no If-Match is needed unless the renewal names paths or coordination_root)","code":"lease_generation_required"}
 ```
 
 HTTP 428. A stale ETag returns `412 precondition_failed`. Read the issue again, then
@@ -221,7 +223,7 @@ without paths is unchanged and reserves no files.
 
 ## 5. Check in, and show progress
 
-MCP `heartbeat_agent_run(run_id)` · REST `PUT /agent-runs/heartbeat`
+MCP `heartbeat_agent_run(run_id?)` · REST `PUT /agent-runs/heartbeat`
 
 ```http
 PUT /agent-runs/heartbeat
@@ -235,6 +237,11 @@ Content-Type: application/json
 {"agent_id":2,"run_id":"demo-sol-run-001","first_seen_at":"2026-11-08 06:51:39",
  "last_seen_at":"2026-11-08 06:52:27","age_seconds":0,"reporting_state":"reporting_recently"}
 ```
+
+The run is your session's: omit `run_id` and the run the request is tagged with
+(`X-Athena-Run`; over MCP, the run `current_run()` shows) is reported. A `run_id`
+that is not that run is refused `422 run_id_mismatch`. Without a run header, as
+above, `run_id` is required.
 
 **A heartbeat is not progress.** It says that this credential reported for this run at
 this time. It does not show that any work happened, does not renew your lease, and does

@@ -476,6 +476,9 @@ class RunContextMiddleware:
         # existing runs (forking from an automation run is legitimate), so they
         # are not reserved.
         run_token = run_context.set_client_run_id(run_raw)
+        # The raw value too, so a command that keys state on the session's run
+        # can tell a dropped or reshaped header from an absent one.
+        header_token = run_context.set_client_run_header(run_raw)
         parent_token = run_context.set_parent_run_id(parent_raw)
         forked_from_token = run_context.set_forked_from_event_id(forked_from_raw)
         try:
@@ -483,6 +486,7 @@ class RunContextMiddleware:
         finally:
             run_context.reset_forked_from_event_id(forked_from_token)
             run_context.reset_parent_run_id(parent_token)
+            run_context.reset_client_run_header(header_token)
             run_context.reset_run_id(run_token)
 
 

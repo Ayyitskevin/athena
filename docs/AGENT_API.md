@@ -139,7 +139,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `assign_issue` | `PUT /issues/{issue_id}/assignee` | idempotent | Assign an issue to a user id, or pass no assignee_id to unassign it. |
 | `attach_label` | `POST /issues/{issue_id}/labels` | idempotent | Attach an existing label (by id — see list_labels) to an issue. |
 | `bulk_update_issues` | `POST /issues/bulk` | idempotent | Apply the same change to MANY issues at once (one call instead of N). |
-| `claim_issue` | `POST /issues/{issue_id}/claim` | additive | Claim or renew an issue against the exact root issue revision you … |
+| `claim_issue` | `POST /issues/{issue_id}/claim` | additive | Claim or renew an issue. To acquire, omit generation and pass the … |
 | `claim_next_ready` | `POST /issues/claim-next` | additive | Atomically select and claim ready work: delegated first, then priority, … |
 | `comment_on_issue` | `POST /issues/{issue_id}/comments` | additive | Add a comment to an issue, authored by the token's user. |
 | `complete_claim` | `POST /issues/{issue_id}/complete` | idempotent | Release your lease. This does NOT close the issue; update_issue does. |
@@ -189,7 +189,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `clear_watch_preference` | `DELETE /watches/{target_kind}/{target_id}/preference` | destructive, idempotent | Delete YOUR preference for a watch, restoring target/default priority. |
 | `complete_run_control` | `POST /run-controls/{control_id}/complete` | idempotent | Complete a control addressed to your run. |
 | `decline_run_control` | `POST /run-controls/{control_id}/decline` | idempotent | Decline a control addressed to your run, with the reason the operator … |
-| `heartbeat_agent_run` | `PUT /agent-runs/heartbeat` | additive | Report that this authenticated agent is still working on `run_id`. |
+| `heartbeat_agent_run` | `PUT /agent-runs/heartbeat` | additive | Report that this authenticated agent is still working on this … |
 | `link_mention` | `POST /{base}/{source_id}/link-mention` | destructive | Rewrite the SOURCE document so its first unlinked mention of the target … |
 | `mark_notification_read` | `POST /notifications/read_all`<br>`POST /notifications/{notification_id}/read` | idempotent | Mark notifications in YOUR inbox as read, after handling them. Pass … |
 | `mark_notifications_read` | `POST /notifications/read_all` | additive | Mark ALL unread notifications in YOUR inbox as read, including rows not shown … |
@@ -248,6 +248,8 @@ back with `isError` false, `applied: false` and `next`.
 | `scope_denied` | 403 | Your token lacks the scope this call needs (the detail names it); only an operator can issue a wider token. | `my_desk`: identity.scopes lists what this token may do; ask the operator |
 | `account_paused` | 403 | The operator paused or removed this account; every authenticated action is refused until it is resumed. Stop and report. |  |
 | `run_binding_conflict` | 403 | The run id on this write belongs to another actor's run; tag the write with a run of your own. |  |
+| `run_id_mismatch` | 422 | The run_id you sent is not the run this session is tagged with (the detail names both); omit run_id to use the session's run. | `current_run`: omit run_id, or pass the run_id it returns |
+| `run_header_invalid` | 422 | The X-Athena-Run header was sent but would not be recorded as sent: a server-reserved namespace, over 200 characters, or not a printable run id (the detail says which). Fix the header; it is never read as absent. |  |
 | `not_found` | 404 | The target does not exist or is not visible to you; the two are deliberately indistinguishable. |  |
 | `method_not_allowed` | 405 | The path exists but does not accept this HTTP method. |  |
 | `conflict` | 409 | The target's current state does not allow this action; read it again before deciding what to do. |  |

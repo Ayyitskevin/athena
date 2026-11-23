@@ -51,10 +51,16 @@ Content-Type: application/json
 
 The bearer identity must be a user marked as an agent. Its token must have at least
 one write scope (`issue:write`, `docs:write`, or `admin`). The request body contains
-exactly one nonblank, printable, 1–200 character `run_id`; the server derives the
+at most one nonblank, printable, 1–200 character `run_id`; the server derives the
 agent and timestamps. Control, bidi-formatting, zero-width, line-separator, and
-invalid Unicode characters are rejected; visible Unicode is NFC-normalized. MCP
-callers use `heartbeat_agent_run(run_id)` under the same rules.
+invalid Unicode characters are rejected; visible Unicode is NFC-normalized. The run
+is the request's own: omit `run_id` and the run the request is tagged with
+(`X-Athena-Run`) is reported; a `run_id` that is not that run is refused
+`422 run_id_mismatch`; without the header, `run_id` is required. A header the server
+would drop or reshape (a reserved namespace, over 200 characters, not a printable
+run id) is refused `422 run_header_invalid`, never read as absent. MCP callers use
+`heartbeat_agent_run()` under the same rules: `athena-mcp` tags every request with
+the session's run (`current_run()`).
 
 The first accepted PUT records `first_seen_at`. Every accepted repeat for that same
 agent and run refreshes the server-owned `last_seen_at`, so callers should send PUTs

@@ -358,14 +358,14 @@ async def refusal_branches(board: Board, sol: Agent, terra: Agent) -> None:
     other = await terra.follow(held, idempotency_key="s5-terra-pickup")
     assert other["claimed"] is True and other["issue"]["id"] == echo, other
 
-    # A repeated claim without the generation is a renewal that needs it.
-    tag = (await sol.call("get_issue", issue_id=delta))["_etag"]
+    # A repeated claim without the generation is a renewal that needs it. The
+    # generation alone renews (A12): the seat does not re-read the issue's ETag.
     renew = await sol.refused(
-        "lease_generation_required", "claim_issue", issue_id=delta, if_match=tag
+        "lease_generation_required", "claim_issue", issue_id=delta
     )
     lease = await sol.follow(renew, issue_id=delta)
     renewed = await sol.call(
-        "claim_issue", issue_id=delta, if_match=tag, generation=lease["generation"]
+        "claim_issue", issue_id=delta, generation=lease["generation"]
     )
     assert renewed["generation"] == lease["generation"] and renewed["active"]
 

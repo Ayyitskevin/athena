@@ -111,6 +111,28 @@ _ENTRIES: tuple[RefusalCode, ...] = (
         ),
     ),
     RefusalCode(
+        code="run_id_mismatch",
+        statuses=(422,),
+        meaning=(
+            "The run_id you sent is not the run this session is tagged with "
+            "(the detail names both); omit run_id to use the session's run."
+        ),
+        next=NextCall(
+            tool="current_run",
+            hint="omit run_id, or pass the run_id it returns",
+        ),
+    ),
+    RefusalCode(
+        code="run_header_invalid",
+        statuses=(422,),
+        meaning=(
+            "The X-Athena-Run header was sent but would not be recorded as sent: "
+            "a server-reserved namespace, over 200 characters, or not a printable "
+            "run id (the detail says which). Fix the header; it is never read as "
+            "absent."
+        ),
+    ),
+    RefusalCode(
         code="not_found",
         statuses=(404,),
         meaning=(

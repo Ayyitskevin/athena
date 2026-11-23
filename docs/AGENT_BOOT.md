@@ -71,8 +71,9 @@ file's section census.
 - Tag your writes: `athena-mcp` gives the session a run identity automatically;
   `current_run()` shows it. The full profile also offers `begin_run(run_id=...)`
   to switch runs. Heartbeat while working. Heartbeat records an authenticated report, not process liveness
-  or lease renewal. Renew before expiry with the generation and a freshly
-  reviewed issue ETag. Untagged writes are not replayable as a unit.
+  or lease renewal; `heartbeat_agent_run()` reports on the session's run. Renew
+  before expiry with the generation alone (no issue ETag unless the renewal
+  changes `paths` or the root). Untagged writes are not replayable as a unit.
 - Put it down: close with the verify commands a reviewer can re-run, and
   advance the desk cursor to the last event you actually handled. Complete
   or yield every claim before the session ends — one you let lapse lists

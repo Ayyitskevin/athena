@@ -27,6 +27,7 @@ from athena.aegis import (
     claim_handoffs,
     contributors as contributors_data,
     issue_activity,
+    issue_etags,
     issues,
     leases,
     report_credentials,
@@ -104,6 +105,10 @@ COMPLETION_EVIDENCE_SCOPES = ("source-only", "synthetic", "actual-run", "unrun")
 REPORT_VIOLATIONS_FIELD = "violations"
 CLAIM_PRECONDITION_REQUIRED_DETAIL = (
     "If-Match with exactly one strong issue ETag is required to claim"
+)
+#: What a renewal's hint says about If-Match: the generation alone renews (A12).
+RENEWAL_IF_MATCH_NOTE = (
+    "no If-Match is needed unless the renewal names paths or coordination_root"
 )
 LEASE_GENERATION_REQUIRED_DETAIL = (
     "the exact current lease generation is required for this operation"
@@ -412,7 +417,8 @@ def claim_issue(
                 raise IssueCommandError(
                     "lease_generation_required",
                     "you already hold this issue's lease; a repeated claim is a "
-                    f"renewal: pass generation={existing['generation']} to extend it",
+                    f"renewal: pass generation={existing['generation']} to extend it "
+                    f"({RENEWAL_IF_MATCH_NOTE})",
                 )
             # Supplying the current generation explicitly selects renew mode. An
             # omitted token may never turn a delayed acquire into a renewal.
@@ -426,13 +432,24 @@ def claim_issue(
                 "lease_generation_mismatch",
                 "lease generation is stale; acquire again without a generation",
             )
-        _check_issue_precondition(
-            conn,
-            issue,
-            if_match,
-            required_detail=CLAIM_PRECONDITION_REQUIRED_DETAIL,
-            exact=True,
+        # The issue ETag guards a decision to take work against the revision the
+        # claimant reviewed. A renewal takes nothing new: ``renewed`` holds only
+        # for the active lease's own holder (a rival was refused claim_held above)
+        # with its exact current generation, which is the fence. So a renewal that
+        # keeps its fence (no paths, no root) may omit If-Match (A12); one it sends
+        # is still checked. An acquisition, and a renewal that names paths or a
+        # coordination root, need the reviewed revision as before.
+        generation_only_renewal = (
+            renewed and paths is None and coordination_root is None
         )
+        if not (generation_only_renewal and if_match is None):
+            _check_issue_precondition(
+                conn,
+                issue,
+                if_match,
+                required_detail=CLAIM_PRECONDITION_REQUIRED_DETAIL,
+                exact=True,
+            )
         preserve_paths = renewed and paths is None
         declared_paths: list[str] | None = normalize_declared_paths(paths)
         root = None
@@ -521,6 +538,13 @@ def claim_issue(
             commit=False,
         )
         lease["open_claim_handoff"] = claim_handoffs.get_open_handoff(conn, issue_id)
+        # The issue's current ETag, read in this transaction, so a holder that
+        # only renews (no If-Match, A12) still sees that the issue changed:
+        # closed, archived, re-scoped. Beside the lease, not part of it: GET
+        # /issues/{id}/lease and the lease's generation never carry it.
+        current = issues.get_issue(conn, issue_id)
+        assert current is not None
+        lease["issue_etag"] = issue_etags.current_etag(conn, current)
         return lease
 
 
