@@ -122,7 +122,7 @@ Take `issue_etag` from this packet. It is the same value as the `ETag` header on
 ## 4. Claim safely
 
 To let the server select work, use
-`claim_next_ready(limit=1, project_id=..., idempotency_key=...)` ·
+`claim_next_ready(limit=1, project_id=..., paths=..., idempotency_key=...)` ·
 REST `POST /issues/claim-next`. Omit project for all eligible projects and backlog.
 It atomically checks readiness and acquires one issue, refusing queue pickup while
 your account holds any active lease. The bound 1–5 controls candidate attempts.
@@ -131,7 +131,8 @@ Read the returned issue's full context before work and resume an open handoff.
 Keyed responses, including no-work outcomes, are historical receipts; replay never
 renews or reacquires. A new poll needs a new key, after reconciling uncertain work.
 See [ATOMIC_PICKUP_SPEC.md](ATOMIC_PICKUP_SPEC.md) for receipt expiry and the
-`already_holding`, `nothing_ready`, and `candidates_conflicted` outcomes.
+`already_holding`, `nothing_ready`, and `candidates_conflicted` outcomes; optional
+`paths` are declared on the claim it makes (below).
 
 Pickup does not hand back work that is waiting on someone else. After you complete an
 issue, it is not offered to you again. After any account yields an issue with
@@ -157,7 +158,7 @@ For a direct claim of an issue you chose and read, two values guard it:
 
 The lease lasts 1800 seconds by default, between 60 and 86400.
 
-MCP `claim_issue(issue_id, if_match, generation?, lease_seconds?)` ·
+MCP `claim_issue(issue_id, if_match, generation?, lease_seconds?, paths?)` ·
 REST `POST /issues/{issue_id}/claim`
 
 Renew your own claim (send the generation):
@@ -191,6 +192,23 @@ decide.
 
 A free issue, claimed with a correct ETag and no generation, returns a new
 `generation` with HTTP 201.
+
+**Declared paths.** `claim_issue(issue_id, if_match, paths=...)` and
+`claim_next_ready(paths=...)` fence the relative POSIX files you will touch.
+`office.fence` on your desk says how fences are compared. With no root catalog,
+the default, the basis is `lexical, root unknown`: paths are normalized (`./`,
+doubled and trailing slashes drop) and compared segment by segment under one
+implicit root, in every project. A path equal to, inside or around another active
+lease's path is refused `409 fence_overlap`; `src/ab` does not overlap `src/a`.
+A `..` or absolute path is refused as invalid input. The refusal's `fence` names
+your overlapping path and the basis; it names the other lease's issue, holder and
+path only when you can read that lease, and is otherwise identical. Pickup with
+paths that overlap claims nothing and answers reason `fence_overlap` with the
+same `fence`. With a root catalog (`office.fence.basis` is `same root`), send the
+`coordination_root` selector the operator gave you; no read returns one. A fence
+without a current root cannot prove separation and is refused `fence_unresolved`
+beside another fence; its detail says what to do. A lease that expired or was completed fences nothing. Claiming
+without paths is unchanged and reserves no files.
 
 ## 5. Check in, and show progress
 

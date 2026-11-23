@@ -175,9 +175,9 @@ def test_aliases_and_nested_roots_conflict(client, left, left_path, right, right
     )
     denied = claim(client, second, paths=[right_path], coordination_root=right)
     assert denied.status_code == 409
-    assert (
-        denied.json()["detail"] == "declared paths conflict with another active lease"
-    )
+    assert denied.json()["code"] == "fence_overlap"
+    assert denied.json()["fence"]["basis"] == "same root"
+    assert denied.json()["fence"]["path"] == right_path
     assert client.get(f"/issues/{second}/lease").json() is None
 
 
@@ -590,7 +590,9 @@ def test_old_schema_migration_keeps_possession_and_unknown_fence(
         assert retained["generation"] == "a" * 32
         assert retained["declared_paths"] == ["docs"]
         assert retained["coordination_root"] is None
-        assert retained["path_fence"] == "unresolved"
+        # No catalog here: a retained fence is compared lexically (D5).
+        assert config.LEASE_ROOT_CATALOG is None
+        assert retained["path_fence"] == "lexical, root unknown"
     finally:
         conn.close()
 
@@ -632,9 +634,19 @@ def test_hidden_issue_still_blocks_but_denial_does_not_disclose(client):
     assert client.get(f"/issues/{hidden}").status_code == 404
     denied = claim(client, public, paths=["docs"], coordination_root=root("alias"))
     assert denied.status_code == 409
+    # C6: the refusal says it is an overlap and names the caller's own path;
+    # the hidden lease's issue, holder and path stay null.
     assert denied.json() == {
-        "detail": "declared paths conflict with another active lease",
-        "code": "conflict",
+        "detail": "declared path docs overlaps another active lease's fence "
+        "(same root)",
+        "code": "fence_overlap",
+        "fence": {
+            "basis": "same root",
+            "path": "docs",
+            "issue": None,
+            "holder": None,
+            "holder_path": None,
+        },
     }
     assert (
         claim(client, public, paths=["docs"], coordination_root=root("two")).status_code

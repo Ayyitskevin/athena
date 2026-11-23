@@ -15,10 +15,34 @@ wants strict types says so itself.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RequestBody(BaseModel):
     """A write's JSON body that refuses fields it does not declare."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+class CoordinationRootSelector(BaseModel):
+    """A ``coordination_root`` selector: one root of this instance's root
+    catalog, named by the catalog's digest and the root's key. The operator
+    hands it out through the qualification workflow (docs/ACTIVE_WORK.md); no
+    read returns it. The claim command validates it again and resolves it; this
+    model only closes the shape an agent may send."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    catalog_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+        description="The SHA-256 of the operator catalog's exact bytes, as the operator gave it.",
+    )
+    root_key: str = Field(
+        pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$",
+        description="The catalog root's key, as the operator gave it.",
+    )
+    relative_prefix: str = Field(
+        default="",
+        max_length=256,
+        description="Relative POSIX offset inside that root; empty for its top.",
+    )

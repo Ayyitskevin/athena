@@ -34,6 +34,26 @@ MIN_LEASE_SECONDS = 60
 MAX_LEASE_SECONDS = 86_400  # 24 hours
 GENERATION_HEX_CHARS = 32
 
+#: The two bases a nonempty fence is compared on (decision D5). With a root
+#: catalog, a fence bound to one of its roots is compared within that root's
+#: tree ("same root"; the lease's ``path_fence`` is ``rooted``). With no
+#: catalog, every readable fence sits under one implicit root and is compared
+#: as written; the lease's ``path_fence`` carries this same phrase.
+BASIS_ROOTED = "same root"
+BASIS_LEXICAL = "lexical, root unknown"
+
+
+def fence_basis() -> dict:
+    """How this instance compares declared paths: the basis alone (D5).
+
+    It shows whether a root catalog is configured, which D5 accepts. Nothing of
+    the catalog itself is disclosed: no digest, root key or entry. A selector
+    comes from the operator through the qualification workflow
+    (docs/ACTIVE_WORK.md)."""
+    if config.LEASE_ROOT_CATALOG is None:
+        return {"basis": BASIS_LEXICAL}
+    return {"basis": BASIS_ROOTED}
+
 
 def is_valid_generation(value: object) -> TypeGuard[str]:
     """Whether value is one canonical opaque lease-generation token."""
@@ -112,8 +132,12 @@ def _row_to_lease(row: sqlite3.Row) -> dict:
     lease["path_fence"] = (
         "issue_only"
         if paths == []
+        else "unresolved"
+        if paths is None
         else "rooted"
-        if paths is not None and lease["coordination_root"] is not None
+        if lease["coordination_root"] is not None
+        else BASIS_LEXICAL
+        if config.LEASE_ROOT_CATALOG is None
         else "unresolved"
     )
     return lease
@@ -179,13 +203,15 @@ def list_active_leases(
     """Every currently active lease, optionally excluding one issue.
 
     Used to fence declared paths across issues. ``active`` is the clock, same as
-    ``get_lease``.
+    ``get_lease``. Ordered by issue id, so a fence refusal names the same lease
+    every time.
     """
     sql = f"{_SELECT} WHERE l.expires_at > datetime('now')"
     params: list[object] = []
     if except_issue_id is not None:
         sql += " AND l.issue_id != ?"
         params.append(except_issue_id)
+    sql += " ORDER BY l.issue_id"
     return [_row_to_lease(row) for row in conn.execute(sql, params).fetchall()]
 
 

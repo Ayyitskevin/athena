@@ -163,7 +163,9 @@ def second_token(path, agent, scopes=("read", "issue:write")):
     [{"limit": value} for value in (0, 6, True, 1.5, "1", None)]
     + [{"project_id": value} for value in (0, -1, 2**63, True, 1.5, "1")]
     + [{"lease_seconds": value} for value in (0, -1, 2**63, True, 60.5, "60")]
-    + [{"paths": []}, {"generation": "a" * 32}, {"extra": 1}],
+    # Pickup takes paths (C6): malformed ones refuse before selection.
+    + [{"paths": value} for value in ("src", ["../x"], ["/abs"], [1], [""])]
+    + [{"generation": "a" * 32}, {"coordination_root": None}, {"extra": 1}],
 )
 def test_strict_request_refuses_before_claim(setup, payload):
     client, path, _app, agent = setup

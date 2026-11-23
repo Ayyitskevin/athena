@@ -34,12 +34,12 @@ such as the operator's answer, and it is the "all done" assertion that fails.
 One scenario holds a requirement that has landed: F2 (after the reviewer's
 HOLD and a second request, the reviewer's desk and pickup agree).
 
-Three more scenarios state behaviour the fleet needs and does not have yet,
-each marked ``@unmet`` until its requirement in
-docs/plans/ATHENA_IN_USE_SPEC.md lands: C6 (disjoint path fences on an instance
-with no root catalog), C4 (a lapsed lease is an event the conductor receives)
-and C5 (what the conductor gates on is what the requested reviewer reported),
-which has landed: its mark is gone and the recipe above gates on that field.
+Three more scenarios state behaviour the fleet needs, each marked ``@unmet``
+until its requirement in docs/plans/ATHENA_IN_USE_SPEC.md lands: C6 (disjoint
+path fences on an instance with no root catalog, and pickup with paths), C4 (a
+lapsed lease is an event the conductor receives) and C5 (what the conductor
+gates on is what the requested reviewer reported). C6 and C5 have landed: their
+marks are gone, and the recipe above gates on C5's field.
 A marked scenario must stop by raising ``RequirementUnmet`` at the check that
 states its requirement, and its test passes when it does; any other failure,
 such as a refused setup step, is a real failure. When the requirement lands the
@@ -883,18 +883,18 @@ def test_f2_after_a_hold_and_a_second_request_desk_and_pickup_agree(fleet):
 # --- what the fleet needs next: C6, C4, C5 ----------------------------------------
 
 
-@unmet(
-    "C6",
-    "without a root catalog a second lease declaring any path is "
-    "refused 409 conflict, whatever the path",
-)
 def test_c6_disjoint_paths_are_both_fenced_without_a_root_catalog(fleet, monkeypatch):
+    """C6 has landed: with no root catalog, paths are compared under one implicit
+    root. A disjoint fence is granted beside another, an overlapping one is
+    refused fence_overlap and names the path and the holder's issue, and pickup
+    declares its paths on the claim it makes."""
     monkeypatch.setattr(config, "LEASE_ROOT_CATALOG", None)  # the default instance
     alpha = fleet.issue("Alpha", assignee="conductor", delegate="design")
     beta = fleet.issue("Beta", assignee="conductor", delegate="build")
+    gamma = fleet.issue("Gamma", assignee="conductor", delegate="review")
 
     async def scene(fleet: Fleet, agents: dict[str, FleetAgent]) -> None:
-        first, second = agents["design"], agents["build"]
+        first, second, third = agents["design"], agents["build"], agents["review"]
         context = await first.call("get_issue_work_context", issue_id=alpha)
         held = await first.call(
             "claim_issue",
@@ -903,6 +903,7 @@ def test_c6_disjoint_paths_are_both_fenced_without_a_root_catalog(fleet, monkeyp
             paths=["src/alpha/a.py"],
         )
         assert held["active"] is True, held
+        assert held["path_fence"] == "lexical, root unknown", held
         context = await second.call("get_issue_work_context", issue_id=beta)
         granted, answer = await second.attempt(
             "claim_issue",
@@ -918,7 +919,23 @@ def test_c6_disjoint_paths_are_both_fenced_without_a_root_catalog(fleet, monkeyp
         lease = await first.call("get_issue_lease", issue_id=alpha)
         require(lease.get("active") is True, f"C6: the first lease stands: {lease}")
 
-    play(fleet, scene, roles=("design", "build"))
+        # Pickup with a path inside the design seat's fence claims nothing and
+        # says why; with its own path it claims the ready issue.
+        fenced = await third.call(
+            "claim_next_ready", paths=["src/alpha"], idempotency_key="c6-overlap"
+        )
+        assert fenced["claimed"] is False and fenced["reason"] == "fence_overlap"
+        assert fenced["fence"]["path"] == "src/alpha"
+        assert fenced["fence"]["holder_path"] == "src/alpha/a.py"
+        assert fenced["fence"]["issue"]["id"] == alpha
+        taken = await third.call(
+            "claim_next_ready", paths=["src/gamma"], idempotency_key="c6-own"
+        )
+        assert taken["claimed"] is True and taken["issue"]["id"] == gamma, taken
+        assert taken["lease"]["declared_paths"] == ["src/gamma"]
+
+    agents = play(fleet, scene, roles=("design", "build", "review"))
+    assert [r.tool for agent in agents.values() for r in agent.meter.refusals] == []
 
 
 @unmet(

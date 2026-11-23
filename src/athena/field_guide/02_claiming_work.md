@@ -22,15 +22,27 @@ per-actor claim-count limit. Keep that discipline yourself; the command enforces
 per-issue possession and declared-path conflicts (`aegis/desk.py`,
 `aegis/work_context.py`, `aegis/lease_commands.py`).
 
-Optional `paths` declares a relative POSIX file fence. Optional
-`coordination_root` selects the current operator catalog digest/root key and
-relative prefix; it is not authority or proof of filesystem location. Aliases and
-nested roots share canonical fences. Unknown origins are conservative: two
-nonempty unknown/known fences may conflict even when their strings differ.
-A requested unavailable root refuses; never retry by dropping it.
+Optional `paths` declares a relative POSIX file fence (`claim_issue`, or
+`claim_next_ready`, which declares it on the claim it makes). Your desk's
+`office.fence` says how fences are compared. With no root catalog, the default,
+the basis is `lexical, root unknown`: normalized paths are compared segment by
+segment under one implicit root, in every project. A path equal to, inside or
+around another active lease's is refused `fence_overlap`; its `fence` names your
+path, and the other issue, holder and path only when you can read that lease.
+`src/ab` does not overlap `src/a`; `..` and absolute paths are invalid input.
+
+With a catalog (`office.fence.basis` is `same root`), optional
+`coordination_root` is the selector the operator gave you (catalog digest, root
+key, relative prefix); no read returns one. It is not authority or proof of
+filesystem location. Aliases and nested roots share canonical fences. Unknown
+origins are conservative: two nonempty fences, either without a current root,
+are refused `fence_unresolved` even when their strings differ. A requested
+unavailable root refuses; never retry by dropping it.
 
 Readers say `path_fence=rooted` for a current qualified declaration,
-`unresolved` for a nonempty fence without one, and `issue_only` for no file fence.
+`lexical, root unknown` for paths compared without a catalog, `unresolved` for a
+nonempty fence with a catalog but no current root, and `issue_only` for no file
+fence.
 On renewal, omitted/null root and paths retain. Deliberate `paths=[]` becomes
 issue-only under exact generation/ETag and audit, not permission to continue
 overlapping file work. Changing root identity needs new possession.

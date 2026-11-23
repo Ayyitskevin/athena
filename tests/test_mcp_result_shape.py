@@ -208,8 +208,10 @@ def test_a_client_side_check_after_athena_answered_carries_its_code_and_next():
                 {
                     "issue_id": 7,
                     "if_match": '"tag"',
+                    # A well-formed selector: the tool's schema is closed (C6),
+                    # so a malformed one never reaches Athena at all.
                     "coordination_root": {
-                        "root_id": "main",
+                        "root_key": "main",
                         "catalog_sha256": "a" * 64,
                     },
                 },

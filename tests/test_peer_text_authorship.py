@@ -327,6 +327,7 @@ NOT_PEER_WRITTEN: dict[str, tuple[str, str]] = {
         "fixed warnings and fence-overlap lines built from issue keys and the "
         "holder's display name",
     ),
+    "desk:.office.fence.basis": (CLOSED, "'same root' or 'lexical, root unknown'"),
     "desk:.office.semantics.snapshot": (CLOSED, "a fixed snapshot label"),
     "desk:.office.semantics.does_not_assert": (CLOSED, "fixed assertion names"),
 }

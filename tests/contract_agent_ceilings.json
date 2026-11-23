@@ -1,5 +1,5 @@
 {
-  "note": "Ceilings for tests/test_contract_agent.py: tool_calls counts every MCP tool call the two scripted seats make in one run, bytes_received the UTF-8 bytes of the text content of every answer. Both are the measured values, identical over five runs, with no headroom. Raise either only with a stated reason in the same PR. F2 lowered bytes_received by 616 (from 147,207): the desk's ready-lane and not_offered meanings were shortened when they gained the review-request answer.",
+  "note": "Ceilings for tests/test_contract_agent.py: tool_calls counts every MCP tool call the two scripted seats make in one run, bytes_received the UTF-8 bytes of the text content of every answer. Both are the measured values, identical over five runs, with no headroom. Raise either only with a stated reason in the same PR. F2 lowered bytes_received by 616 (from 147,207): the desk's ready-lane and not_offered meanings were shortened when they gained the review-request answer. C6 raised bytes_received by 312 (from 146,591) with the same 56 calls: each my_desk answer's office carries `fence` with the comparison basis only, +324 over 6 desk reads; the work context's how_to_claim text is shorter, -12 over 2 reads.",
   "tool_calls": 56,
-  "bytes_received": 146591
+  "bytes_received": 146903
 }

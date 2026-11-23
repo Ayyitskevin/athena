@@ -92,6 +92,13 @@ be assignee, delegated contributor or otherwise authorized. Record the returned
 generation and keep one stable run for this execution. Heartbeats report check-ins;
 they do not renew leases or prove progress. Renew with the exact generation and a
 fresh issue ETag. Declared paths communicate scope; they are not filesystem locks.
+On an instance with no root catalog (the default) workers' paths are compared
+under one implicit root, in every project: disjoint fences coexist, and a path
+equal to, inside or around another active lease's is refused `fence_overlap`,
+which names the path, and the other issue and holder when the worker can see them.
+Give parallel slices disjoint paths. With a catalog, workers send the
+`coordination_root` selector the operator issued through the qualification
+workflow (no read returns one); see [OFFICE.md](OFFICE.md#fences).
 
 The architect publishes a reviewable contract. The builder implements that contract
 and records commands, outcomes and limitations. Freeze the candidate before review:

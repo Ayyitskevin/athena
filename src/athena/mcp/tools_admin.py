@@ -291,6 +291,9 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         (a branch name — Athena does not create git remotes). `next_to_sit`
         is the first delegated issue when you are standing.
 
+        `fence.basis` says how declared paths are compared: "lexical, root
+        unknown" with no root catalog, "same root" with one.
+
         RESERVES NOTHING. Claim through claim_issue. complete_claim stands
         you up; it does not close the issue."""
         return client.my_office()

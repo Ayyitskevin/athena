@@ -24,6 +24,9 @@ from athena.core.ids import MAX_SQLITE_INTEGER
 
 SCHEMA = "athena.ready_claim.v1"
 MAX_ATTEMPTS = 5
+FENCE_CODES = frozenset(
+    {lease_commands.FENCE_OVERLAP_CODE, lease_commands.FENCE_UNRESOLVED_CODE}
+)
 
 
 def waiting_review(
@@ -76,14 +79,23 @@ def claim_next_ready(
     limit: int = 1,
     lease_seconds: int | None = None,
     project_id: int | None = None,
+    paths: object = None,
 ) -> dict:
     """Select and acquire under one writer reservation, on a clean connection.
 
     The root tag is selected here, not an endorsement of a caller-reviewed
     revision. Workers still fetch full context and explicitly resume handoffs.
     Returned observations can be historical when replayed by idempotency.
+
+    ``paths`` are declared on the claim this makes, through the claim command's
+    own fence check (C6). A fence refusal does not depend on the candidate (the
+    caller's paths against every other active lease), so the first one ends the
+    pickup with ``reason`` set to its code and the refusal's ``fence`` object.
     """
     actor = _require_issue_writer(actor)
+    # Validation precedes selection: a malformed path refuses before anything
+    # is read, never only once a candidate exists.
+    declared_paths = lease_commands.normalize_declared_paths(paths)
     if (
         isinstance(limit, bool)
         or not isinstance(limit, int)
@@ -161,11 +173,20 @@ def claim_next_ready(
                     issue_id=issue_id,
                     if_match=[tag],
                     lease_seconds=duration,
+                    paths=declared_paths,
                 )
             except IssueCommandError as exc:
                 if exc.kind != "conflict":
                     raise
                 result["attempts"].append({"issue_id": issue_id, "outcome": "conflict"})
+                if exc.code in FENCE_CODES:
+                    assert exc.extra is not None
+                    return {
+                        **result,
+                        "reason": exc.code,
+                        "fence": exc.extra["fence"],
+                        "review_request": waiting_review(conn, actor=actor, now=now),
+                    }
                 continue
             context = work_context.build_work_context(conn, str(issue_id), actor=actor)
             if context is None:

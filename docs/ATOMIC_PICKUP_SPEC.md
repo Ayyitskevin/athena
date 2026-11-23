@@ -167,6 +167,22 @@ existing indeterminate/reconciliation behavior. Current reads can
 become stale immediately after return; callers inspect the existing lease/context
 before renewal or work, using the exact returned generation for possession writes.
 
+### Amendment: declared paths (C6, 2026-11-22)
+
+Requirement C6 of `docs/plans/ATHENA_IN_USE_SPEC.md` adds one optional body field,
+`paths` (a list of relative POSIX paths), on REST, Python and MCP. The statements
+above that pickup submits no paths are superseded for that field only; generation
+and coordination-root selectors are still not accepted. Paths are validated before
+selection and passed to the ordinary claim command, whose fence check is the only
+gate. A fence refusal does not depend on the candidate (the caller's paths against
+every other active lease), so the first one ends the pickup: `claimed:false`,
+`attempts` names that candidate with the generic `outcome:conflict`, `reason` is
+the refusal's code (`fence_overlap` or `fence_unresolved`) and `fence` is the
+refusal's own visibility-filtered object. This follows `candidates_conflicted`: a
+200 no-work answer, cached as a receipt like the others. `paths` is part of the
+body the idempotency fingerprint covers, so the same key with other paths is
+`idempotency_mismatch`. Without `paths`, every answer is unchanged.
+
 ## Retry and crash semantics
 
 Reuse the existing optional `Idempotency-Key` contract without a new receipt store.
