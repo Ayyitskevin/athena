@@ -12,7 +12,8 @@ client, against a listening Athena. It checks both callers of
   ``docs:write`` and so names ``seat+knowledge``.
 
 For each it lists the tools (the count must equal the profile's), calls
-``my_desk`` and checks the identity is the token's account. Athena is
+``my_desk`` and checks the identity is the token's account and the answer is
+sent as compact JSON equal to its structured content (F12). Athena is
 ``athena-serve`` on an ephemeral loopback port, seeded by ``seed_demo``. Both
 processes are stopped by pid, and the script fails if either outlives it.
 
@@ -129,6 +130,11 @@ async def _launch(config: dict, expected_profile: str, account_id: int) -> str:
                     raise Failure(f"my_desk refused: {result.content}")
                 text = "".join(getattr(b, "text", "") for b in result.content)
                 desk = json.loads(text)
+                # F12: the text is the structured content as compact JSON.
+                if text != json.dumps(desk, ensure_ascii=False, separators=(",", ":")):
+                    raise Failure("my_desk was not sent as compact JSON")
+                if desk != result.structuredContent:
+                    raise Failure("my_desk's text is not its structured content")
                 if desk["identity"]["id"] != account_id:
                     raise Failure(f"my_desk answered for {desk['identity']['id']}")
     (pid,) = pids

@@ -67,6 +67,10 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         status: str | None = None,
         priority: str = "medium",
         project_id: int | None = None,
+        parent_id: int | None = None,
+        assignee_id: int | None = None,
+        delegate_ids: list[int] | None = None,
+        blocked_by: list[int] | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Create an Aegis issue. Omit status to use the target project's default;
@@ -75,13 +79,29 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         cross-links. The response is the new issue plus similar_open: up to three
         open issues in the same project, visible to you, whose titles resemble
         the new one ({id, key, title, status}); the issue is created either way, so
-        use it to link or comment instead of duplicating."""
+        use it to link or comment instead of duplicating.
+
+        Optionally set it up in the same call, all or nothing: parent_id (as
+        set_issue_parent), assignee_id (the accountable owner, as assign_issue),
+        delegate_ids (agents, as delegate_issue) and blocked_by (issue ids, as
+        link_issues relation blocked_by). Each is refused as its own tool would
+        refuse it, and a refusal creates nothing. `_etag` is the issue's after
+        all of it.
+
+        To say what done means, write the body as the issue template: six
+        headings, ## Goal, ## Context, ## Inputs, ## Action, ## Format and
+        ## Success criteria, each with text under it. The work-context packet's
+        work_order reports which the body has; none is required."""
         return client.create_issue(
             title=title,
             body=body,
             status=status,
             priority=priority,
             project_id=project_id,
+            parent_id=parent_id,
+            assignee_id=assignee_id,
+            delegate_ids=delegate_ids,
+            blocked_by=blocked_by,
             idempotency_key=idempotency_key,
         )
 

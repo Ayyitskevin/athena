@@ -64,10 +64,22 @@ def budget(chars: int | None) -> Iterator[None]:
         _BUDGET.reset(token)
 
 
+def answer_text(value: Any) -> str:
+    """The text block a client receives for ``value``: compact JSON, no space
+    between tokens, keys in their order, non-ASCII text as itself (F12).
+
+    The server's protocol handler (``server._answer_refusals_as_one_object``)
+    sends every answer, success or failure, as this text. FastMCP's own
+    rendering of a tool's answer is indented JSON
+    (``pydantic_core.to_json(..., indent=2)``); that was about a sixth of what a
+    seat's answers sent, and a budgeted answer was cut that much earlier."""
+    return pydantic_core.to_json(value, fallback=str).decode()
+
+
 def serialized_size(value: Any) -> int:
-    """Characters of the text block FastMCP sends for ``value``: it serializes a
-    tool's answer with ``pydantic_core.to_json(..., indent=2)``."""
-    return len(pydantic_core.to_json(value, fallback=str, indent=2).decode())
+    """Characters of the text block a client receives for ``value``: the
+    budget measures what is sent, and nothing else."""
+    return len(answer_text(value))
 
 
 def _envelope(

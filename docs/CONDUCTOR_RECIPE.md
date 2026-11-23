@@ -42,23 +42,39 @@ bodies/comments; keep original source, test logs and frozen artifacts in the
 supplied repository or evidence location. Link those exact records from Athena.
 Never write the database directly or copy secrets into evidence.
 
-Create an outcome issue and separate design, build and review issues with
-`create_issue(..., project_id=project_id)`. Record the returned IDs. For each slice:
+Set up the outcome and its slices with one `create_issue` each, in order, and
+record the returned IDs:
 
-1. Attach it with `set_issue_parent(issue_id=slice_id, parent_id=outcome_id)`;
-   `create_issue` does not accept a parent.
-2. Read `get_issue_work_context(issue_id=slice_id)`, then set the accountable owner
-   with `assign_issue(issue_id=slice_id, assignee_id=owner_id, if_match=issue_etag)`.
-   Use the root `issue_etag`, not the work-context packet's top-level `_etag`.
-3. Add the supplied worker account with
-   `delegate_issue(issue_id=slice_id, agent_user_id=worker_id)`. This adds a
-   contributor; it does not replace the assignee or acquire a lease.
-4. Record ordering with `link_issues(issue_id=build_id, target_ref=str(design_id),
-   relation="blocked_by")`, and review blocked by build. Inspect children with
-   `list_subtasks(issue_id=outcome_id)`.
+1. The outcome: `create_issue(title=..., project_id=project_id,
+   assignee_id=owner_id)`. Its accountable owner is not set by creating
+   children or delegating their work.
+2. Each slice, design first: `create_issue(title=..., project_id=project_id,
+   parent_id=outcome_id, assignee_id=owner_id, delegate_ids=[worker_id],
+   blocked_by=[...])`. The build slice is `blocked_by=[design_id]` and the
+   review slice `blocked_by=[build_id]`.
+3. Inspect the children with `list_subtasks(issue_id=outcome_id)`.
 
-Assign an accountable owner to the outcome issue too; it is not set by creating
-children or delegating their work.
+Each part is the write its own tool makes: `parent_id` nests the slice as
+`set_issue_parent` does, `assignee_id` sets the accountable owner as
+`assign_issue` does, `delegate_ids` adds each worker account as a contributor as
+`delegate_issue` does (it does not replace the assignee or acquire a lease), and
+`blocked_by` records ordering as `link_issues(relation="blocked_by")` does. Each
+is refused as that tool would refuse it, and a refusal creates nothing, so a
+retry after a fix starts clean. A hidden parent or blocker reads as a missing
+one. The answer is the issue as all of it left it; its `_etag` is the issue
+ETag a later guarded write takes. The separate tools stay for changes after
+creation, and every write that changes an issue answers its new `_etag`, so a
+guarded write after one needs no `get_issue_work_context` read.
+
+Write each body as the issue template
+([WORK_CONTEXT.md](WORK_CONTEXT.md#work-order)): six Markdown headings,
+`## Goal`, `## Context`, `## Inputs`, `## Action`, `## Format` and
+`## Success criteria`, each with text under it. The operator's acceptance
+conditions go under Success criteria; the outcome's key goes under each slice's
+Context. A part left out is reported missing in the issue's work context
+(`work_order.missing`), never refused. For an issue you did not write yourself,
+read that before delegating, and fix the body with `update_issue` rather than
+delegate work that does not say what done means.
 
 Dependencies guide the ready queue; an ordinary claim does not enforce that every
 blocker is done. The conductor checks prerequisite evidence before asking a worker
@@ -85,7 +101,9 @@ for finite receipt retention and fail-closed retry boundaries.
 
 ## Work, then review the exact artifact
 
-Each worker starts with its desk and full work context, reads dependency evidence,
+Each worker starts with its desk and full work context, reads dependency evidence
+and the work order (`work_order.present` should name `success_criteria`; when it
+does not, ask the conductor on the issue what done means),
 checks the current lease, then claims with the freshly read root `issue_etag` and
 its permitted paths. Being the creator alone is insufficient: the claimant must
 be assignee, delegated contributor or otherwise authorized. Record the returned
@@ -205,8 +223,9 @@ On a fresh execution, use a new run identity and start with `my_desk()`, then
 the returned run with `current_run()`. The launcher uses `ATHENA_RUN_ID` when
 supplied, otherwise it creates a new session run; the full profile also offers
 `begin_run`.
-Do not recover from `brief=true`: it contains only issue, issue ETag, dependencies
-and warnings, omitting the comments, activity and open claim handoff.
+Do not recover from `brief=true`: it contains only issue, issue ETag, dependencies,
+warnings and the work-order report, omitting the comments, activity and open claim
+handoff.
 
 Read the answer and handoff, claim against the current issue ETag, then call
 `resume_claim_handoff` with the returned exact handoff token and your new generation.
@@ -270,8 +289,14 @@ feed records a lapsed lease you answer for as one `lease_lapsed` event, with a
 notification, so a seat that went away reaches you within one wait. Re-delegate or
 reclaim deliberately; the lapse releases nothing.
 
-Acknowledge each notification only after handling it, with
-`mark_notification_read(notification_id=...)`. Desk reads, cursor advances and claim
-completion do not acknowledge notifications. Before ending, resolve or explicitly
+Acknowledge notifications only after handling them, in one call. Drain the feed,
+read `my_desk()`, and pass the newest id in `signals.notifications` as
+`mark_notification_read(through_id=...)`: it acknowledges your unread notifications
+up to and including that id and nothing newer, so one that arrived after your read
+stays unread for the next. `ids=[...]` acknowledges a chosen set and lists any id
+that is not yours under `not_found`; `notification_id` still takes one. A repeat
+changes nothing. Desk reads, cursor advances and claim completion do not acknowledge
+notifications. A lease renewal is an event in the feed and not a notification, so a
+seat keeping its lease alive adds nothing to your inbox. Before ending, resolve or explicitly
 hand off your own claims and record any remaining work, uncertainty and approval
 holds. Keep acceptance separate from a quiet dashboard.

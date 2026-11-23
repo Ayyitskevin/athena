@@ -123,8 +123,8 @@ tools for issue work). Profiles intersect scopes and never add permission. An
 unset profile still means `full`, and an unknown profile refuses startup. See
 [AGENT_BOOT.md](AGENT_BOOT.md) for the exact sets. Both issue reads accept
 `issue_id=...` or `ref="ATH-12"`; supply exactly one. After reading the full
-work context, `brief=true` keeps the issue, issue ETag, dependencies, and
-warnings for a compact re-read.
+work context, `brief=true` keeps the issue, issue ETag, dependencies,
+warnings and work-order report for a compact re-read.
 
 For a conductor coordinating architect, builder and reviewer accounts, use the
 37-tool `conductor` profile and [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md).

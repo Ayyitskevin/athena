@@ -17,7 +17,6 @@ call a seat holds, which reads on.
 
 from __future__ import annotations
 
-import asyncio
 import copy
 import json
 from typing import Any
@@ -87,8 +86,15 @@ def _serve(desk: dict[str, Any]) -> mcp_server.FastMCP:
 
 
 def _call(server, arguments: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-    content, _ = asyncio.run(server.call_tool("my_desk", arguments))
-    (block,) = content
+    """``my_desk`` over the protocol: the size of the text as sent, and the
+    answer (a refusal is the failure object)."""
+
+    async def call():
+        async with mcp_sessions(server) as (session,):
+            return await session.call_tool("my_desk", arguments)
+
+    result = run_agents(call())
+    (block,) = result.content
     return len(block.text), json.loads(block.text)
 
 
@@ -252,5 +258,6 @@ def test_a_section_that_is_not_in_the_desk_is_refused():
         "section": "work.ready.items.0",
         "value": 1,
     }
-    with pytest.raises(Exception, match="no section"):
-        _call(server, {"section": "work.nothing"})
+    _size, refused = _call(server, {"section": "work.nothing"})
+    assert refused["code"] == "invalid_arguments"
+    assert refused["detail"] == "no section 'work.nothing' in this answer"

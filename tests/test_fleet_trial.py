@@ -10,8 +10,10 @@ only the tools their profile carries; the operator acts over REST. Each agent
 follows docs/CONDUCTOR_RECIPE.md literally, as an agent that read only that
 document and the tool descriptions would:
 
-1. the conductor reads its desk and the project, creates an outcome and three
-   slices (design, build, review), parents, assigns, delegates and links them;
+1. the conductor reads its desk and the project, then creates an outcome and
+   three slices (design, build, review), each written as the issue template
+   (W3) and each create carrying its parent, accountable owner, worker and
+   blocker (C9), and reads the children;
 2. the design seat picks up its slice, yields with a question, the operator
    answers, and the seat picks it up again, resumes the handoff and completes;
 3. the build seat claims with its paths and submits a frozen candidate; the
@@ -19,7 +21,8 @@ document and the tool descriptions would:
    and submits a replacement; the reviewer reports PASS on the new candidate;
 4. the builder's close is gated behind an approval the operator decides, and
    the conductor closes the review slice and the outcome;
-5. every agent puts down: acknowledges what it handled and records its cursor.
+5. every agent puts down: drains the feed, acknowledges every notification it
+   handled in one call (``through_id``, F7) and records its cursor.
 
 It asserts all four issues end done and no call was refused, and holds tool
 calls, bytes received and single-notification acknowledgements, per role and
@@ -142,8 +145,11 @@ class FleetAgent(McpAgent):
         super().__init__(*args, **kwargs)
         self.role = role
         self.cursor = 0  # the last event this agent has read and handled
+        self.single_acks = 0  # acknowledgements that named one notification
 
     async def call(self, tool: str, **arguments: Any) -> dict:
+        if tool == "mark_notification_read" and "notification_id" in arguments:
+            self.single_acks += 1
         ok, answer = await self.attempt(tool, **arguments)
         if not ok:
             raise Stalled(
@@ -175,21 +181,22 @@ class FleetAgent(McpAgent):
                 return events
 
     async def acknowledge(self, desk: dict) -> None:
-        """Acknowledge each unread notification, one call each: the desk previews
-        some, and a list read finds the rest."""
-        signals = desk["signals"]
-        unread = [row["id"] for row in signals["notifications"] if not row["read_at"]]
-        if signals["unread_notifications"] > len(unread):
-            listed = await self.call("list_notifications", unread=True, limit=100)
-            unread = [row["id"] for row in listed["items"]]
-        for notification_id in unread:
-            await self.call("mark_notification_read", notification_id=notification_id)
+        """Acknowledge what was handled in one call (F7): the desk previews the
+        newest unread notifications, and every unread one up to the newest it
+        shows is acknowledged through that id. One that arrives after the desk
+        read is newer than the bound and stays unread."""
+        unread = [
+            row["id"] for row in desk["signals"]["notifications"] if not row["read_at"]
+        ]
+        if unread:
+            await self.call("mark_notification_read", through_id=max(unread))
 
     async def put_down(self) -> None:
-        """Before ending: acknowledge what was handled, then record the cursor
-        through the prefix actually read."""
-        await self.acknowledge(await self.call("my_desk"))
+        """Before ending: handle the feed, acknowledge through the newest
+        notification the desk shows, then record the cursor through the prefix
+        actually read."""
         await self.catch_up()
+        await self.acknowledge(await self.call("my_desk"))
         await self.call("advance_desk_cursor", after_id=self.cursor)
 
 
@@ -306,8 +313,46 @@ def play(fleet: Fleet, scene, roles: tuple[str, ...] = ROLES) -> dict[str, Fleet
 # --- the trial: the recipe, one outcome, three slices -------------------------------
 
 
+def work_order_body(*parts: str) -> str:
+    """An issue body written as the issue template (W3): the six headings the
+    recipe names, each with its text."""
+    headings = ("Goal", "Context", "Inputs", "Action", "Format", "Success criteria")
+    return "\n".join(
+        f"## {heading}\n{text}" for heading, text in zip(headings, parts, strict=True)
+    )
+
+
+#: The slices' work orders: goal, action, format and success criteria; each
+#: slice's context and inputs name the outcome.
+SLICES = {
+    "design": (
+        "Design: export contract",
+        "Agree the export contract.",
+        "Draft it; ask the operator what it leaves open.",
+        "The contract, as comments here.",
+        "The operator's open points are answered.",
+    ),
+    "build": (
+        "Build: export",
+        "Implement the agreed contract.",
+        "Build it and submit a frozen candidate.",
+        "A git candidate.",
+        "The candidate is reviewed PASS by a non-author.",
+    ),
+    "review": (
+        "Review: export candidate",
+        "Review the requested candidate.",
+        "Test those exact bytes against the contract.",
+        "A completion report with a verdict.",
+        "A verdict on the requested candidate.",
+    ),
+}
+
+
 async def plan_and_delegate(fleet: Fleet, conductor: FleetAgent, workers) -> None:
-    """Record intent and delegate slices: create, parent, assign, delegate, link."""
+    """Record intent and delegate slices: one create each sets up the outcome and
+    every slice (parent, owner, worker, blocker), then one read of the children.
+    Every issue is written as the issue template, as the recipe says (W3)."""
     project_id = fleet.project_id
     await conductor.start()
     await conductor.call("current_run")
@@ -316,53 +361,40 @@ async def plan_and_delegate(fleet: Fleet, conductor: FleetAgent, workers) -> Non
         "create_issue",
         title="Outcome: widget export",
         project_id=project_id,
-        body="Acceptance: the export contract is agreed, and its implementation "
-        "is reviewed PASS by a non-author.",
+        body=work_order_body(
+            "Widgets export as a file.",
+            "Operators asked for an export.",
+            "The widget table.",
+            "Design, build and review it, one slice each.",
+            "Three slices under this issue.",
+            "The export contract is agreed, and its implementation is reviewed "
+            "PASS by a non-author.",
+        ),
+        assignee_id=conductor.user_id,
     )
     fleet.issues["outcome"] = outcome["id"]
-    for role, title in (
-        ("design", "Design: export contract"),
-        ("build", "Build: export"),
-        ("review", "Review: export candidate"),
-    ):
+    previous: int | None = None
+    for role, (title, goal, action, form, done) in SLICES.items():
         made = await conductor.call(
             "create_issue",
             title=title,
             project_id=project_id,
-            body=f"Slice of {outcome['key']}.",
-        )
-        fleet.issues[role] = made["id"]
-    for role in ("design", "build", "review"):
-        slice_id = fleet.issues[role]
-        await conductor.call(
-            "set_issue_parent", issue_id=slice_id, parent_id=outcome["id"]
-        )
-        context = await conductor.call("get_issue_work_context", issue_id=slice_id)
-        await conductor.call(
-            "assign_issue",
-            issue_id=slice_id,
+            body=work_order_body(
+                goal,
+                f"Slice of {outcome['key']}.",
+                f"{outcome['key']} and its slices.",
+                action,
+                form,
+                done,
+            ),
+            parent_id=outcome["id"],
             assignee_id=conductor.user_id,
-            if_match=context["issue_etag"],
+            delegate_ids=[workers[role].user_id],
+            blocked_by=[previous] if previous is not None else None,
         )
-        await conductor.call(
-            "delegate_issue", issue_id=slice_id, agent_user_id=workers[role].user_id
-        )
-    for later, earlier in (("build", "design"), ("review", "build")):
-        await conductor.call(
-            "link_issues",
-            issue_id=fleet.issues[later],
-            target_ref=str(fleet.issues[earlier]),
-            relation="blocked_by",
-        )
+        fleet.issues[role] = previous = made["id"]
     children = await conductor.call("list_subtasks", issue_id=outcome["id"])
     conductor.expect(children["count"] == 3, f"three slices, not {children}")
-    context = await conductor.call("get_issue_work_context", issue_id=outcome["id"])
-    await conductor.call(
-        "assign_issue",
-        issue_id=outcome["id"],
-        assignee_id=conductor.user_id,
-        if_match=context["issue_etag"],
-    )
 
 
 async def design_asks(fleet: Fleet, design: FleetAgent) -> None:
@@ -487,6 +519,11 @@ async def build_submits(
     else:
         await build.start()
     context = await build.call("get_issue_work_context", issue_id=issue_id)
+    # Before it claims, the seat can tell the issue says what done means.
+    build.expect(
+        "success_criteria" in context["work_order"]["present"],
+        f"no success criteria to build to: {context['work_order']}",
+    )
     previous = None
     if rework:
         tracking = context.get("review_tracking") or {}
@@ -720,8 +757,9 @@ def measure(agents: dict[str, FleetAgent]) -> dict[str, dict[str, int]]:
         role: {
             "tool_calls": agent.meter.calls,
             "bytes_received": agent.meter.bytes_received,
-            # Every acknowledgement the recipe's put-down makes names one id.
-            "single_acks": agent.meter.tools["mark_notification_read"],
+            # Acknowledgements that name one notification; the put-down names a
+            # bound instead (F7).
+            "single_acks": agent.single_acks,
         }
         for role, agent in agents.items()
     }

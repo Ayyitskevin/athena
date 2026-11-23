@@ -27,7 +27,10 @@
 
         <div class="form-group">
             <label for="body">Description</label>
-            <textarea id="body" name="body" rows="5" placeholder="Details, steps to reproduce, acceptance criteria..."></textarea>
+            <textarea id="body" name="body" rows="{{ 14 if body else 5 }}" placeholder="Details, steps to reproduce, acceptance criteria...">{{ body }}</textarea>
+            {% if not body %}
+            <p class="muted"><a href="/aegis/issues/new?template=work-order">Start from the work-order template</a>: goal, context, inputs, action, format and success criteria as headings.</p>
+            {% endif %}
         </div>
 
         <div class="form-group">

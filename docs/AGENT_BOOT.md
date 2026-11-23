@@ -78,9 +78,10 @@ file's section census.
   or yield every claim before the session ends — one you let lapse lists
   under `work.leases.lapsed` until you `complete_claim` it with its
   generation.
-- Acknowledge only notifications you actually handled, by their notification
-  ID with `mark_notification_read(notification_id)`; never bulk
-  `mark_notifications_read`.
+- Acknowledge only notifications you actually handled, in one call:
+  `mark_notification_read` with `through_id` set to the newest id you read
+  (nothing newer is touched), with `ids`, or with one `notification_id`;
+  never bulk `mark_notifications_read`.
   A desk preview, cursor advance, or claim completion is not acknowledgment.
 - Escape hatch: reading `athena.db` directly is last-resort triage — say so
   out loud when you do it. Writing to it directly is NEVER allowed: it
@@ -140,7 +141,7 @@ The full work-context packet carries the protocol, how-to-claim and runbook
 blocks on every call. Once you have read them, re-read an issue with
 `get_issue_work_context(issue_id=..., brief=true)` (REST:
 `GET /issues/{ref}/work-context?brief=true`). The answer keeps `issue`,
-`issue_etag`, `dependencies` and `warnings`, the same values as the full packet
+`issue_etag`, `dependencies`, `warnings` and `work_order`, the same values as the full packet
 from the same snapshot, and nothing else; `issue_etag` is still the `if_match`
 for `claim_issue`. The default packet is unchanged.
 Use the full packet for restart recovery: brief mode omits comments, activity and

@@ -181,6 +181,13 @@ module = "notifications.py"
 function = "mark_all_read"
 why = "visibility subquery for the reader's own inbox; personal state"
 
+[[exempt]]
+module = "notifications.py"
+function = "_visible_own_clause"
+why = """\
+    the visibility subquery mark_read and mark_all_read use, for the set and \
+    through_id acknowledgement (F7); the reader's own inbox; personal state"""
+
 # --- portability.py ----------------------------------------------------------
 
 [[exempt]]

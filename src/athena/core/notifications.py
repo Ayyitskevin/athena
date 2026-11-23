@@ -389,6 +389,71 @@ def mark_all_read(
     return cur.rowcount
 
 
+def _visible_own_clause(
+    conn: sqlite3.Connection, user_id: int, actor: dict | None
+) -> tuple[str, list]:
+    """The rows that are this user's and whose event the actor may see now."""
+    where = "user_id = ?"
+    params: list = [user_id]
+    gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+    if gate:
+        where += f" AND event_id IN (SELECT a.id FROM activity a WHERE {gate})"
+        params.extend(gate_params)
+    return where, params
+
+
+def visible_own_ids(
+    conn: sqlite3.Connection, user_id: int, ids: Collection[int], *, actor: dict | None
+) -> set[int]:
+    """Which of ``ids`` are this user's notifications the actor can still see,
+    read or not. Everything else (another account's, a missing id, one on a
+    target hidden since) is outside this set alike."""
+    if not ids:
+        return set()
+    where, params = _visible_own_clause(conn, user_id, actor)
+    marks = ", ".join("?" for _ in ids)
+    return {
+        row["id"]
+        for row in conn.execute(
+            f"SELECT id FROM notifications WHERE {where} AND id IN ({marks})",
+            (*params, *ids),
+        )
+    }
+
+
+def mark_read_bounded(
+    conn: sqlite3.Connection,
+    user_id: int,
+    *,
+    ids: Collection[int] | None,
+    through_id: int | None,
+    actor: dict | None,
+    commit: bool,
+) -> int:
+    """Mark this user's visible unread notifications read: those in ``ids``, or
+    every one with an id up to and including ``through_id``, or (neither) all.
+    Returns how many changed. ``core.notification_commands`` passes
+    ``commit=False`` and owns the transaction. Ids only grow, so a notification
+    that arrived after the caller's read is above its bound and stays unread."""
+    where, params = _visible_own_clause(conn, user_id, actor)
+    where += " AND read_at IS NULL"
+    if ids is not None:
+        if not ids:
+            return 0
+        where += f" AND id IN ({', '.join('?' for _ in ids)})"
+        params.extend(ids)
+    if through_id is not None:
+        where += " AND id <= ?"
+        params.append(through_id)
+    cur = conn.execute(
+        f"UPDATE notifications SET read_at = datetime('now') WHERE {where}",
+        params,
+    )
+    if commit:
+        conn.commit()
+    return cur.rowcount
+
+
 # --- priority / mute / digest projections -----------------------------------
 
 # Notification preferences use the same four explicit values as Aegis issue

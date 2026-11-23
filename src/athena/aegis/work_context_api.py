@@ -13,7 +13,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
 
-from athena.aegis import work_context
+from athena.aegis import work_context, work_order
 from athena.aegis.review_queue_models import IssueReviewTracking, ReviewRequest
 from athena.core import authorship
 from athena.core.authorship import AuthoredBy
@@ -292,6 +292,21 @@ AssertionNotMade = Literal[
 ]
 
 
+WorkOrderPart = Literal[
+    "goal", "context", "inputs", "action", "format", "success_criteria"
+]
+
+
+class WorkOrderOut(BaseModel):
+    """Which work-order parts the issue body has and lacks (W3, D21).
+
+    Derived from the body's headings by ``aegis/work_order.py``; it names parts
+    only, never body text, and nothing is refused for a missing part."""
+
+    present: list[WorkOrderPart]
+    missing: list[WorkOrderPart]
+
+
 class WorkContextSemanticsOut(BaseModel):
     snapshot: Literal["current_visible_state"]
     does_not_assert: list[AssertionNotMade]
@@ -312,6 +327,7 @@ class IssueWorkContextOut(BaseModel):
     runbook: dict
     complete_does_not_close_issue: bool
     warnings: list[str]
+    work_order: WorkOrderOut = Field(description=work_order.RULE)
     hierarchy: HierarchyOut
     dependencies: DependenciesOut
     contributors: ContributorGroupOut
@@ -336,8 +352,8 @@ class IssueWorkContextOut(BaseModel):
 
 
 class IssueWorkContextBriefOut(BaseModel):
-    """The ``brief=true`` packet: the same issue, ETag, dependencies and
-    warnings as the full packet, from the same snapshot, and nothing that
+    """The ``brief=true`` packet: the same issue, ETag, dependencies, warnings
+    and work-order report as the full packet, from the same snapshot, and nothing that
     repeats on every call."""
 
     schema_: Literal["athena.issue_work_context.v1"] = Field(alias="schema")
@@ -347,6 +363,7 @@ class IssueWorkContextBriefOut(BaseModel):
     issue_etag: str
     dependencies: DependenciesOut
     warnings: list[str]
+    work_order: WorkOrderOut = Field(description=work_order.RULE)
 
 
 @router.get(
@@ -359,8 +376,9 @@ def show_issue_work_context(
     brief: bool = Query(
         False,
         description=(
-            "true keeps only issue, issue_etag, dependencies and warnings: the "
-            "packet to re-read once the protocol blocks have been read"
+            "true keeps only issue, issue_etag, dependencies, warnings and "
+            "work_order: the packet to re-read once the protocol blocks have "
+            "been read"
         ),
     ),
     actor: dict | None = Depends(optional_actor),

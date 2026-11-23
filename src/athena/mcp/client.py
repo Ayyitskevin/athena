@@ -353,7 +353,7 @@ class AthenaClient:
 
     def get_issue_work_context(self, ref: str, *, brief: bool = False) -> Any:
         """Get the bounded work-context packet for one visible issue. ``brief``
-        keeps only the issue, its ETag, dependencies and warnings."""
+        keeps only the issue, its ETag, dependencies, warnings and work order."""
         if brief:
             return self._result(
                 self._client.get(
@@ -432,6 +432,10 @@ class AthenaClient:
         status: str | None = None,
         priority: str = "medium",
         project_id: int | None = None,
+        parent_id: int | None = None,
+        assignee_id: int | None = None,
+        delegate_ids: list[int] | None = None,
+        blocked_by: list[int] | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
         payload = self._params(
@@ -440,6 +444,11 @@ class AthenaClient:
             status=status,
             priority=priority,
             project_id=project_id,
+            parent_id=parent_id,
+            assignee_id=assignee_id,
+            # An empty list sets nothing up; leave it out of the body.
+            delegate_ids=delegate_ids or None,
+            blocked_by=blocked_by or None,
         )
         return self._mutate(
             self._client.post,
@@ -1347,6 +1356,22 @@ class AthenaClient:
         return self._mutate(
             self._client.post,
             f"/notifications/{notification_id}/read",
+            idempotency_key=idempotency_key,
+        )
+
+    def acknowledge_notifications(
+        self,
+        *,
+        ids: list[int] | None = None,
+        through_id: int | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Acknowledge a set of own notifications in one request: ``ids``, or
+        every unread one up to and including ``through_id``."""
+        return self._mutate(
+            self._client.post,
+            "/notifications/read_all",
+            json=self._params(ids=ids, through_id=through_id),
             idempotency_key=idempotency_key,
         )
 

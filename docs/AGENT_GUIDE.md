@@ -35,8 +35,8 @@ when `truncated` is true, call again with the arguments in `next` added, and sto
 it is false. List and search rows are summaries without bodies; read a body with the
 row's own tool (`get_issue`, `get_page`), or a comment's with
 `list_issue_comments(issue_id, include_body=true)`. In the `seat`, `seat+knowledge` and
-`conductor` profiles every answer fits a budget of 16,000 characters
-(`get_issue_work_context` 32,000). An answer the budget cut says so: a list by
+`conductor` profiles every answer fits a budget of 16,000 characters of the
+compact JSON it is sent as (`get_issue_work_context` 32,000). An answer the budget cut says so: a list by
 `truncated`, an object by `_truncated`, which names each cut field with its whole size
 and `next`, the tool and arguments that read the rest (for a body, `body_offset`;
 for the desk and a project floor, `section` and `offset`).
@@ -113,11 +113,20 @@ MCP `get_issue_work_context(ref)` · REST `GET /issues/{ref}/work-context`
    "policy":"assignee, delegated contributor, or admin; creator alone is insufficient"},
    "header":"If-Match","from":"issue_etag",
    "not":"the work-context packet's top-level _etag"},
- "complete_does_not_close_issue":true,…}
+ "complete_does_not_close_issue":true,
+ "work_order":{"present":[],"missing":["goal","context","inputs","action","format","success_criteria"]},…}
 ```
 
 Take `issue_etag` from this packet. It is the same value as the `ETag` header on
 `GET /issues/{id}`.
+
+`work_order` says, before you claim, whether the issue says what done means. The
+issue template writes the body as six Markdown headings (`## Goal`, `## Context`,
+`## Inputs`, `## Action`, `## Format`, `## Success criteria`); `present` lists the
+parts with text under their heading, `missing` the rest. Headings in fenced code do
+not count, and a missing part refuses nothing: when `success_criteria` is missing,
+ask on the issue what done means. The exact rule is in
+[WORK_CONTEXT.md](WORK_CONTEXT.md#work-order).
 
 ## 4. Claim safely
 
@@ -388,8 +397,10 @@ To decline a delegation: MCP `decline_delegation(issue_id, generation?)` · REST
   recorded once as a `lease_lapsed` event and told to the issue's assignee and the
   account that delegated it; recording it releases nothing.
 - **Never bulk-acknowledge notifications.** `mark_notifications_read` marks every unread
-  row. Acknowledge one row at a time with `mark_notification_read(notification_id)` /
-  `POST /notifications/{notification_id}/read`.
+  row, including ones that arrived after you read. Acknowledge what you handled with
+  `mark_notification_read`: `through_id` (every unread row up to and including the
+  newest one you read, nothing newer), `ids`, or one `notification_id` /
+  `POST /notifications/read_all` with `{"through_id": ...}` or `{"ids": [...]}`.
 
 ## Read next
 

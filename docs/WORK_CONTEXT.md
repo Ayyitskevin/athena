@@ -124,6 +124,7 @@ The top-level object contains:
 | `issue` | Root issue summary and bounded description |
 | `issue_etag` | Strong validator for the issue singleton representation |
 | `warnings` | Advisory warning codes described below |
+| `work_order` | Which of the six work-order parts the issue body has and lacks; see [Work order](#work-order) |
 | `hierarchy` | Visible parent and bounded visible children |
 | `dependencies` | Four bounded visible relationship groups |
 | `contributors` | Bounded contributor group |
@@ -177,6 +178,8 @@ characters exist beyond the excerpt.
 
 ### Fields and groups
 
+- `work_order`: `present` and `missing`, lists of part names (see
+  [Work order](#work-order)).
 - `issue`: `id`, `key`, `title`, `description`,
   `status`, `status_category`, `priority`, `project_id`,
   `project_name`, `assignee_id`, `assignee_name`,
@@ -328,6 +331,83 @@ Use Athena's write commands and `issue_etag` for guarded mutations and claims, i
 cooperative run check-ins for explicitly labeled self-reports, and its run replay
 artifact contract for replay analysis. None of those meanings are inferred by
 Agent Work Context.
+
+## Work order
+
+An issue template gives the body six parts as Markdown headings, the parts the
+build brief in [plans/BUILD_BRIEF_TEMPLATE.md](plans/BUILD_BRIEF_TEMPLATE.md)
+uses:
+
+```markdown
+## Goal
+
+## Context
+
+## Inputs
+
+## Action
+
+## Format
+
+## Success criteria
+```
+
+Write text under each heading. The cockpit's new-issue form starts from this
+template (`/aegis/issues/new?template=work-order`), and the `create_issue` tool's
+description names the six headings. Nothing else stores the parts: they are
+headings, not columns ([D21](decisions/2026-11-22-athena-in-use-decisions.md)).
+
+Every packet, full and `brief=true`, reports them as `work_order`:
+
+```json
+{"work_order": {"present": ["goal", "success_criteria"],
+                "missing": ["context", "inputs", "action", "format"]}}
+```
+
+The browser preview shows the same two lists. `present` and `missing` each list
+part names in the order above
+(`goal`, `context`, `inputs`, `action`, `format`, `success_criteria`) and
+together name every part once. The report is advisory: **nothing is refused
+for a missing part**, it adds no warning, and an issue with none of the parts
+is created, claimed and completed as before. It does not judge whether the
+text under a heading is any good. Read `success_criteria` before you claim.
+
+The rule is one function, `athena.aegis.work_order.report`, over the whole
+body (not the bounded `issue.description` excerpt, and not the MCP answer's
+cut of it). It is deterministic: no model, no fuzzy matching.
+
+1. Lines split at `\n`, `\r\n` or `\r`.
+2. A fence opens at a line that starts (after at most three spaces) with three
+   or more backticks or tildes; a backtick fence's line holds no other
+   backtick. It closes at a line of at least as many of the same character
+   and nothing else. An unclosed fence runs to the end of the body. No line in
+   a fence is a heading.
+3. A heading is an ATX heading: at most three spaces, one to six `#`, then a
+   space, a tab or the end of the line. Every level counts. Its text loses an
+   optional closing run of `#`, surrounding space and one trailing `:`; inner
+   whitespace folds to one space, and case is ignored. Underlined (setext)
+   headings, quoted headings (`> ## Goal`) and headings with emphasis or
+   numbering (`## **Goal**`, `## 1. Goal`) do not count.
+4. The text must equal one of a closed list of names:
+
+   | Part | Heading text |
+   |---|---|
+   | `goal` | Goal |
+   | `context` | Context |
+   | `inputs` | Inputs, Input |
+   | `action` | Action, Actions |
+   | `format` | Format |
+   | `success_criteria` | Success criteria, Acceptance criteria |
+
+5. A part is present when one of its headings is followed, before the next
+   heading of the same or a higher level, by a line that is not blank and not
+   a heading. Lines inside a fence count as text, so a code block under
+   `## Format` fills it. A heading with nothing under it, as the template
+   leaves each part, is missing; text under a deeper heading
+   (`### Tests` under `## Success criteria`) fills the part.
+
+The body is another actor's text. The report names parts only and never
+echoes a heading or a line of the body.
 
 ## Definition of done
 

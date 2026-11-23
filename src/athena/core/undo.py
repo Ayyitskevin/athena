@@ -85,6 +85,13 @@ class Reversal:
 
 _REGISTRY: dict[str, Reversal] = {}
 
+#: A target kind's current revision tag (its ETag), or None when the target is
+#: gone. Registered by the layer that owns the kind, so the engine can answer the
+#: reversed target's new tag without importing that layer (C9: every write that
+#: changes an issue's ETag returns the new one).
+Validator = Callable[[sqlite3.Connection, int], str | None]
+_VALIDATORS: dict[str, Validator] = {}
+
 
 class UndoRefused(Exception):
     """Undo was refused. ``code`` is the stable contract; ``status_code`` lets each
@@ -120,6 +127,24 @@ def register(
             f"verb '{verb}' is already registered with a different inverse"
         )
     _REGISTRY[verb] = entry
+
+
+def register_validator(target_kind: str, validator: Validator) -> None:
+    """Teach the engine how a target kind names its current revision. Idempotent
+    for the same function; a second, different one for a kind raises, as a verb
+    with two inverses does."""
+    existing = _VALIDATORS.get(target_kind)
+    if existing is not None and existing is not validator:
+        raise ValueError(f"target kind '{target_kind}' already has a validator")
+    _VALIDATORS[target_kind] = validator
+
+
+def target_validator(conn: sqlite3.Connection, reversal: dict) -> str | None:
+    """The reversed target's revision tag after the reversal, or None when its
+    kind registered none (a page, today) or the target is gone. Read inside the
+    request's connection, after the reversal committed."""
+    validator = _VALIDATORS.get(reversal["target_kind"])
+    return None if validator is None else validator(conn, reversal["target_id"])
 
 
 def reversal_for(verb: str) -> Reversal:
