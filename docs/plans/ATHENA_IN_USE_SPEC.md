@@ -2,7 +2,7 @@
 
 Date: 2026-11-22. Review baseline: `0b42d40` (`main` after Waves 0, 0b, 1 and 2
 of [the agentic-use specification](AGENTIC_USE_SPEC_ATHENA.md)).
-Status: **decisions accepted by standing instruction; nothing built yet.**
+Status: **decisions accepted by standing instruction; Wave 3 built.**
 Evidence: [reports/repo-review-2026-11-22-round2.md](reports/repo-review-2026-11-22-round2.md).
 Finding IDs such as `FLEET-4`, `OPS-5`, `PERF-1` and `COCKPIT-2` refer to that
 report. Requirement IDs that begin A, B or C are carried from the first
@@ -20,11 +20,12 @@ real work through for months: the written loop always has a next move, a
 failure is told to whoever is accountable, the operator can steer from the
 browser, and none of it slows down as history grows.
 
-**Where it stands.** `main` is `0b42d40`. Grades at that commit: 7.5 as a
-repository, 7.5 for agentic use (about 8 for one seat, about 6 for a fleet).
-The first specification's Waves 0, 0b, 1 and 2 are merged (PRs #466 to #469);
-its Waves 3 and 4 are carried into this document and are no longer scheduled
-there.
+**Where it stands.** Review round 2 graded `0b42d40` at 7.5 as a repository and
+7.5 for agentic use (about 8 for one seat, about 6 for a fleet). The first
+specification's Waves 0, 0b, 1 and 2 are merged (PRs #466 to #469); its Waves 3
+and 4 are carried into this document. This document's Wave 3 is built in PR
+#471: the six false statements are true again and the three findings that
+blocked a fleet are fixed. Nothing has been re-graded since.
 
 **Decisions in force.**
 
@@ -35,30 +36,41 @@ there.
   [accepted by standing instruction](../decisions/2026-11-22-athena-in-use-decisions.md).
   Each can be reversed by the owner; reversing one reopens the requirements
   that name it.
+- Three successor records landed with Wave 3:
+  [a review request answers a completion](../decisions/2026-11-22-review-request-answers.md) (D16),
+  [the requested reviewer's verdict](../decisions/2026-11-22-requested-reviewer-verdict.md) (D4) and
+  [lease-lapse events](../decisions/2026-11-22-lease-lapse-events.md) (D11).
 
 **Known issues, most serious first.**
 
-1. Path fences do not work on a default instance: one lease in the whole
-   instance may declare paths (C6).
-2. A lapsed lease tells nobody (C4).
-3. An account nobody asked can turn a requested HOLD into `reported_pass` (C5).
-4. Four statements written by the earlier waves are false by execution (F2
-   to F5), and two older ones (H11, U1).
-5. One outcome with three slices costs 142 tool calls and 359 KB (Wave 4).
+1. One outcome with three slices costs 142 tool calls and 359 KB; 39 of the
+   calls acknowledge one notification each (Wave 4).
+2. Any eligible account can replace an issue's text with no precondition, and
+   the old text is unrecoverable (F10).
+3. One unrelated assignment voids every stored idempotency receipt (F6).
+4. The desk, the inbox and every write slow with history, each from one
+   statement (Wave 6).
+5. The cockpit's boards and lists key on the assignee while agents work by
+   lease, and four operator steps cannot be done in the browser (Wave 8).
 
 **Already fixed; do not redo.** Self-approval, the audit event for a failed
 project delete, the link-mention leak, the three loop defects, refusal codes,
 the response budget, the seat profiles, executed entry documents, the inner
 loop, the committed bootstrap. The "Wave 0 results", "Wave 1 results" and
 "Wave 2 results" sections of the first specification say what each changed and
-what each found and left.
+what each found and left. From this document's Wave 3: the fleet trial as a test
+with ceilings, review pickup, the desk's structural budget, closed write
+bodies, lexical path fences, the `lease_lapsed` event, and the requested
+reviewer's verdict on the request row. "Wave 3 results" below says what each
+changed and what each found and left.
 
-**Next step.** Wave 3, in the order its row gives. F1 goes first because it
-is the instrument the other fleet requirements are measured with.
+**Next step.** Wave 4, in the order its row gives. Each requirement that
+removes calls lowers the fleet trial's ceilings in the same commit.
 
 **How work is done here.** One requirement, one commit, with the test that
 fails without it. Delegated build work is briefed with
-[BUILD_BRIEF_TEMPLATE.md](BUILD_BRIEF_TEMPLATE.md). A wave leaves draft when
+[BUILD_BRIEF_TEMPLATE.md](BUILD_BRIEF_TEMPLATE.md), and the lead reads, re-runs
+and probes each build before committing it. A wave leaves draft when
 `scripts/gate.sh --profile product` passes on its head and hosted CI is green.
 
 **Never done on the owner's behalf.** Cutting or pushing a tag, pushing a
@@ -136,6 +148,91 @@ loosened without a line in the wave's results.
 | Capabilities on one surface only | 5 groups cockpit-only, 6 API-only | 0, or each on a declared list a gate check reads | 8 |
 | Commands that take a bare actor id; writes outside a command | 42; 23 | Lower each wave, held by a ratchet | 9 |
 
+### Wave 3 results
+
+Measured on the Wave 3 head in the same 4-CPU, 15 GB container. Wave 3 is F1
+to F5, H11, U1, C6, C4 and C5, one commit each, in PR #471. Each was built by
+a build agent from a six-part brief and then read, re-run and probed by the
+lead before it was committed.
+
+| Measure | Baseline | After Wave 3 |
+|---|---|---|
+| Written statements false by execution | 6 | 0. Each is held by a test: F2, F3, F4, F5, H11 and U1. |
+| Leases that may declare paths with no root catalog | 1 in the whole instance | Any number whose paths do not overlap, compared by segment. The reviewer's own script, which asserted the refusal, now fails at that assertion (C6). |
+| A lapsed lease reaches the assignee and the delegating account | Never, unless they poll | On their next feed read. In the reviewer's 60-second scenario, re-run by the lead, the conductor's wait loop returned `lease_lapsed` 15 seconds after expiry (C4). |
+| An unrequested PASS can replace what the requested reviewer said | Yes | No. In the reviewer's scenario, re-run by the lead, the request row reads `reported_verdict: HOLD` while `review_state` reads `reported_pass` (C5). |
+| Largest `my_desk` answer on a seat profile | 23,546 characters | 16,000 at every lane's declared maximum, alone and together. The lead's probe with 25 ready issues and long titles measured 15,331 (F3). |
+| Agent write bodies that accept unknown fields | 25 of 73. The review counted 67 bodies; the lead's walk of the document finds 73. | 0 of 73 (F5). |
+| Tool calls and bytes for one outcome with three slices | 142 calls, 359,252 bytes | 142 calls, 359,223 bytes. Nothing in this wave removes a call; Wave 4 does. Bytes fell 1,177 with F2's shorter lane descriptions and rose 440 with C5's two request fields and 708 with C6's fence basis on each desk read. |
+
+The product gate on the Wave 3 head, `4b72265`: 5,875 tests in 23 minutes 38
+seconds; line coverage 94.17%, branch 85.68%, combined 92.22%, against floors
+of 93.86, 85.31 and 91.90; peak memory 1.64 GiB. Hosted CI passed all 11
+checks on the same commit. Wave 2's head ran 5,771 tests.
+
+Found by reviewing the builds, and fixed before each was committed:
+
+- The first F1 commit failed hosted CI. Its scenarios for unbuilt requirements
+  were strict expected failures, and the coverage gate accepts no skipped or
+  expected-failure outcome. They became `@unmet` scenarios, which pass while
+  the scenario stops at its requirement and fail once it holds, and
+  `tests/test_suite_conventions.py` now refuses a skip or xfail mark in
+  seconds. The gate did not change.
+- U1's card read "yielded" while another agent held a live lease on an open
+  handoff. A live lease is shown first.
+- C4's observer read, which the event feed runs on every call, started from
+  every unarchived issue. It starts from the lease table, held by a query-plan
+  test.
+- C6's first build published the root catalog's digest and root keys to every
+  signed-in account, because the brief asked for the digest to be readable.
+  `ACTIVE_WORK.md` deliberately gives no capability hint about the catalog, and
+  no decision changes that. The disclosure was withdrawn before commit; the
+  office reports the comparison basis only, and a test holds that no read
+  returns the digest or a root key.
+- Eight documented scripts ran their whole workload when asked for `--help`,
+  and three of those rewrote a generated document. Found by F4's test.
+- `get_project_floor` answered 243,832 characters at the declared maxima.
+  Found by F3's rebuilt budget test.
+
+Found and not fixed:
+
+- **Whether an agent may read the catalog's digest and root keys** is the
+  owner's question. A selector still comes from the operator.
+- **The changed profile does not run the coverage stage**, so a failure only
+  a coverage shard catches is first seen in hosted CI or the product gate. The
+  new convention test covers the one case met so far.
+- **F3's floors are judgement calls.** A full desk keeps its identity block
+  and the first three ready rows; the rest is one call away. A list-shaped
+  answer can still exceed its budget when a single row does, and an object
+  tool other than the desk and the floor names no `next` on a structural cut.
+- **Issue titles have no declared maximum** on create or update.
+- **C5.** Reusing a review issue for a replacement candidate hides the earlier
+  request and its verdict from every read but the activity history. The desk
+  never lists a fulfilled request, so the two new fields are always null
+  there.
+- **C4.** The holder is not told of its own lapse. The browser dashboard's
+  ranking does not observe. The attention row appears for agent-held claims
+  only. Every bearer request still takes the writer lock before its route runs
+  (H7), so under a long-held lock the feed fails before it can observe.
+- **C6.** D5's "a project may require declared paths" is not built. Pickup
+  takes no `coordination_root`, so with a catalog its paths cannot be placed
+  beside another fence. A drive spelling such as `C:/x` is accepted as a
+  declared path. When several leases overlap, the refusal names the lowest
+  issue id, even if the caller could see a later one. The lexical basis cannot
+  tell two repositories apart; the documents say to use distinct leading
+  segments or configure a catalog.
+- **F5.** `POST /spaces` does not take `visibility` and refuses it. A project
+  born private through `ATHENA_DEFAULT_VISIBILITY` gets no roster row for its
+  creator and no visibility event, as before. Multipart bodies still ignore
+  extra form fields.
+- **H11 was not run in a container.** It relies on three Docker behaviours
+  nobody checked here: a key-only environment entry stays unset when the shell
+  has none, `docker compose run --name` names the one-off container, and
+  `docker exec` inherits its environment. Hosted CI's container job passes.
+- **U1.** A lease row keeps no time for when its generation began, so the card
+  shows when it was last claimed or renewed. Boards and the issue list still
+  group by assignee (U2).
+
 ## Priorities
 
 - **P0.** A written statement is false, or a fleet following the recipe is
@@ -157,7 +254,7 @@ by reading the code or the document.
 | F4 | P0 | `scripts/seed_benchmark.py` raises `TypeError`: Wave 2 made `commit` a required keyword. A document and a code comment call its numbers reproducible. PERF-3. *(lead)* | The script runs. A test runs it at its smallest size, and a test imports every file under `scripts/` that a document names as runnable and calls it with `--help`. |
 | F5 | P0 | `POST /projects` with `visibility: private` answers 201 and creates a public project. 25 of the 67 JSON write bodies in the agent OpenAPI document accept unknown fields; `AGENT_GUIDE.md` says write bodies refuse them. FLEET-16. *(lead)* | Every JSON write body in `/openapi-agent.json` refuses an unknown field with 422 `validation_error`, as the closed bodies do today. A test walks the document and fails on a body that does not. `POST /projects` accepts `visibility`, or refuses it. |
 | F6 | P1 | Any change to any issue's assignee, project or creator moves one workspace-wide authorization revision. Every stored receipt is then purged; its key answers 409 `idempotency_authorization_changed` and its marker never expires. 30% of receipts ended that way in a sustained run. The breadth is documented as deliberate in `OPERATIONS.md`; a fleet assigns work all day. PERF-1. *(lead)* | An issue's assignment or creator changing fences receipts for that issue only. Role, membership, visibility, pause and placement changes still fence everything. A fenced marker expires when its receipt would have. The refusal names how to reconcile in `next`. Needs D17. |
-| C6 | P0 | On an instance with no root catalog, which is the default, a second lease declaring any path is refused 409 `conflict`, whatever the path, across projects, and for a holder the caller cannot see. `claim_next_ready` takes no paths. With a catalog, the selector needs a `catalog_sha256` no API returns. FLEET-1. *(lead)* | Without a catalog, paths are compared lexically under one implicit root and the basis is reported as "lexical, root unknown" (D5). A refusal is `fence_overlap` and names the overlapping path, and the holder's issue when the caller can see it. `claim_next_ready` accepts `paths`. The catalog digest is readable. `OFFICE.md` states all of it. |
+| C6 | P0 | On an instance with no root catalog, which is the default, a second lease declaring any path is refused 409 `conflict`, whatever the path, across projects, and for a holder the caller cannot see. `claim_next_ready` takes no paths. With a catalog, the selector needs a `catalog_sha256` no API returns. FLEET-1. *(lead)* | Without a catalog, paths are compared lexically under one implicit root and the basis is reported as "lexical, root unknown" (D5). A refusal is `fence_overlap` and names the overlapping path, and the holder's issue when the caller can see it. `claim_next_ready` accepts `paths`. The office reports the comparison basis. `OFFICE.md` states all of it. As first written this row also made the catalog digest readable; that was withdrawn, because `ACTIVE_WORK.md` deliberately gives no capability hint about the catalog. |
 | C4 | P0 | A 60-second lease lapses. No event, no notification, no attention row for the assignee or the conductor who delegated: four wait timeouts over 100 seconds showed nothing. FLEET-2. *(reviewer)* | As specified under "C4: failure is an event" in the first specification, with D11: one `lease_lapsed` event per generation, written by the first request that observes it, a notification to the assignee and the delegating account, and an attention row for both. |
 | C5 | P0 | The requested reviewer reports HOLD. An unrequested account completes an unrelated issue naming the candidate with PASS; the queue reads `reported_pass`. FLEET-3. *(lead)* | As specified under C5 in the first specification, with D4: the request row carries what the requested reviewer reported, in a field no other account can move. The conductor recipe gates on that field. |
 | C9 | P1 | Setting up one outcome with three slices takes 21 conductor requests, four of them reading a 5.9 KB packet only for an ETag. `create_issue` takes no parent, assignee, delegate or blocker; `set_issue_parent` changes the ETag and does not return it. FLEET-6. *(reviewer)* | `create_issue` accepts `parent_id`, `assignee_id`, `delegate_ids` and `blocked_by`, applied in one transaction. Every write that changes an issue's ETag returns the new one. The recipe's setup is at most 6 requests. |
@@ -334,6 +431,8 @@ Waves 6 to 9 do not depend on each other and can be reordered.
 - `review_state` and the behaviour of unrequested reviews are unchanged.
 - The idempotency fence still fails closed. F6 changes which acts move it.
 - The default for `ATHENA_ANONYMOUS_READS` does not change here (D23).
+- No read returns the root catalog's digest, root keys or contents. A selector
+  comes from the operator, as before.
 - No metrics endpoint, no second process, no connection pool.
 - No approval covers more than one action. A gated conductor closing an
   outcome and three slices still needs four decisions (FLEET-17); U9 makes
@@ -366,9 +465,11 @@ The record is
 | D27 | Should the declared fleet seats move from source to data? | Yes. An existing instance keeps its eight by migration; a new one starts with none. |
 | D28 | Should `blocked` and `capacity` yields hold work back from the account that yielded, and should a direct claim by the settling account count as an answer? | No change to either. The accepted ready-rule record stands until the fleet trial shows a loop. |
 
-Three questions stay with the owner and are not answered here: what the name
+Four questions stay with the owner and are not answered here: what the name
 "Astra" refers to in the lanes; whether the fallback rules in `AGENTS.md`
-match the machine-level handbook; and D9's precondition, an operated instance.
+match the machine-level handbook; D9's precondition, an operated instance; and
+whether an agent may read the root catalog's digest and root keys, which
+`ACTIVE_WORK.md` withholds pending operator evidence.
 
 ## Verification and delivery
 

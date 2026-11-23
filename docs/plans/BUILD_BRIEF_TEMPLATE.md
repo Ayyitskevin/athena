@@ -29,6 +29,9 @@ INPUTS
 ACTION
 - Write the failing test from the baseline first and confirm it fails.
 - Make the change. One command owns each write; refusals carry a code.
+- A scenario for a requirement that is not built yet is marked @unmet (see
+  tests/test_fleet_trial.py). The suite accepts no skip or xfail mark.
+- Before exposing anything a document says is withheld, stop and report it.
 - Stay inside the requirement. List what you found and did not fix.
 - Do not commit, push, tag, or touch docs/DECISIONS_PENDING.md, the prune
   ledger's verdicts, a coverage floor or ALLOWED_PRAGMAS.
