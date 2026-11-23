@@ -35,6 +35,8 @@ import pytest
 from support import fill_desk_lanes
 
 from athena import config
+from athena.aegis import desk as desk_lanes
+from athena.aegis import issue_drafts
 from athena.main import create_app
 from athena.mcp import results
 from athena.mcp import server as mcp_server
@@ -364,6 +366,7 @@ def _play_every_tool(tmp_path, monkeypatch, *, maxima: bool):
         )
         sizes: dict[str, int] = {}
         answers: dict[str, list[Any]] = {}
+        sent: dict[str, tuple[list[str], Any]] = {}
         failures: dict[str, str] = {}
 
         async def run() -> None:
@@ -375,6 +378,7 @@ def _play_every_tool(tmp_path, monkeypatch, *, maxima: bool):
                     texts = [getattr(block, "text", "") for block in result.content]
                     sizes[name] = sum(len(text) for text in texts)
                     answers[name] = [json.loads(text) for text in texts]
+                    sent[name] = (texts, result.structuredContent)
                     if result.isError:
                         failures[name] = "".join(texts)[:300]
                     elif name in {"claim_issue", "yield_claim"}:
@@ -387,6 +391,7 @@ def _play_every_tool(tmp_path, monkeypatch, *, maxima: bool):
         yield {
             "sizes": sizes,
             "answers": answers,
+            "sent": sent,
             "world": world,
             "server": server,
             "seat_http": seat_http,
@@ -431,6 +436,17 @@ def test_every_budgeted_tool_answers_within_its_budget(budget_run):
     # The seeded rows really are large: without the budget these answers are not.
     assert len(budget_run["world"]["big"]["body"]) >= BIG_ISSUE_CHARS
     assert len(budget_run["world"]["big_page"]["body"]) >= BIG_PAGE_CHARS
+
+
+def test_every_answer_is_sent_as_compact_json_of_its_structured_content(budget_run):
+    # F12: the text a client receives is the structured content as compact JSON,
+    # so the characters the budget allows carry data, not indentation; the size
+    # the helpers fit to is the size sent.
+    for name, (texts, structured) in budget_run["sent"].items():
+        (text,) = texts
+        assert json.loads(text) == structured, name
+        assert text == results.answer_text(structured), name
+        assert budget_run["sizes"][name] == results.serialized_size(structured)
 
 
 def test_the_budget_table_is_the_default_and_a_short_reviewed_list():
@@ -498,19 +514,26 @@ def test_nothing_the_budget_cut_is_cut_silently(budget_run):
     # With every desk lane at its maximum, the desk and a project floor are cut
     # by shape (F3): both were over budget before (650,228 and 243,832).
     assert "my_desk" in cut and "get_project_floor" in cut, sorted(cut)
-    # Each cut reads on: its next call answers, within its own budget.
+    # Each cut reads on: its next call answers, within its own budget, measured
+    # as sent over the protocol.
     server = budget_run["server"]
-    for name, (answer,) in budget_run["answers"].items():
-        for where, mark in _marks(answer):
-            reader = mark["next"]
-            content, _ = asyncio.run(
-                server.call_tool(reader["tool"], reader["arguments"])
-            )
-            (block,) = content
-            assert len(block.text) <= mcp_server.response_budget(reader["tool"]), (
-                name,
-                where,
-            )
+
+    async def read_on() -> None:
+        async with create_connected_server_and_client_session(
+            server._mcp_server  # noqa: SLF001 — the protocol server under test
+        ) as session:
+            for name, (answer,) in budget_run["answers"].items():
+                for where, mark in _marks(answer):
+                    reader = mark["next"]
+                    result = await session.call_tool(
+                        reader["tool"], reader["arguments"]
+                    )
+                    (block,) = result.content
+                    assert not result.isError, (name, where, block.text[:300])
+                    budget = mcp_server.response_budget(reader["tool"])
+                    assert len(block.text) <= budget, (name, where)
+
+    asyncio.run(read_on())
 
 
 def _call(server, name: str, arguments: dict) -> dict:
@@ -722,35 +745,78 @@ def _mocked(body) -> AthenaClient:
 
 
 def _delegation(number: int) -> dict:
+    """A delegation row as REST serves it to the desk and the inbox, its title
+    at the longest a write path accepts. Its body is dropped from the summary
+    the tools answer; the rest is what a row carries."""
     return {
-        "issue": {"id": number, "title": f"issue {number}", "body": "b" * 2_000},
+        "issue": {
+            "id": number,
+            "key": f"BUD-{number}",
+            "title": "t" * issue_drafts.MAX_TITLE_CHARS,
+            "body": "b" * 2_000,
+            "status": "open",
+            "status_category": "todo",
+            "priority": "medium",
+            "project_id": 1,
+            "project_name": "Budget",
+            "assignee_id": None,
+            "assignee_name": None,
+            "labels": [],
+            "authored_by": {"id": 1, "is_agent": False},
+        },
+        "issue_etag": f'"sha256-{"0" * 64}"',
+        "how_to_claim": {
+            "header": "If-Match",
+            "from": "issue_etag",
+            "paths": "optional repository paths the work will touch",
+        },
+        "runbook": {
+            "exists": False,
+            "space_id": None,
+            "page_id": None,
+            "suggested_spaces": [{"id": 1, "key": "BUD", "name": "Budget"}],
+        },
+        "complete_does_not_close_issue": True,
+        "next_after_complete": "complete_claim records the outcome",
         "delegated_at": "2026-11-22 00:00:00",
-        "warnings": ["w" * 300],
+        "delegated_by": {"id": 1, "name": "Ann"},
+        "visible_to_subject": True,
+        "open_claim_handoff": None,
+        "visible_open_blockers": [],
+        "visible_open_blocker_count": 0,
+        "visible_open_blockers_truncated": False,
+        "warnings": ["empty_description", "no_accountable_assignee"],
     }
 
 
 def test_a_desk_over_budget_gives_up_delegation_rows_to_the_inbox_tool():
+    # The delegation lane at its declared maximum (desk.DELEGATIONS_LIMIT rows,
+    # each title at its longest) is over budget on its own, even as compact
+    # JSON (F12): the rows that do not fit go to the inbox tool.
+    rows = [_delegation(n) for n in range(desk_lanes.DELEGATIONS_LIMIT)]
     desk = {
         "identity": {"id": 2},
         "work": {
             "delegations": {
-                "items": [_delegation(n) for n in range(40)],
-                "limit": 40,
+                "items": rows,
+                "limit": desk_lanes.DELEGATIONS_LIMIT,
                 "has_more": False,
                 "next_offset": None,
             }
         },
     }
+    summaries = [{**row, "issue": results.summary(row["issue"])} for row in rows]
+    assert results.serialized_size(summaries) > mcp_server.DEFAULT_RESPONSE_BUDGET
     server = mcp_server.build_server(_mocked(desk), profile=mcp_server.SEAT_PROFILE)
     answer = _call(server, "my_desk", {})
     assert results.serialized_size(answer) <= mcp_server.DEFAULT_RESPONSE_BUDGET
     lane = answer["work"]["delegations"]
     kept = len(lane["items"])
-    assert 1 <= kept < 40
+    assert 1 <= kept < desk_lanes.DELEGATIONS_LIMIT
     assert all("body" not in item["issue"] for item in lane["items"])
     assert (lane["has_more"], lane["next_offset"]) == (True, kept)
     assert answer["_truncated"]["work.delegations.items"] == {
-        "total_items": 40,
+        "total_items": desk_lanes.DELEGATIONS_LIMIT,
         "next": {"tool": "list_my_delegated_work", "arguments": {"offset": kept}},
     }
 

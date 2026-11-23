@@ -1174,25 +1174,37 @@ def tool_failure(exc: BaseException) -> dict[str, Any]:
 
 
 def _answer_refusals_as_one_object(mcp: FastMCP) -> None:
-    """Give every failed call one JSON object on the wire, with isError true.
+    """Give every call one compact JSON object on the wire.
 
     FastMCP turns a tool exception into prose ("Error executing tool ...").
     A client instead gets ``tool_failure(exc)``: one object with ``detail``
-    and ``code`` whether Athena refused the call or it never reached Athena.
+    and ``code`` whether Athena refused the call or it never reached Athena,
+    with isError true.
+
+    A success is sent as FastMCP's structured content, and its text block is
+    that same object as ``results.answer_text`` writes it: compact JSON, the
+    text the response budget measures (F12). FastMCP's own text block for a
+    tool's answer is indented JSON; it is discarded here, for every tool at
+    once. The SDK still validates the structured content against the tool's
+    output schema.
 
     This replaces only the protocol handler. ``FastMCP.call_tool``, which
-    embedding callers and tests use in-process, still raises ``ToolError`` (the
-    SDK's in-process failure signal); ``tool_failure`` gives such a caller the
-    same object the wire carries."""
+    embedding callers and tests use in-process, still answers the SDK's own
+    ``(content, structured)`` pair, its text indented, and still raises
+    ``ToolError`` (the SDK's in-process failure signal); ``tool_failure`` gives
+    such a caller the same object the wire carries, and ``results.answer_text``
+    the text."""
 
     async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         try:
-            return await mcp.call_tool(name, arguments)
+            _indented, structured = await mcp.call_tool(name, arguments)
         except Exception as exc:  # noqa: BLE001 — every failure is one object
-            text = json.dumps(tool_failure(exc), ensure_ascii=False)
+            text = results.answer_text(tool_failure(exc))
             return CallToolResult(
                 content=[TextContent(type="text", text=text)], isError=True
             )
+        text = results.answer_text(structured)
+        return [TextContent(type="text", text=text)], structured
 
     # The same registration FastMCP makes for its own call_tool, replaced.
     mcp._mcp_server.call_tool(validate_input=False)(call_tool)  # noqa: SLF001
