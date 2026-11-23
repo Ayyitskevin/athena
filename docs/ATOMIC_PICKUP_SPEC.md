@@ -80,6 +80,15 @@ another account that is not Automation. Pickup selects through that predicate, s
 such an issue yields `nothing_ready` when it is the only candidate. Receipts,
 replay, the account guard and direct `claim_issue` are unchanged.
 
+Amended again 2026-11-22 by
+[the review-request decision](decisions/2026-11-22-review-request-answers.md):
+a pending review request naming the caller, made by another account after the
+caller's completion, also answers that completion. Each no-acquisition outcome
+carries `review_request`, the newest waiting request the caller's desk shows with
+the `claim_issue` call for its review issue, or null. It is part of the receipt
+and replays as recorded. Pickup still claims only through the ready predicate, so
+a review issue with an open blocker is named, never claimed.
+
 Order remains delegated-to-me first, then descending priority, creation time and
 issue ID (both ascending). `project_id` optionally restricts candidates to one visible existing
 project. Omitted/null means all eligible projects plus backlog; it does not mean
@@ -157,6 +166,22 @@ after command return cannot undo a committed claim; failures there retain the
 existing indeterminate/reconciliation behavior. Current reads can
 become stale immediately after return; callers inspect the existing lease/context
 before renewal or work, using the exact returned generation for possession writes.
+
+### Amendment: declared paths (C6, 2026-11-22)
+
+Requirement C6 of `docs/plans/ATHENA_IN_USE_SPEC.md` adds one optional body field,
+`paths` (a list of relative POSIX paths), on REST, Python and MCP. The statements
+above that pickup submits no paths are superseded for that field only; generation
+and coordination-root selectors are still not accepted. Paths are validated before
+selection and passed to the ordinary claim command, whose fence check is the only
+gate. A fence refusal does not depend on the candidate (the caller's paths against
+every other active lease), so the first one ends the pickup: `claimed:false`,
+`attempts` names that candidate with the generic `outcome:conflict`, `reason` is
+the refusal's code (`fence_overlap` or `fence_unresolved`) and `fence` is the
+refusal's own visibility-filtered object. This follows `candidates_conflicted`: a
+200 no-work answer, cached as a receipt like the others. `paths` is part of the
+body the idempotency fingerprint covers, so the same key with other paths is
+`idempotency_mismatch`. Without `paths`, every answer is unchanged.
 
 ## Retry and crash semantics
 

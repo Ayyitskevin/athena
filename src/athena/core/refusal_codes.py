@@ -267,6 +267,29 @@ _ENTRIES: tuple[RefusalCode, ...] = (
         ),
     ),
     RefusalCode(
+        code="fence_overlap",
+        statuses=(409,),
+        meaning=(
+            "A path you declared overlaps another active lease's fence; `fence` "
+            "names your path and the basis, and the other issue, holder and "
+            "path when you can read that lease (else null)."
+        ),
+        next=NextCall(
+            tool="claim_next_ready",
+            hint="take work your paths do not overlap, or claim again once that lease ends",
+        ),
+    ),
+    RefusalCode(
+        code="fence_unresolved",
+        statuses=(409,),
+        meaning=(
+            "Your fence cannot be placed: the instance's root catalog does not "
+            "know your coordination_root, or one of two fences has no current "
+            "root. Without a catalog omit coordination_root; with one, obtain a "
+            "current reviewed selector from the operator."
+        ),
+    ),
+    RefusalCode(
         code="blocked_issue_close_policy",
         statuses=(409,),
         meaning=(

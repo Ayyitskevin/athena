@@ -345,9 +345,9 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
                     "cannot be completed, even by an admin. Reading changes nothing. "
                     "complete_claim releases the "
                     "lease and does not mark the issue done. declared_paths is "
-                    "the optional file fence. path_fence is rooted only for a current "
-                    "qualified declaration, not verified process location; unresolved "
-                    "nonempty fences are conservative; issue_only reserves no files."
+                    "the optional file fence. path_fence: rooted (a catalog root, "
+                    "not a verified location), lexical, root unknown (no catalog), "
+                    "unresolved (conflicts conservatively) or issue_only (no files)."
                 ),
             },
         },

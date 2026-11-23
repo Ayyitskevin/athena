@@ -24,6 +24,7 @@ from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, personal_write_actor
 from athena.core.refusals import Refusal
+from athena.core.request_models import RequestBody
 
 router = APIRouter(prefix="/filters", tags=["aegis"])
 
@@ -53,12 +54,12 @@ class FilterCriteria(BaseModel):
     query: str | None = None
 
 
-class FilterCreate(BaseModel):
+class FilterCreate(RequestBody):
     name: str
     criteria: FilterCriteria = FilterCriteria()
 
 
-class FilterUpdate(BaseModel):
+class FilterUpdate(RequestBody):
     # Partial: send name and/or criteria. An omitted field is left unchanged; a
     # criteria sent as {} clears every constraint ("match everything").
     name: str | None = None

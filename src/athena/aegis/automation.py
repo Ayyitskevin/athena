@@ -96,6 +96,12 @@ TRIGGER_VERBS = (
     "archived",
     "unarchived",
 )
+# Verbs a rule never fires on, not even a wildcard: an observation recorded by
+# whichever request first saw it, not something anyone did to the issue. A lapsed
+# lease (C4) is told to the accountable accounts by notification; letting a rule
+# act on it would turn a read into an automated write. Excluded from the event
+# scan below and from a schedule's inactivity clock, the way imported history is.
+OBSERVED_VERBS = ("lease_lapsed",)
 TARGET_KINDS = ("issue",)
 TRIGGER_TYPES = ("event", "schedule")
 SCHEDULE_TRIGGER_VERB = "scheduled"
@@ -592,6 +598,7 @@ def process_pending(
     or an import bundle is foreign history — something Athena was TOLD, not work
     it did — and must never fire a rule, whatever the verb. A wildcard rule
     (trigger_verb='*') would otherwise treat a back-dated import as a trigger.
+    The ``OBSERVED_VERBS`` (a recorded lease lapse) are skipped the same way.
 
     The cursor advances past every event read (matched or not), so an event is processed
     at most once (best-effort, fire-and-forget — unlike webhooks' at-least-once retry).
@@ -613,6 +620,8 @@ def process_pending(
     for event in events:
         last_id = event["id"]
         if skip_actor_id is not None and event["actor_id"] == skip_actor_id:
+            continue
+        if event["verb"] in OBSERVED_VERBS:
             continue
         for rule in enabled:
             if _matches(conn, rule, event):
@@ -933,10 +942,11 @@ def _schedule_target_query(rule: dict, scheduled_for: datetime) -> tuple[str, li
         clauses.append(
             "COALESCE((SELECT MAX(a.created_at) FROM activity a "
             "WHERE a.target_kind = 'issue' AND a.target_id = i.id "
-            "AND a.imported_at IS NULL), i.created_at) "
-            "<= ?"
+            "AND a.imported_at IS NULL "
+            f"AND a.verb NOT IN ({','.join('?' for _ in OBSERVED_VERBS)})), "
+            "i.created_at) <= ?"
         )
-        params.append(cutoff)
+        params.extend([*OBSERVED_VERBS, cutoff])
     return " AND ".join(clauses), params
 
 

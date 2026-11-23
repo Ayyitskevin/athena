@@ -9,10 +9,14 @@ The contract pinned here: every tool in ``seat``, ``seat+knowledge`` and
 ``conductor`` answers within ``mcp_server.response_budget(name)`` characters
 (16,000 unless the tool is on the commented exception list beside
 ``TOOL_SCOPES``) against a workspace seeded with one 200,000-character page, one
-150,000-character issue description and sixty comments on that issue. The test
-calls EVERY tool in the three profiles over the protocol, with default arguments
-plus the minimum required ones, pointing at the large rows; a tool it cannot call
-fails the test instead of being skipped.
+150,000-character issue description and sixty comments on that issue, and in
+which the seat's desk has every lane one row past its declared maximum, every
+text at the longest its write path declares (``support.fill_desk_lanes``, F3:
+one large issue fills no desk lane, and ``my_desk`` was over budget at 23 ready
+issues while this test passed). The test calls EVERY tool in the three profiles
+over the protocol, with default arguments plus the minimum required ones,
+pointing at the large rows; a tool it cannot call fails the test instead of
+being skipped.
 
 What a client receives is measured: the text of the result's content blocks.
 """
@@ -28,7 +32,9 @@ from fastapi.testclient import TestClient
 import httpx
 from mcp.shared.memory import create_connected_server_and_client_session
 import pytest
+from support import fill_desk_lanes
 
+from athena import config
 from athena.main import create_app
 from athena.mcp import results
 from athena.mcp import server as mcp_server
@@ -154,6 +160,7 @@ def _seed(admin: TestClient) -> dict[str, Any]:
         )
     return {
         "seat": seat,
+        "reviewer": reviewer,
         "sol": sol,
         "ray": ray,
         "project": project,
@@ -270,7 +277,15 @@ def _plan(world: dict[str, Any], admin: TestClient) -> list[Step]:
             "update_page",
             lambda s: {"page_id": page, "title": "the large page, renamed"},
         ),
-        ("record_run_learning", lambda s: {"issue_id": big, "summary": "learned"}),
+        (
+            "record_run_learning",
+            # The seat's notebook is a second space, so the runbook's is named.
+            lambda s: {
+                "issue_id": big,
+                "summary": "learned",
+                "space_id": world["space"]["id"],
+            },
+        ),
         (
             "mark_notification_read",
             lambda s: {"notification_id": s["notification"]()},
@@ -286,13 +301,24 @@ def _plan(world: dict[str, Any], admin: TestClient) -> list[Step]:
     ]
 
 
-@pytest.fixture
-def budget_run(tmp_path):
+def _play_every_tool(tmp_path, monkeypatch, *, maxima: bool):
     """Every budgeted tool called once over the protocol against the seeded
-    workspace: the size of each answer, and the answer itself."""
-    app = create_app(tmp_path / "budget.db")
+    workspace: the size of each answer, and the answer itself. With ``maxima``
+    the seat's desk also has every lane at its declared maximum."""
+    monkeypatch.setattr(config, "TOKEN_RATE_LIMIT_PER_MINUTE", 0)
+    db_file = tmp_path / "budget.db"
+    app = create_app(db_file)
     with TestClient(app) as admin:
         world = _seed(admin)
+        if maxima:
+            world["desk_maxima"] = fill_desk_lanes(
+                app,
+                db_file,
+                admin=admin,
+                seat=world["seat"],
+                other=world["reviewer"],
+                project_id=world["project"]["id"],
+            )
         bearer = {"Authorization": f"Bearer {world['seat']['token']['token']}"}
         seat_http = TestClient(app, headers=bearer)
         client = AthenaClient(client=seat_http, run_id=RUN_ID)
@@ -367,6 +393,19 @@ def budget_run(tmp_path):
         }
 
 
+@pytest.fixture
+def budget_run(tmp_path, monkeypatch):
+    """The contract's workspace: the large rows, and the seat's desk with every
+    lane at its declared maximum (F3)."""
+    yield from _play_every_tool(tmp_path, monkeypatch, maxima=True)
+
+
+@pytest.fixture
+def seeded_run(tmp_path, monkeypatch):
+    """The large rows alone, for the tests that read them back in pieces."""
+    yield from _play_every_tool(tmp_path, monkeypatch, maxima=False)
+
+
 def _largest_per_profile(sizes: dict[str, int]) -> dict[str, tuple[str, int]]:
     return {
         profile: max(
@@ -379,6 +418,7 @@ def _largest_per_profile(sizes: dict[str, int]) -> dict[str, tuple[str, int]]:
 
 def test_every_budgeted_tool_answers_within_its_budget(budget_run):
     sizes = budget_run["sizes"]
+    print(f"answer sizes at the declared maxima: {sizes}")
     over = {
         name: (size, mcp_server.response_budget(name))
         for name, size in sorted(sizes.items())
@@ -455,6 +495,22 @@ def test_nothing_the_budget_cut_is_cut_silently(budget_run):
         "list_issue_comments",
     ):
         assert name in cut, sorted(cut)
+    # With every desk lane at its maximum, the desk and a project floor are cut
+    # by shape (F3): both were over budget before (650,228 and 243,832).
+    assert "my_desk" in cut and "get_project_floor" in cut, sorted(cut)
+    # Each cut reads on: its next call answers, within its own budget.
+    server = budget_run["server"]
+    for name, (answer,) in budget_run["answers"].items():
+        for where, mark in _marks(answer):
+            reader = mark["next"]
+            content, _ = asyncio.run(
+                server.call_tool(reader["tool"], reader["arguments"])
+            )
+            (block,) = content
+            assert len(block.text) <= mcp_server.response_budget(reader["tool"]), (
+                name,
+                where,
+            )
 
 
 def _call(server, name: str, arguments: dict) -> dict:
@@ -463,9 +519,9 @@ def _call(server, name: str, arguments: dict) -> dict:
     return structured
 
 
-def test_following_next_reads_a_cut_body_whole(budget_run):
-    server = budget_run["server"]
-    world = budget_run["world"]
+def test_following_next_reads_a_cut_body_whole(seeded_run):
+    server = seeded_run["server"]
+    world = seeded_run["world"]
     for tool, key, row in (
         ("get_issue", "issue_id", world["big"]),
         ("get_page", "page_id", world["big_page"]),
@@ -485,13 +541,13 @@ def test_following_next_reads_a_cut_body_whole(budget_run):
         assert reads >= len(row["body"]) // mcp_server.DEFAULT_RESPONSE_BUDGET
 
 
-def test_list_and_search_rows_are_summaries(budget_run):
-    server = budget_run["server"]
-    world = budget_run["world"]
+def test_list_and_search_rows_are_summaries(seeded_run):
+    server = seeded_run["server"]
+    world = seeded_run["world"]
     hits = _call(server, "search_work", {"q": "budget"})["items"]
     assert hits and all("body" not in row and "title" in row for row in hits)
     pages = _call(server, "list_pages", {"space_id": world["space"]["id"]})["items"]
-    rest = budget_run["seat_http"].get(f"/spaces/{world['space']['id']}/pages").json()
+    rest = seeded_run["seat_http"].get(f"/spaces/{world['space']['id']}/pages").json()
     assert [row["id"] for row in pages] == [row["id"] for row in rest]
     assert len(pages) >= 12
     assert all("body" not in row and "title" in row for row in pages)
@@ -505,10 +561,10 @@ def test_list_and_search_rows_are_summaries(budget_run):
     assert all("body" in row for row in rest)
 
 
-def test_comments_page_through_by_next_with_excerpts_or_bodies(budget_run):
-    server = budget_run["server"]
-    issue_id = budget_run["world"]["big"]["id"]
-    rest = budget_run["seat_http"].get(f"/issues/{issue_id}/comments").json()
+def test_comments_page_through_by_next_with_excerpts_or_bodies(seeded_run):
+    server = seeded_run["server"]
+    issue_id = seeded_run["world"]["big"]["id"]
+    rest = seeded_run["seat_http"].get(f"/issues/{issue_id}/comments").json()
     seen, arguments = [], {"issue_id": issue_id}
     while True:
         page = _call(server, "list_issue_comments", arguments)
@@ -612,7 +668,9 @@ def test_an_object_gives_up_its_least_valuable_places_first():
     assert 1 < len(lean["activity"]) < 30
 
 
-def test_an_object_no_cut_can_fit_is_cut_to_its_floors_and_never_elsewhere():
+def test_an_object_the_declared_cuts_cannot_fit_is_cut_by_shape_within_budget():
+    # The declared cuts go to their floors first; what is still over is cut by
+    # shape (F3), so the answer ends within budget and every cut is on record.
     answer = {"body": "b" * 5_000, "other": "o" * 5_000, "empty": ""}
     cuts = [
         results.Cut(("missing",), lambda kept: {"tool": "x", "arguments": {}}),
@@ -621,11 +679,20 @@ def test_an_object_no_cut_can_fit_is_cut_to_its_floors_and_never_elsewhere():
             ("body",), lambda kept: {"tool": "read", "arguments": {"offset": kept}}
         ),
     ]
-    with results.budget(1_000):
-        fitted = results.fit_object(answer, cuts)
-    assert fitted["body"] == "b"
-    assert fitted["other"] == answer["other"]  # unlisted: never cut
-    assert set(fitted["_truncated"]) == {"body"}
+
+    def rest(path, kept):
+        return {"tool": "rest", "arguments": {"at": ".".join(path), "offset": kept}}
+
+    with results.budget(2_000):
+        fitted = results.fit_object(answer, cuts, rest=rest)
+    assert _size(fitted) <= 2_000
+    assert fitted["body"] == "b"  # the declared floor
+    assert results.TEXT_FLOOR <= len(fitted["other"]) < 5_000
+    assert set(fitted["_truncated"]) == {"body", "other"}
+    assert fitted["_truncated"]["other"] == {
+        "total_chars": 5_000,
+        "next": rest(("other",), len(fitted["other"])),
+    }
     with results.budget(None):
         assert results.fit_object(answer, cuts) is answer
 
@@ -707,15 +774,27 @@ def test_the_delegation_inbox_over_budget_pages_on_from_its_offset():
     }
 
 
-def test_cuts_that_find_nothing_to_cut_leave_the_answer_and_add_no_mark():
-    answer = {"other": "o" * 2_000, "rows": "not a list"}
+def test_cuts_that_find_nothing_to_cut_hand_the_answer_to_the_structural_cut():
+    answer = {"other": "o" * 3_000, "rows": "not a list"}
     cuts = [
         results.Cut(
             ("rows",), lambda kept: {"tool": "x", "arguments": {}}, each=("t",)
         ),
         results.Cut(("missing", "deeper"), lambda kept: {"tool": "x", "arguments": {}}),
     ]
-    with results.budget(100):
+    # Within budget, nothing is cut and nothing is marked.
+    with results.budget(_size(answer)):
+        assert results.fit_object(answer, cuts) == answer
+    with results.budget(2_000):
         fitted = results.fit_object(answer, cuts)
-    assert fitted == answer
-    assert "_truncated" not in fitted
+    assert _size(fitted) <= 2_000
+    assert fitted["rows"] == "not a list"
+    assert fitted["_truncated"] == {
+        # no tool reads it here
+        "other": {"total_chars": 3_000, "next": None}
+    }
+    # A budget no shape of this object fits: one record says so, within it.
+    with results.budget(100):
+        stub = results.fit_object(answer, cuts)
+    assert _size(stub) <= 100
+    assert stub == {"_truncated": {"*": {"total_chars": _size(answer), "next": None}}}

@@ -51,10 +51,17 @@ def _tag(conn, issue):
 
 
 @pytest.mark.parametrize(
-    "other_path", ["src/athena/aegis", "src/athena/mentor/pages.py"]
+    ("other_path", "overlaps"),
+    [("src/athena/aegis", True), ("src/athena/mentor/pages.py", False)],
 )
-def test_unresolved_declared_paths_conflict_across_issues(tmp_path, other_path):
-    # Without a qualified root, lexical nonoverlap does not prove separation.
+def test_declared_paths_without_a_catalog_compare_lexically_across_issues(
+    tmp_path, monkeypatch, other_path, overlaps
+):
+    # With no root catalog, paths are compared under one implicit root (D5):
+    # an overlap refuses and names itself; a disjoint path is granted.
+    from athena import config
+
+    monkeypatch.setattr(config, "LEASE_ROOT_CATALOG", None)
     conn = _migrated(tmp_path, "paths.db")
     first, second = _delegated_pair(conn)
     lease_commands.claim_issue(
@@ -64,21 +71,31 @@ def test_unresolved_declared_paths_conflict_across_issues(tmp_path, other_path):
         if_match=[_tag(conn, first)],
         paths=["src/athena/aegis/api.py"],
     )
+    claim = lambda: lease_commands.claim_issue(  # noqa: E731
+        conn,
+        actor=_actor(conn, 3),
+        issue_id=second["id"],
+        if_match=[_tag(conn, second)],
+        paths=[other_path],
+    )
+    if not overlaps:
+        assert claim()["path_fence"] == "lexical, root unknown"
+        return
     with pytest.raises(issue_commands.IssueCommandError) as caught:
-        lease_commands.claim_issue(
-            conn,
-            actor=_actor(conn, 3),
-            issue_id=second["id"],
-            if_match=[_tag(conn, second)],
-            paths=[other_path],
-        )
+        claim()
     assert caught.value.kind == "conflict"
-    assert caught.value.detail == "declared paths conflict with another active lease"
+    assert caught.value.code == "fence_overlap"
+    assert caught.value.extra["fence"]["path"] == other_path
+    assert caught.value.extra["fence"]["holder_path"] == "src/athena/aegis/api.py"
 
 
 def test_path_overlap_uses_directory_boundaries(tmp_path):
     assert lease_commands.paths_overlap("src/foo", "src/foo/bar.py")
+    assert lease_commands.paths_overlap("src/foo/bar.py", "src/foo")
+    assert lease_commands.paths_overlap("src/foo", "src/foo")
     assert not lease_commands.paths_overlap("src/foo", "src/foobar")
+    assert not lease_commands.paths_overlap("src/foobar", "src/foo")
+    assert not lease_commands.paths_overlap("src/foo/a", "src/foo/b")
 
 
 def test_empty_paths_still_claim(tmp_path):

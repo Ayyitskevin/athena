@@ -101,7 +101,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `list_issues` | `GET /issues` | read-only | List Aegis issues, optionally filtered by a project-configured status, … |
 | `list_labels` | `GET /labels` | read-only | List the shared label vocabulary (id, name, color). |
 | `list_my_delegated_work` | `GET /delegations/me` | read-only | List issues delegated to the authenticated contributor. By default this … |
-| `list_notifications` | `GET /notifications` | read-only | Read YOUR notification inbox — mentions, watched-issue changes, and … |
+| `list_notifications` | `GET /notifications` | read-only | Read YOUR notification inbox — mentions, watched-issue changes, work … |
 | `list_page_versions` | `GET /pages/{page_id}/versions` | read-only | The page's superseded revisions, newest first (the live page is NOT one of … |
 | `list_pages` | `GET /spaces/{space_id}/pages` | read-only | List the pages in a space. Archived (soft-deleted) pages are hidden by … |
 | `list_priority_notifications` | `GET /notifications/priority` | read-only | Read YOUR inbox as a priority/mute/digest projection. Priority is an … |
@@ -266,6 +266,8 @@ back with `isError` false, `applied: false` and `next`.
 | `lease_generation_required` | 428 | You already hold this lease; a repeated claim is a renewal and needs your current generation (the detail names it). | `get_issue_lease`: issue_id; pass its generation |
 | `invalid_lease_generation` | 422 | The generation is not a 32-character lowercase hex token. | `get_issue_lease`: issue_id; pass its generation |
 | `lease_generation_mismatch` | 409 | The generation you sent is not the lease's current one: your possession lapsed or was replaced. | `get_issue_lease`: issue_id; if the lease is no longer yours, stop work on it |
+| `fence_overlap` | 409 | A path you declared overlaps another active lease's fence; `fence` names your path and the basis, and the other issue, holder and path when you can read that lease (else null). | `claim_next_ready`: take work your paths do not overlap, or claim again once that lease ends |
+| `fence_unresolved` | 409 | Your fence cannot be placed: the instance's root catalog does not know your coordination_root, or one of two fences has no current root. Without a catalog omit coordination_root; with one, obtain a current reviewed selector from the operator. |  |
 | `blocked_issue_close_policy` | 409 | The project refuses to close an issue that has open blockers; close or unlink the blockers first. | `get_issue_work_context`: dependencies.open_blockers lists them |
 | `cursor_ahead` | 422 | after_id is past the newest event you can see; the body carries latest_visible_event_id, the highest value you may pass. | `advance_desk_cursor`: after_id no higher than latest_visible_event_id |
 | `invalid_query` | 422 | The work query does not parse; detail.error says where. |  |

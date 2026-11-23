@@ -27,6 +27,7 @@ from athena.aegis import (
     claim_handoffs,
     contributors as contributors_data,
     issue_activity,
+    issues,
     leases,
     report_credentials,
     review_commands,
@@ -38,7 +39,7 @@ from athena.aegis.issue_commands import (
     _require_issue_writer,
     _visible_issue,
 )
-from athena.core import coordination_roots, db, identity, reported_usage
+from athena.core import access, coordination_roots, db, identity, reported_usage
 
 ClaimYieldReason = Literal["needs_input", "blocked", "capacity"]
 CLAIM_YIELD_REASONS = frozenset({"needs_input", "blocked", "capacity"})
@@ -47,6 +48,11 @@ CLAIM_YIELD_REASONS = frozenset({"needs_input", "blocked", "capacity"})
 # then claim). Kind stays "conflict"; the code travels on the error.
 CLAIM_HELD_CODE = "claim_held"
 CLAIM_REQUIRED_CODE = "claim_required"
+# The two fence refusals (C6): a declared path overlaps another active lease's
+# fence, or the two fences cannot be compared at all. Kind stays "conflict";
+# the body's ``fence`` object says which path, on what basis, and against whom.
+FENCE_OVERLAP_CODE = "fence_overlap"
+FENCE_UNRESOLVED_CODE = "fence_unresolved"
 MAX_CLAIM_YIELD_NOTE_CHARS = 500
 MAX_HANDOFF_ATTEMPTED_WORK_CHARS = 4_000
 MAX_HANDOFF_EVIDENCE_ITEMS = 10
@@ -171,7 +177,12 @@ def normalize_declared_paths(raw: object) -> list[str]:
 
 
 def paths_overlap(left: str, right: str) -> bool:
-    return left == right or left.startswith(right + "/") or right.startswith(left + "/")
+    """Whether two normalized paths fence the same file: they are equal, or one
+    is a directory of the other. Compared segment by segment, never as string
+    prefixes, so ``src/a`` covers ``src/a/x.py`` but not ``src/ab``."""
+    mine, theirs = left.split("/"), right.split("/")
+    depth = min(len(mine), len(theirs))
+    return mine[:depth] == theirs[:depth]
 
 
 def _canonical_path(prefix: str, path: str) -> str:
@@ -183,63 +194,168 @@ def _canonical_path(prefix: str, path: str) -> str:
     return joined
 
 
+#: What a fence_unresolved detail tells the caller to do with a catalog. No read
+#: returns a selector (docs/ACTIVE_WORK.md): the operator hands one out.
+_GET_A_SELECTOR = "obtain a current reviewed selector from the operator"
+
+#: What a fence refusal's ``basis`` says when neither base above applies: with a
+#: root catalog configured, one of the two fences has no current root.
+FENCE_BASIS_UNRESOLVED = "unresolved"
+
+# A fence as the overlap check compares it: the base it sits on, and each
+# declared path with the path compared (its root's prefix joined on).
+_Fence = tuple[tuple[str, ...], list[tuple[str, str]]]
+
+
+def _comparable_fence(
+    paths: list[str] | None,
+    root: dict | None,
+    catalog: coordination_roots.RootCatalog | None,
+) -> tuple[_Fence | None, str]:
+    """The fence's base and compared paths, or None and why it cannot be placed.
+
+    With no catalog every readable fence is under one implicit root (D5). With
+    a catalog, a fence is placed only through a current root; one without a
+    root cannot prove separation from anything, so it is None, as is a stored
+    fence whose paths are unreadable."""
+    if not paths:
+        return None, "its stored paths are unreadable"
+    if catalog is None:
+        return (("lexical",), [(path, path) for path in paths]), ""
+    unrooted = "it has no current root in this instance's catalog"
+    if root is None:
+        return None, unrooted
+    try:
+        tree_id, prefix = coordination_roots.resolve(root, catalog)
+    except coordination_roots.RootError:
+        return None, unrooted
+    compared = [(_canonical_path(prefix, path), path) for path in paths]
+    return (("root", tree_id), compared), ""
+
+
+def _fence_refusal(
+    conn: sqlite3.Connection,
+    actor: dict,
+    *,
+    code: str,
+    detail: str,
+    basis: str,
+    other: dict,
+    path: str | None,
+    holder_path: str | None,
+) -> IssueCommandError:
+    """A fence refusal. The other lease's issue, holder and path are named only
+    when the caller could read that lease over REST (``GET /issues/{id}/lease``);
+    otherwise they are null, and nothing else in the body differs."""
+    issue = issues.get_issue(conn, int(other["issue_id"]))
+    visible = issue is not None and access.can_see_project_or_backlog(
+        conn, actor, issue["project_id"]
+    )
+    fence = {
+        "basis": basis,
+        "path": path,
+        "issue": (
+            {"id": issue["id"], "key": issue.get("key")}
+            if visible and issue is not None
+            else None
+        ),
+        "holder": (
+            {"id": int(other["holder_id"]), "name": other["holder_name"]}
+            if visible
+            else None
+        ),
+        "holder_path": holder_path if visible else None,
+    }
+    return IssueCommandError("conflict", detail, code=code, extra={"fence": fence})
+
+
 def _refuse_overlapping_paths(
     conn: sqlite3.Connection,
     *,
+    actor: dict,
     issue_id: int,
     paths: list[str] | None,
     root: dict | None,
 ) -> None:
+    """Refuse a fence that overlaps another active lease's, or that cannot be
+    shown separate from one. An overlap is ``fence_overlap`` and names the
+    caller's path; an unplaceable fence is ``fence_unresolved``. Every active
+    lease takes part, in every project, whoever can see it."""
     if paths == []:
         return
-    location = (
-        None
-        if root is None or paths is None
-        else coordination_roots.resolve(root, config.LEASE_ROOT_CATALOG)
-    )
-    canonical_paths = (
-        []
-        if location is None or paths is None
-        else [_canonical_path(location[1], path) for path in paths]
-    )
+    catalog = config.LEASE_ROOT_CATALOG
+    mine, why_mine = _comparable_fence(paths, root, catalog)
+    unresolved: tuple[dict, str] | None = None
     for other in leases.list_active_leases(conn, except_issue_id=issue_id):
-        theirs_paths = other["declared_paths"]
         if other["path_fence"] == "issue_only":
             continue
-        if not theirs_paths:
-            raise IssueCommandError(
-                "conflict", "declared paths conflict with another active lease"
-            )
-        other_root = other.get("coordination_root")
-        other_location = (
-            None
-            if other_root is None
-            else coordination_roots.resolve(other_root, config.LEASE_ROOT_CATALOG)
-        )
-        # Unknown origins cannot establish even lexical separation.
-        if location is None or other_location is None:
-            raise IssueCommandError(
-                "conflict", "declared paths conflict with another active lease"
-            )
         try:
-            other_paths = normalize_declared_paths(theirs_paths)
-            canonical_other = [
-                _canonical_path(other_location[1], path) for path in other_paths
-            ]
-        except IssueCommandError as exc:
-            raise IssueCommandError(
-                "conflict", "declared paths conflict with another active lease"
-            ) from exc
-        if location[0] != other_location[0]:
-            continue
-        if any(
-            paths_overlap(left, right)
-            for left in canonical_paths
-            for right in canonical_other
-        ):
-            raise IssueCommandError(
-                "conflict", "declared paths conflict with another active lease"
+            theirs, why_theirs = _comparable_fence(
+                other["declared_paths"], other.get("coordination_root"), catalog
             )
+        except IssueCommandError:
+            # A stored join over the bound: unplaceable, not the caller's input.
+            theirs, why_theirs = None, "its stored paths are unreadable"
+        if mine is None or theirs is None:
+            if unresolved is None:
+                unresolved = (
+                    (
+                        other,
+                        f"your fence cannot be placed: {why_mine}; "
+                        + (
+                            _GET_A_SELECTOR
+                            if paths is not None
+                            else "renew with explicit paths"
+                        ),
+                    )
+                    if mine is None
+                    else (
+                        other,
+                        f"the other lease's fence cannot be placed: {why_theirs}",
+                    )
+                )
+            continue
+        if mine[0] != theirs[0]:
+            continue  # qualified distinct families coexist
+        for compared, declared in mine[1]:
+            hit = next(
+                (held for seen, held in theirs[1] if paths_overlap(compared, seen)),
+                None,
+            )
+            if hit is not None:
+                basis = (
+                    leases.BASIS_LEXICAL
+                    if mine[0] == ("lexical",)
+                    else leases.BASIS_ROOTED
+                )
+                raise _fence_refusal(
+                    conn,
+                    actor,
+                    code=FENCE_OVERLAP_CODE,
+                    detail=(
+                        f"declared path {declared} overlaps another active "
+                        f"lease's fence ({basis})"
+                    ),
+                    basis=basis,
+                    other=other,
+                    path=declared,
+                    holder_path=hit,
+                )
+    if unresolved is not None:
+        other, why = unresolved
+        raise _fence_refusal(
+            conn,
+            actor,
+            code=FENCE_UNRESOLVED_CODE,
+            detail=(
+                "declared paths cannot be shown separate from another active "
+                f"lease's fence; {why}"
+            ),
+            basis=FENCE_BASIS_UNRESOLVED,
+            other=other,
+            path=None,
+            holder_path=None,
+        )
 
 
 def claim_issue(
@@ -346,9 +462,26 @@ def claim_issue(
                 else:
                     root = requested_root
             except coordination_roots.RootError as exc:
-                raise IssueCommandError(exc.kind, str(exc)) from exc
+                # A well-formed selector this instance cannot resolve (no
+                # catalog, a stale digest, an unknown root) cannot place the
+                # fence: fence_unresolved. No read returns a selector, so the
+                # detail says what to do instead of naming a next call.
+                detail = str(exc)
+                if exc.kind == "conflict":
+                    detail = (
+                        "this instance has no root catalog: omit coordination_root; "
+                        "declared paths are compared under one implicit root "
+                        f"({leases.BASIS_LEXICAL})"
+                        if config.LEASE_ROOT_CATALOG is None
+                        else f"{detail}; {_GET_A_SELECTOR}"
+                    )
+                raise IssueCommandError(
+                    exc.kind,
+                    detail,
+                    code=FENCE_UNRESOLVED_CODE if exc.kind == "conflict" else None,
+                ) from exc
         _refuse_overlapping_paths(
-            conn, issue_id=issue_id, paths=declared_paths, root=root
+            conn, actor=actor, issue_id=issue_id, paths=declared_paths, root=root
         )
         try:
             lease = leases.upsert_lease(

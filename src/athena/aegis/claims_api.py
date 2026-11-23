@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from athena.core import authorship
 from athena.core.authorship import AuthoredBy
-from athena.core.request_models import RequestBody
+from athena.core.request_models import CoordinationRootSelector, RequestBody
 from athena.aegis import (
     claim_handoffs,
     contributors,
@@ -129,7 +129,13 @@ class LeaseOut(BaseModel):
     active: bool
     declared_paths: list[str] = []
     coordination_root: dict[str, str] | None = None
-    path_fence: Literal["rooted", "unresolved", "issue_only"] = "issue_only"
+    # rooted: placed through a current root catalog entry ("same root" basis).
+    # "lexical, root unknown": no catalog is configured, so the paths are
+    # compared as written under one implicit root (decision D5). unresolved:
+    # nonempty but unplaceable (a catalog and no current root, or unreadable).
+    path_fence: Literal[
+        "rooted", "lexical, root unknown", "unresolved", "issue_only"
+    ] = "issue_only"
     open_claim_handoff: ClaimHandoffOut | None = None
 
 
@@ -142,10 +148,13 @@ class ClaimIn(RequestBody):
     generation: str | None = None
     # Optional repo-relative POSIX paths this holder intends to touch. Empty or
     # omitted = issue fence only on acquisition; omitted/null retains on renewal.
-    # Explicit [] is issue-only. Unknown nonempty origins conflict conservatively.
+    # Explicit [] is issue-only. With no root catalog they are compared under one
+    # implicit root; with one, a fence without a current root cannot prove
+    # separation and conflicts conservatively.
     paths: list[str] | None = None
-    # The shared command validates selectors against operator-declared qualification.
-    coordination_root: object = None
+    # A closed selector; the shared command still resolves it against the
+    # operator's catalog; the operator hands selectors out (no read returns one).
+    coordination_root: CoordinationRootSelector | None = None
 
 
 class ReadyClaimIn(BaseModel):
@@ -156,6 +165,38 @@ class ReadyClaimIn(BaseModel):
         default=None, ge=leases.MIN_LEASE_SECONDS, le=leases.MAX_LEASE_SECONDS
     )
     project_id: int | None = Field(default=None, ge=1, le=MAX_SQLITE_INTEGER)
+    # Relative POSIX paths the claim this pickup makes declares, exactly as
+    # claim_issue's `paths`; omitted, null or [] claims issue-only, as before.
+    paths: list[str] | None = None
+
+
+class FenceIssueRef(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    id: int
+    key: str | None
+
+
+class FenceHolderRef(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    id: int
+    name: str
+
+
+class FenceRefusalOut(BaseModel):
+    """What a fence refusal (fence_overlap or fence_unresolved) names. The other
+    lease's issue, holder and path are null unless the caller can read that
+    lease; nothing else differs between the two."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    basis: Literal["same root", "lexical, root unknown", "unresolved"]
+    # The caller's own declared path that overlaps; null for fence_unresolved.
+    path: str | None
+    issue: FenceIssueRef | None
+    holder: FenceHolderRef | None
+    holder_path: str | None
 
 
 class ReadyClaimAttempt(BaseModel):
@@ -212,21 +253,63 @@ class ReadyClaimAcquired(ReadyClaimBase):
     open_handoff: ReadyClaimHandoff | None
 
 
-class ReadyClaimHolding(ReadyClaimBase):
+class ReadyClaimReviewCall(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    issue_id: int
+    if_match: str
+
+
+class ReadyClaimReviewNext(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    tool: Literal["claim_issue"]
+    arguments: ReadyClaimReviewCall
+    hint: str
+
+
+class ReadyClaimReviewRequest(BaseModel):
+    """A review the desk asks of this account, which pickup does not claim."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    request_id: int
+    review_issue_id: int
+    candidate_id: int
+    source_issue_id: int
+    pending_total: int = Field(ge=1)
+    next: ReadyClaimReviewNext
+
+
+class ReadyClaimNothing(ReadyClaimBase):
     claimed: Literal[False]
+    # The newest review request naming you that is still waiting, with the
+    # call that claims its review issue; null when the desk holds none (D16).
+    review_request: ReadyClaimReviewRequest | None
+
+
+class ReadyClaimHolding(ReadyClaimNothing):
     reason: Literal["already_holding"]
     held_by_you: int = Field(ge=1)
 
 
-class ReadyClaimEmpty(ReadyClaimBase):
-    claimed: Literal[False]
+class ReadyClaimEmpty(ReadyClaimNothing):
     reason: Literal["nothing_ready"]
     ready_total: Literal[0]
 
 
-class ReadyClaimConflicted(ReadyClaimBase):
-    claimed: Literal[False]
+class ReadyClaimConflicted(ReadyClaimNothing):
     reason: Literal["candidates_conflicted"]
+
+
+class ReadyClaimFenced(ReadyClaimNothing):
+    """The paths this pickup declares overlap, or cannot be placed beside,
+    another active lease's fence. That verdict is the same for every candidate,
+    so pickup stops at the first: ``attempts`` names it and ``fence`` is what a
+    claim_issue refusal with the same code would carry."""
+
+    reason: Literal["fence_overlap", "fence_unresolved"]
+    fence: FenceRefusalOut
 
 
 @router.post(
@@ -234,7 +317,8 @@ class ReadyClaimConflicted(ReadyClaimBase):
     response_model=ReadyClaimAcquired
     | ReadyClaimHolding
     | ReadyClaimEmpty
-    | ReadyClaimConflicted,
+    | ReadyClaimConflicted
+    | ReadyClaimFenced,
 )
 def claim_next_ready(
     request: Request,
@@ -436,7 +520,11 @@ def claim_issue(
             if_match=if_match_values(request),
             generation=payload.generation if payload else None,
             paths=payload.paths if payload else None,
-            coordination_root=payload.coordination_root if payload else None,
+            coordination_root=(
+                payload.coordination_root.model_dump()
+                if payload and payload.coordination_root is not None
+                else None
+            ),
             **kwargs,
         )
     except issue_commands.IssueCommandError as exc:

@@ -4,17 +4,40 @@ from datetime import datetime
 import sqlite3
 from typing import Literal
 
-from athena.aegis import leases
+from athena.aegis import lease_commands, leases
 from athena.aegis.project_brief import _group, _rows
 from athena.core import access
 
 RequestLane = Literal["candidate", "review_issue", "desk"]
+#: The desk's review-request lane: at most this many rows.
+DESK_LIMIT = 20
 # Scope and output bounds are controlled by the owning read surface.
 _LANES = {
     "candidate": ("r.candidate_id = ?", 5),
     "review_issue": ("r.review_issue_id = ?", 1),
-    "desk": ("r.reviewer_id = ?", 20),
+    "desk": ("r.reviewer_id = ?", DESK_LIMIT),
 }
+# The same bound the queue applies before parsing a report.
+_REPORT_CHARS = lease_commands.MAX_COMPLETION_REPORT_JSON_CHARS + 128
+
+
+def _reported_verdict(row: sqlite3.Row) -> str | None:
+    """The verdict in the report that fulfilled this request, if it has one.
+
+    `fulfillment_detail` is read only for a fulfilled row, whose fulfilling
+    completion is native, visible to the reader and was made by the requested
+    reviewer on the request's review issue about its exact candidate.
+    """
+    if row["fulfillment_detail"] is None:
+        return None
+    report = lease_commands.reported_completion(
+        {
+            "verb": "claim_completed",
+            "imported_at": None,
+            "detail": row["fulfillment_detail"],
+        }
+    )
+    return None if report is None else report.get("verdict")
 
 
 def _item(row: sqlite3.Row) -> dict:
@@ -25,6 +48,8 @@ def _item(row: sqlite3.Row) -> dict:
         "reviewer_id": row["reviewer_id"],
         "status": row["status"],
         "reviewer_holds_active_lease": bool(row["held"]),
+        "fulfillment_event_id": row["fulfillment_event_id"],
+        "reported_verdict": _reported_verdict(row),
         "identity": {
             "kind": row["kind"],
             "source": row["source"],
@@ -49,6 +74,12 @@ def visible_requests(
     A hidden later fulfillment must be indistinguishable from none. Resolve the
     canonical event before testing visibility; the same visible fact controls
     status, the desk predicate, and the count before the output bound.
+
+    A fulfilled row also carries that fulfilling completion and its reported
+    verdict (decision D4). Only the requested reviewer's own report on this
+    review issue about this exact candidate fulfills a request, so no other
+    account's review can move it; the newest such report wins, as the queue's
+    newest review does, and a hidden newest one reads as none.
     """
     root, limit = _LANES[lane]
     gate, params = access.event_visibility_clause(conn, actor, alias="a")
@@ -104,7 +135,12 @@ def visible_requests(
     total, rows = _rows(
         conn,
         columns="request_id, candidate_id, review_issue_id, reviewer_id, status, held, "
-        "kind, source, revision, source_issue_id, completion_event_id",
+        "kind, source, revision, source_issue_id, completion_event_id, "
+        "CASE WHEN status = 'fulfilled' THEN fulfillment_event END AS fulfillment_event_id, "
+        "(SELECT CASE WHEN length(f.detail) <= "
+        f"{_REPORT_CHARS} THEN f.detail ELSE '' END FROM activity f "
+        "WHERE f.id = fulfillment_event AND status = 'fulfilled' "
+        "AND f.verb = 'claim_completed' AND f.imported_at IS NULL) AS fulfillment_detail",
         base=base,
         params=[*params, leases.clock_stamp(now), scope_id],
         order="request_id DESC",

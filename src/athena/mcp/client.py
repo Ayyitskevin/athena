@@ -1612,6 +1612,7 @@ class AthenaClient:
         limit: int = 1,
         lease_seconds: int | None = None,
         project_id: int | None = None,
+        paths: list[str] | None = None,
         idempotency_key: str | None = None,
     ) -> dict:
         """Atomically select and acquire ready work through one server request.
@@ -1620,7 +1621,11 @@ class AthenaClient:
         pickup while this account holds any active lease; direct claims retain
         their multiple-possession policy. limit (1-5) bounds candidate attempts,
         not acquisitions. Refusal outcomes are already_holding, nothing_ready,
-        or candidates_conflicted; transport errors propagate unchanged.
+        or candidates_conflicted, each with ``review_request`` (the review the
+        desk asks of this account and the claim that takes it, or None);
+        transport errors propagate unchanged. ``paths`` are declared on the
+        claim it makes, as claim_issue's; a fence refusal answers reason
+        fence_overlap or fence_unresolved with that refusal's ``fence``.
 
         A keyed response is a historical receipt, including lease.active and
         tags. Replays never renew or reacquire; read current context before work.
@@ -1638,7 +1643,10 @@ class AthenaClient:
             self._client.post,
             "/issues/claim-next",
             json=self._params(
-                limit=limit, lease_seconds=lease_seconds, project_id=project_id
+                limit=limit,
+                lease_seconds=lease_seconds,
+                project_id=project_id,
+                paths=paths,
             ),
             idempotency_key=idempotency_key,
         )

@@ -18,8 +18,8 @@ routes `/openapi.json` also lists, and it declares per operation the bearer sche
 `Idempotency-Key`, `If-Match` and `ETag`, the run headers and this refusal body.
 A failure that never reached Athena (a bad argument, say) is the same object, with
 `status_code` null and an MCP-side code such as `invalid_arguments`.
-Write bodies refuse a field they do not declare (422 `validation_error`), so a
-misspelt field is never silently dropped. A filter whose values are a closed set
+JSON write bodies refuse a field they do not declare (422 `validation_error`), so
+a misspelt field is never silently dropped. A filter whose values are a closed set
 (`kind` on search, `priority` on the issue list, `state` on dispatches) refuses an
 unknown value with 422 and names the allowed ones; a configured name such as a
 status or label still just matches nothing.
@@ -38,7 +38,8 @@ row's own tool (`get_issue`, `get_page`), or a comment's with
 `conductor` profiles every answer fits a budget of 16,000 characters
 (`get_issue_work_context` 32,000). An answer the budget cut says so: a list by
 `truncated`, an object by `_truncated`, which names each cut field with its whole size
-and `next`, the tool and arguments that read the rest (for a body, `body_offset`).
+and `next`, the tool and arguments that read the rest (for a body, `body_offset`;
+for the desk and a project floor, `section` and `offset`).
 Never write back a body you read cut: read the rest first.
 
 ## 1. Orient with the desk
@@ -121,7 +122,7 @@ Take `issue_etag` from this packet. It is the same value as the `ETag` header on
 ## 4. Claim safely
 
 To let the server select work, use
-`claim_next_ready(limit=1, project_id=..., idempotency_key=...)` ·
+`claim_next_ready(limit=1, project_id=..., paths=..., idempotency_key=...)` ·
 REST `POST /issues/claim-next`. Omit project for all eligible projects and backlog.
 It atomically checks readiness and acquires one issue, refusing queue pickup while
 your account holds any active lease. The bound 1–5 controls candidate attempts.
@@ -130,7 +131,8 @@ Read the returned issue's full context before work and resume an open handoff.
 Keyed responses, including no-work outcomes, are historical receipts; replay never
 renews or reacquires. A new poll needs a new key, after reconciling uncertain work.
 See [ATOMIC_PICKUP_SPEC.md](ATOMIC_PICKUP_SPEC.md) for receipt expiry and the
-`already_holding`, `nothing_ready`, and `candidates_conflicted` outcomes.
+`already_holding`, `nothing_ready`, and `candidates_conflicted` outcomes; optional
+`paths` are declared on the claim it makes (below).
 
 Pickup does not hand back work that is waiting on someone else. After you complete an
 issue, it is not offered to you again. After any account yields an issue with
@@ -138,7 +140,11 @@ issue, it is not offered to you again. After any account yields an issue with
 account other than the one that completed or yielded it comments, changes its status
 or assignment, or claims it. Automation and imported history do not count. Until then
 the desk lists it under `work.waiting_on_operator.not_offered`, with the reason
-`completed_by_you` or `awaiting_answer`. A direct `claim_issue` still works. See
+`completed_by_you` or `awaiting_answer`. A direct `claim_issue` still works. A
+completed issue is also ready for you again when another account requests your
+review on it, as a conductor does after a HOLD. Pickup never claims a review whose
+issue is blocked; when it claims nothing and the desk asks you for a review, its
+`review_request` names the request and the `claim_issue` call that takes it. See
 [DESK.md](DESK.md#the-ready-lane).
 
 For a direct claim of an issue you chose and read, two values guard it:
@@ -152,7 +158,7 @@ For a direct claim of an issue you chose and read, two values guard it:
 
 The lease lasts 1800 seconds by default, between 60 and 86400.
 
-MCP `claim_issue(issue_id, if_match, generation?, lease_seconds?)` ·
+MCP `claim_issue(issue_id, if_match, generation?, lease_seconds?, paths?)` ·
 REST `POST /issues/{issue_id}/claim`
 
 Renew your own claim (send the generation):
@@ -186,6 +192,23 @@ decide.
 
 A free issue, claimed with a correct ETag and no generation, returns a new
 `generation` with HTTP 201.
+
+**Declared paths.** `claim_issue(issue_id, if_match, paths=...)` and
+`claim_next_ready(paths=...)` fence the relative POSIX files you will touch.
+`office.fence` on your desk says how fences are compared. With no root catalog,
+the default, the basis is `lexical, root unknown`: paths are normalized (`./`,
+doubled and trailing slashes drop) and compared segment by segment under one
+implicit root, in every project. A path equal to, inside or around another active
+lease's path is refused `409 fence_overlap`; `src/ab` does not overlap `src/a`.
+A `..` or absolute path is refused as invalid input. The refusal's `fence` names
+your overlapping path and the basis; it names the other lease's issue, holder and
+path only when you can read that lease, and is otherwise identical. Pickup with
+paths that overlap claims nothing and answers reason `fence_overlap` with the
+same `fence`. With a root catalog (`office.fence.basis` is `same root`), send the
+`coordination_root` selector the operator gave you; no read returns one. A fence
+without a current root cannot prove separation and is refused `fence_unresolved`
+beside another fence; its detail says what to do. A lease that expired or was completed fences nothing. Claiming
+without paths is unchanged and reserves no files.
 
 ## 5. Check in, and show progress
 
@@ -301,7 +324,10 @@ source-issue work context for `review_tracking`, then follow the
 [exact-version closeout recipe](CLOSEOUT_RECIPE.md#exact-version-submission-and-review).
 The conductor/full profiles add `get_project_review_queue(project_id, limit=5)`.
 Follow each `next_cursor` as `cursor` until it is null. Every page rechecks
-visibility and the current submission. Declared identity and reported PASS grant no authority.
+visibility and the current submission. Its `review_state` follows any account's
+newest review; a conductor that requested a review gates on its request row in
+`review_requests.items[]`, whose `reported_verdict` only the named reviewer's
+report on that review issue sets. Declared identity and reported PASS grant no authority.
 
 ## 8. Hand off or yield
 
@@ -358,7 +384,9 @@ To decline a delegation: MCP `decline_delegation(issue_id, generation?)` · REST
   `POST /issues/{issue_id}/archive` hides it from default lists and keeps its history.
 - **Never sweep leases.** Expired leases are shown to their holder in the desk. Settle
   only your own, with `complete_claim` and the generation you observed. An admin cannot
-  settle another actor's expired lease. Do not clear leases in bulk.
+  settle another actor's expired lease. Do not clear leases in bulk. A lapse is
+  recorded once as a `lease_lapsed` event and told to the issue's assignee and the
+  account that delegated it; recording it releases nothing.
 - **Never bulk-acknowledge notifications.** `mark_notifications_read` marks every unread
   row. Acknowledge one row at a time with `mark_notification_read(notification_id)` /
   `POST /notifications/{notification_id}/read`.

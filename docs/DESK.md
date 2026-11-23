@@ -40,7 +40,11 @@ first batch you may read, or empty at the timeout with `next_after` still your
 cursor. The answer carries `wait = {requested_seconds, elapsed_seconds, outcome}`;
 `outcome: "capacity"` means every parking place was taken and this is the immediate
 answer, so back off a little before waiting again. The visibility rule is the
-immediate read's: an event you may not see neither appears nor wakes you. The caps
+immediate read's: an event you may not see neither appears nor wakes you. On
+entry, before it reads, the feed records any lapsed lease you answer for (you are
+the issue's assignee or delegated it to the holder) as one `lease_lapsed` event,
+so a wait loop learns of a lapse within one wait
+([ACTIVE_WORK.md](ACTIVE_WORK.md#a-lapsed-lease-is-an-event)). The caps
 live in `src/athena/core/event_wait.py` (32 parked requests per process, 25 s each,
 a half-second wake bound).
 
@@ -60,6 +64,17 @@ a half-second wake bound).
 | `work.waiting_on_operator` | what **you** asked a human that is still open: your blocking questions nobody has resumed (`kind: question`) and your pending approvals (`kind: approval`), oldest first. Read it before asking again. Nothing enforces a response time. `not_offered`: issues the ready lane holds back from you until another account answers (see below), each with `reason` `awaiting_answer` or `completed_by_you`, `settled_by_you`, and `settled_at` only when the settlement was yours | 20, `total` across both kinds; `not_offered` 20 with its own `total` |
 | `signals` | unread notifications, `events_since_cursor`, `latest_visible_event_id` | 10 notifications, count capped at 500 |
 | `cursor` | your stored position, or `null` | — |
+
+**Over MCP the desk fits its budget.** `my_desk` answers within 16,000
+characters whatever the lanes hold. A desk over it is cut by shape: the largest
+lists and texts give up rows and characters first, the ready lane keeps at least
+its first three rows and the identity block stays whole. Each cut is named under
+`_truncated` with its whole size and `next`, the call that reads on: the lane's
+own tool for delegations (`list_my_delegated_work`), notifications
+(`list_notifications`) and run controls (`list_run_controls`), and otherwise
+`my_desk(section=<the cut's key>, offset=<what was kept>)`, which answers that
+one place of a fresh desk read: a list's rows or a text from `offset`. REST
+`GET /desk` is not cut.
 
 **It composes, it does not compute.** Every lane calls the reader that already
 owns that surface with *your* visibility applied — the same run-control inbox
@@ -84,7 +99,12 @@ An issue is **ready for you** when all of these hold:
   Either hold lifts when a newer comment, status change, assignment change or claim
   is made by an account other than the one that settled it. The Automation actor's
   events and imported history never count. `blocked` and `capacity` yields hold
-  nobody back.
+  nobody back. A completion is also answered by a review request: when the
+  issue's newest request names you, was made by another account after your
+  completion, and asks about the source's current candidate, the issue is ready
+  for you again. It lifts no `needs_input` hold, answers for nobody it does not
+  name, and a request you cannot see answers nothing
+  ([decision](decisions/2026-11-22-review-request-answers.md)).
 
 The lane never offers work a claim would refuse. Three rules worth knowing:
 - **A blocker you cannot see still blocks.** The lane does not say what it is.
@@ -125,8 +145,27 @@ No-acquisition outcomes are:
 - `already_holding`: the account has any active lease, across all projects,
   including hidden, done and archived issues. Only its count is returned.
 - `nothing_ready`: no eligible candidate exists in the requested scope.
+
 - `candidates_conflicted`: all attempted candidates conflicted. This replaces the
   old client-only `lost_race` result; selection and acquisition are now serialized.
+
+Every no-acquisition outcome also carries `review_request`: null, or the newest
+review request naming you that `asks.review_requests` shows as `requested`, with
+the call that claims its review issue. Pickup does not claim a review: the recipe
+links a review issue `blocked_by` the build it reviews, and that blocker keeps
+its meaning, so the answer names the review instead.
+
+```json
+{"request_id": 7, "review_issue_id": 12, "candidate_id": 3, "source_issue_id": 11,
+ "pending_total": 1,
+ "next": {"tool": "claim_issue",
+          "arguments": {"issue_id": 12, "if_match": "\"<the review issue's ETag>\""},
+          "hint": "pickup does not take a review; ..."}}
+```
+
+`if_match` is the review issue's ETag when the answer was made; a replayed receipt
+carries it as it was, so a 412 means read the issue again. `pending_total` counts
+the waiting requests among the desk lane's newest, not every request ever made.
 
 Overlapping pickup calls for one account cannot acquire different issues while
 its first possession remains active, including calls using different tokens or

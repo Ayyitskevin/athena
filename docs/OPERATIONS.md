@@ -1478,7 +1478,9 @@ Before leaving laptop-only development:
   not globally limit anonymous browser pages.
 - Keep exactly one webhook/automation runner; the supported shape is the single
   process above (see Background Loops).
-- Keep `/readyz` in the service health check.
+- Keep `/readyz` in the service health check. The container image's
+  `HEALTHCHECK` asks only `/healthz` (liveness), so a container deployment checks
+  `/readyz` separately ([DOCKER.md](DOCKER.md#health)).
 - Run `athena-doctor --deployment --host <exact-ip> --port <exact-port>` against
   the exact configured database, attachment directory, and subsequent listener
   before returning local/tailnet traffic to a restored, moved, or upgraded

@@ -11,6 +11,7 @@ from pydantic import Field, SkipValidation, ValidationError
 from athena.aegis import lease_commands
 from athena.aegis.review_models import CandidateSubmission, ReviewCandidateId
 from athena.core import tokens
+from athena.core.request_models import CoordinationRootSelector
 from athena.mcp import results
 from athena.mcp.results import ListResult, listing
 from athena.mcp.server import (
@@ -188,7 +189,9 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         """Ask a named reviewer to review an exact candidate on an existing review issue.
         The reviewer must already be assigned or delegated and able to see the submission.
         The request appears on their desk. The reviewer claims the issue separately.
-        Each replacement candidate needs an explicit new request."""
+        Their report on that issue answers it: the request row's reported_verdict in
+        get_project_review_queue, which no other account's review moves. Each
+        replacement candidate needs an explicit new request."""
         return client.request_candidate_review(
             review_issue_id, candidate_id, reviewer_id, idempotency_key=idempotency_key
         )
@@ -209,7 +212,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         generation: LeaseGeneration | None = None,
         lease_seconds: int | None = None,
         paths: list[str] | None = None,
-        coordination_root: dict | None = None,
+        coordination_root: CoordinationRootSelector | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Claim or renew an issue against the exact root issue revision you
@@ -218,18 +221,29 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         work-context packet's own top-level `_etag`). Omit generation to acquire
         a free or expired lease; if you already hold the issue the call is a
         renewal and needs your current generation (the 428 names it).
-        lease_seconds defaults to 30 minutes. Optional `paths` declares relative
-        POSIX files and `coordination_root` selects an operator-qualified root;
-        see docs/ACTIVE_WORK.md, Qualified declared work roots, for the rules and
-        for what a renewal keeps or replaces. No selector leaves nonempty paths
-        unresolved; a stale explicit selector refuses, never falls back."""
+        lease_seconds defaults to 30 minutes.
+
+        Optional `paths` declares relative POSIX files (`..` and absolute paths
+        refuse). my_desk's `office.fence` says how they are compared. With no
+        root catalog (basis "lexical, root unknown") they are compared as
+        written under one implicit root: a path equal to, inside or around
+        another active lease's path refuses 409 fence_overlap; `src/ab` does not
+        overlap `src/a`. With a catalog, pass the `coordination_root` selector
+        the operator gave you (no read returns one). No selector leaves the
+        fence unresolved, which refuses fence_unresolved beside another fence; a
+        stale explicit selector refuses too and never falls back. A
+        refusal's `fence` names your path and the basis, and the other issue,
+        holder and path only when you can read that lease. Renewal rules:
+        docs/ACTIVE_WORK.md."""
         return client.claim_issue(
             issue_id,
             if_match=if_match,
             generation=generation,
             lease_seconds=lease_seconds,
             paths=paths,
-            coordination_root=coordination_root,
+            coordination_root=(
+                None if coordination_root is None else coordination_root.model_dump()
+            ),
             idempotency_key=idempotency_key,
         )
 
@@ -238,18 +252,26 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         limit: ClaimNextLimit = 1,
         lease_seconds: ClaimNextLeaseSeconds | None = None,
         project_id: ProjectId | None = None,
+        paths: list[str] | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Atomically select and claim ready work: delegated first, then priority,
         then oldest. Omit project_id for all eligible projects plus backlog.
+        `paths` declares relative files on the claim it makes, compared exactly
+        as claim_issue's; if they overlap another active lease's, it claims
+        nothing and answers reason fence_overlap (or fence_unresolved) with the
+        same `fence` a claim_issue refusal carries.
         Any active possession by your account prevents queue pickup; direct
         claims may still hold several issues. limit (1-5) bounds candidates, not
         acquisitions. Returns claimed=true with lease generation, issue/context
         tags and previous_lease/open_handoff labels, or claimed=false with reason
-        already_holding, nothing_ready or candidates_conflicted. Work awaiting an
-        answer is not offered: an issue you completed (it is not closed) and any
-        needs_input yield, until another non-automation account comments,
-        changes status or assignment, or claims it. my_desk lists them under
+        already_holding, nothing_ready or candidates_conflicted, each with
+        review_request: the review my_desk asks of you, with the claim_issue
+        call that takes it (pickup never claims a blocked review), or null. Work
+        awaiting an answer is not offered: an issue you completed (it is not
+        closed) and any needs_input yield, until another non-automation account
+        comments, changes status or assignment, or claims it; a completion also
+        when another account requests your review on it. my_desk lists them under
         work.waiting_on_operator.not_offered; claim_issue still works. Read full work
         context before work; an open handoff needs explicit resume. Responses are
         historical receipts on replay, never renewal or reacquisition. A fresh
@@ -259,6 +281,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             limit=limit,
             lease_seconds=lease_seconds,
             project_id=project_id,
+            paths=paths,
             idempotency_key=idempotency_key,
         )
 

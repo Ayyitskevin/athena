@@ -159,6 +159,9 @@ def _build_office(
         "next_to_sit": next_to_sit,
         "active_lease_count": active_count,
         "protocol": PROTOCOL,
+        # How this instance compares declared paths: the basis only, never the
+        # catalog's digest, keys or contents (docs/ACTIVE_WORK.md).
+        "fence": leases.fence_basis(),
         "warnings": warnings,
         "fence_overlaps": fence_overlaps_list,
         "semantics": {

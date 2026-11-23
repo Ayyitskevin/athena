@@ -20,20 +20,56 @@ for you on a fresh volume, because an image that quietly bootstrapped would undo
 gate the launcher exists to hold.
 
 ```bash
-# One time, per volume.
+# One time, per volume. Leave this running in its own terminal.
 export ATHENA_BOOTSTRAP_TOKEN=$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')
-docker compose run --rm athena --bootstrap
+docker compose run --rm --name athena-bootstrap athena --bootstrap
 ```
 
-That migrates the database and serves with bootstrap enabled. Now create the first
-admin against the token (see [OPERATIONS.md](OPERATIONS.md) for the request) —
-**this step is not optional.** `athena-serve` refuses to start a database that has
-no active administrator, so a volume that was bootstrapped but never given one
-cannot be brought up again; you would have to delete it and start over. CI performs
-exactly this sequence, which is how that sharp edge was found.
+`compose.yaml` names `ATHENA_BOOTSTRAP_TOKEN` without a value, so Compose passes
+the shell's token into the container when it is set and leaves it unset when it is
+not. The run migrates the database and serves with bootstrap enabled, on loopback
+inside the container, at `127.0.0.1:8000`.
 
-Then stop the container and bring it up normally — **without** the token in the
-environment:
+Now create the first admin — **this step is not optional.** `athena-serve` refuses
+to start a database that has no active administrator, so a volume that was
+bootstrapped but never given one cannot be brought up again; you would have to
+delete it and start over. CI performs exactly this sequence, which is how that
+sharp edge was found.
+
+The request has to be made from inside the container: the server is bound to the
+container's loopback and `compose.yaml` publishes no port, so a `curl` on the host
+cannot reach it, and the image has no `curl` either (its runtime stage installs
+Python and the Athena wheel, nothing else). Its Python can, and the container
+already holds the token. From a second terminal:
+
+```bash
+docker exec -it athena-bootstrap python -c '
+import getpass, json, os, urllib.request
+body = {"email": input("Admin email: "), "name": input("Admin name: ")}
+body["password"] = getpass.getpass("Admin password: ")
+if getpass.getpass("Confirm password: ") != body["password"]:
+    raise SystemExit("passwords do not match; nothing was sent")
+request = urllib.request.Request(
+    "http://127.0.0.1:8000/users",
+    data=json.dumps(body).encode(),
+    headers={
+        "Content-Type": "application/json",
+        "X-Athena-Bootstrap-Token": os.environ["ATHENA_BOOTSTRAP_TOKEN"],
+    },
+)
+admin = json.load(urllib.request.urlopen(request, timeout=10))
+print("created", admin["email"], "as", admin["role"])
+'
+```
+
+The password is read at a prompt, never from a command argument. The request is
+the one [OPERATIONS.md](OPERATIONS.md#first-user-bootstrap) describes: the token in
+`X-Athena-Bootstrap-Token`, no `Idempotency-Key`, a nonblank password.
+
+Then stop the bootstrap run (Ctrl-C in its terminal; `--rm` removes the container)
+and bring the service up normally — **without** the token in the environment. A
+token still set in the shell would be passed through, and `athena-serve` refuses to
+start with one:
 
 ```bash
 unset ATHENA_BOOTSTRAP_TOKEN
@@ -55,15 +91,39 @@ when absent — `ATHENA_ALLOWED_AUTHORITIES` must name the exact `host:port` cli
 will use, and `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` must be positive. The commented
 block in `compose.yaml` has the full form.
 
+## Health
+
+The image's `HEALTHCHECK` asks `/healthz`, over loopback inside the container: the
+liveness check, which says the process is serving and does not open SQLite. It is
+not the readiness check. `/readyz` opens the database and requires its migration
+ledger to match the build ([OPERATIONS.md](OPERATIONS.md#health-checks)); ask it
+from inside the container the same way:
+
+```bash
+docker compose exec athena python -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8000/readyz", timeout=4).read().decode())'
+```
+
+A `docker compose ps` that says `healthy` therefore means "serving", not "serving
+a database it can use"; a failing `/readyz` raises an HTTP error here.
+
 ## What lives in the volume
 
 `/var/lib/athena` holds the SQLite database and the attachment blobs together, so a
 backup is one path and is always internally consistent. Back it up with
-`athena-backup` rather than by copying the file out from under a running process:
+`athena-backup` rather than by copying the file out from under a running process.
+It takes the database to read and the file to write (the image sets
+`ATHENA_DB=/var/lib/athena/athena.db`):
 
 ```bash
-docker compose exec athena athena-backup /var/lib/athena/backup.db
+docker compose exec athena athena-backup /var/lib/athena/athena.db /var/lib/athena/backup.db
 ```
+
+That snapshot is the database only, written into the same volume, and it refuses
+to replace an existing `backup.db` unless you pass `--overwrite`. Copy it off the
+volume before you rely on it. For a recovery point that includes the attachment
+blobs, take a recovery bundle instead (`--recovery-bundle --attach-dir
+/var/lib/athena/attachments`; see
+[OPERATIONS.md](OPERATIONS.md#create-and-verify-a-matched-recovery-bundle)).
 
 ## What the image contains
 

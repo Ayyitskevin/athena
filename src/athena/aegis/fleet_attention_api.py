@@ -12,7 +12,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict
 
-from athena.aegis import fleet_attention
+from athena.aegis import fleet_attention, lease_lapse_commands
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 from athena.core.refusals import Refusal
@@ -112,6 +112,10 @@ def index(
         raise Refusal(
             status_code=422, detail=str(exc), code="validation_error"
         ) from exc
+    # The ranking has been read; now record any lapse this account answers for
+    # and nobody has recorded (C4, D11), in its own immediate transaction, so
+    # the read above never held the writer lock.
+    lease_lapse_commands.observe_lapses(conn, actor)
 
     return {
         "items": result["items"],

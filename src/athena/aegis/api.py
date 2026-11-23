@@ -138,7 +138,7 @@ class SprintAssign(RequestBody):
     sprint_id: int | None
 
 
-class ProjectUpdate(BaseModel):
+class ProjectUpdate(RequestBody):
     # None removes the issue from its project; an int moves it into that project.
     project_id: int | None
 

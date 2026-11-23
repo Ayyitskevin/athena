@@ -800,6 +800,39 @@ def record_issue_claimed(
     )
 
 
+def record_lease_lapsed(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    generation: str,
+    holder_id: int,
+    holder_name: str,
+    expired_at: str,
+    commit: bool,
+) -> dict:
+    """Record that a lease possession lapsed with nobody settling it (C4, D11).
+
+    The actor is the account whose request observed the lapse; the holder, who
+    did nothing, is the subject, named in the detail. The detail opens with the
+    exact ``generation <token>;`` prefix that keys the once-per-generation check,
+    then the holder's id, the expiry, and the holder's display name last (a
+    name may hold any character, so nothing is parsed after it).
+    ``commit=False`` folds it into the lapse command's transaction."""
+    return activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="lease_lapsed",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=(
+            f"generation {generation}; holder_id {holder_id}; "
+            f"expired_at {expired_at}; holder {holder_name}"
+        ),
+        commit=commit,
+    )
+
+
 def record_claim_completed(
     conn: sqlite3.Connection,
     *,

@@ -66,10 +66,18 @@ def create_project(
     name: str,
     key: str,
     description: str = "",
+    visibility: str | None = None,
 ) -> dict:
     """Create a project (with its default statuses) and record a 'created_project'
     event atomically. Raises sqlite3.IntegrityError for a duplicate name/key —
-    unchanged from the bare call, so the boundary keeps turning it into a 409."""
+    unchanged from the bare call, so the boundary keeps turning it into a 409.
+
+    ``visibility`` None takes the deployment's default (``ATHENA_DEFAULT_VISIBILITY``,
+    applied by ``projects.create_project``). A value that differs from it is applied
+    in the SAME transaction, through the same write the visibility command makes
+    (``_apply_visibility``: the flip, the creator's roster row when going private,
+    the event), so a project asked for as private is never committed public. The
+    boundary validates the value."""
     with db.transaction(conn, immediate=True):
         project = projects.create_project(
             conn,
@@ -87,6 +95,10 @@ def create_project(
             key=project["key"],
             commit=False,
         )
+        if visibility is not None and visibility != project["visibility"]:
+            project = _apply_visibility(
+                conn, actor_id=actor_id, project=project, visibility=visibility
+            )
         return project
 
 
@@ -210,26 +222,38 @@ def set_project_visibility(
         before = projects.get_project(conn, project_id)
         if before is None:
             raise ProjectAccessCommandError("not_found", "no such project")
-        updated = projects.set_visibility(conn, project_id, visibility, commit=False)
-        if updated is None:
-            raise ProjectAccessCommandError("not_found", "no such project")
-        if visibility == "private":
-            access.add_project_member(
-                conn,
-                project_id,
-                before["created_by"],
-                added_by=actor_id,
-                commit=False,
-            )
-        project_activity.record_project_visibility_changed(
+        return _apply_visibility(
+            conn, actor_id=actor_id, project=before, visibility=visibility
+        )
+
+
+def _apply_visibility(
+    conn: sqlite3.Connection, *, actor_id: int, project: dict, visibility: str
+) -> dict:
+    """The one visibility write, inside the caller's transaction: the flip, the
+    creator's roster row when going private, and the event. Shared by
+    ``set_project_visibility`` and ``create_project`` so a project created private
+    lands exactly as one made private afterwards does."""
+    updated = projects.set_visibility(conn, project["id"], visibility, commit=False)
+    if updated is None:
+        raise ProjectAccessCommandError("not_found", "no such project")
+    if visibility == "private":
+        access.add_project_member(
             conn,
-            actor_id=actor_id,
-            project_id=project_id,
-            name=updated["name"],
-            visibility=visibility,
+            project["id"],
+            project["created_by"],
+            added_by=actor_id,
             commit=False,
         )
-        return updated
+    project_activity.record_project_visibility_changed(
+        conn,
+        actor_id=actor_id,
+        project_id=project["id"],
+        name=updated["name"],
+        visibility=visibility,
+        commit=False,
+    )
+    return updated
 
 
 def add_project_member(

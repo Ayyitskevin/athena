@@ -37,6 +37,7 @@ Standard library only; it never imports Athena. Usage:
 
 from __future__ import annotations
 
+import argparse
 import ast
 from dataclasses import dataclass
 from pathlib import Path
@@ -340,4 +341,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # --help answers without doing the work (tests/test_scripts_runnable.py).
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.parse_args(sys.argv[1:])
     raise SystemExit(main(sys.argv[1:]))

@@ -73,7 +73,8 @@ all eligible projects and backlog. Any active lease held by that account blocks
 queue pickup, even on another project; ordinary direct claims still allow several
 possessions. `limit` (1–5, default 1) bounds candidate attempts, never acquisitions.
 The empty outcomes are `already_holding`, `nothing_ready`, or
-`candidates_conflicted` (replacing the old client-only `lost_race`).
+`candidates_conflicted` (replacing the old client-only `lost_race`); each carries
+`review_request`, the review the desk asks of that account, or null.
 
 Choose an `idempotency_key` before a retryable pickup and preserve its credential,
 arguments and run lineage. Success and empty outcomes both replay as historical
@@ -91,6 +92,13 @@ be assignee, delegated contributor or otherwise authorized. Record the returned
 generation and keep one stable run for this execution. Heartbeats report check-ins;
 they do not renew leases or prove progress. Renew with the exact generation and a
 fresh issue ETag. Declared paths communicate scope; they are not filesystem locks.
+On an instance with no root catalog (the default) workers' paths are compared
+under one implicit root, in every project: disjoint fences coexist, and a path
+equal to, inside or around another active lease's is refused `fence_overlap`,
+which names the path, and the other issue and holder when the worker can see them.
+Give parallel slices disjoint paths. With a catalog, workers send the
+`coordination_root` selector the operator issued through the qualification
+workflow (no read returns one); see [OFFICE.md](OFFICE.md#fences).
 
 The architect publishes a reviewable contract. The builder implements that contract
 and records commands, outcomes and limitations. Freeze the candidate before review:
@@ -111,10 +119,16 @@ To request the review, use
 `request_candidate_review(review_issue_id, candidate_id, reviewer_id)`. Use an
 open, unclaimed review issue in the same project. The named reviewer must
 already be assigned or delegated to it and have access to the submission.
-The queue shows the request separately from any reported verdict.
+The queue lists the request on the candidate's row under `review_requests`,
+and that request row is where the reviewer's answer arrives (see below).
 
 The reviewer starts from `my_desk().asks.review_requests`, opens the review
-issue's full context, and claims that issue. The request supplies the candidate's
+issue's full context, and claims that issue. Because the review issue is
+`blocked_by` the build, which stays open under review, `claim_next_ready` does not
+claim it: an answer that claims nothing names the waiting request in
+`review_request`, with the `claim_issue` call (and the review issue's ETag) that
+takes it. A second request after the reviewer's own HOLD answers that completion,
+so an unblocked review issue is ready for the reviewer again. The request supplies the candidate's
 identity, the source issue URL and the original completion event ID. If the
 event has aged out of recent activity, use `wait_for_events` starting just
 before that event ID and confirm the returned ID before reading its evidence.
@@ -143,6 +157,20 @@ Athena does not verify correctness, independence or acceptance. Neither the queu
 nor brief context is a claim precondition. Selective project portability omits
 candidate/review associations; whole-database recovery retains them.
 
+**Gate on the reviewer you asked, not on `review_state`.** `review_state` and
+`latest_review` follow the candidate's newest exact-candidate review by any
+account, including one nobody asked, on any review issue. Your request is on the
+same queue row in `review_requests.items[]`: find it by `reviewer_id`. Its
+`reported_verdict` is the verdict of the requested reviewer's own report on that
+review issue about that exact candidate, and `fulfillment_event_id` is that
+report's completion event. Both are null until the reviewer reports, and no
+other account's review moves them. If the reviewer reports on the same candidate
+again, the newer report replaces the older, as it does in `latest_review`; a
+newer report without a verdict reads null. A report you cannot see reads as none.
+A replacement candidate needs its own request, which starts at null. When
+`review_state` disagrees with your request row, read that other report before
+deciding; do not act on it. The request row grants nothing either.
+
 To scan the whole queue, pass each returned `next_cursor` as `cursor` on the
 next call with the same project. Stop when it is null. A final page can still
 say `clipped` because `visible_total` counts the whole project. After an
@@ -154,11 +182,13 @@ keep the same filters and `limit` (default 50, maximum 100). Start at
 `offset=0`, advance by the number returned, and stop at a short page.
 Concurrent board edits can shift issue positions during this scan.
 
-On **HOLD**, the conductor records the concrete finding and reopens/routes the build
-slice for rework. The builder claims again, produces a new frozen candidate and
-reports its checks. The independent reviewer then reviews that new subject. Preserve
-both revisions and their reports. On **PASS**, the conductor checks the evidence
-against the operator's acceptance conditions before deliberately changing status.
+When the request row's `reported_verdict` is **HOLD** or BLOCKED, the conductor
+records the concrete finding and reopens/routes the build slice for rework. The
+builder claims again, produces a new frozen candidate and reports its checks.
+Request the review of that new subject explicitly; the independent reviewer then
+reviews it. Preserve both revisions and their reports. When it is **PASS** or
+PASS-WITH-NOTES, the conductor checks the evidence against the operator's
+acceptance conditions before deliberately changing status.
 `complete_claim` releases only the lease; `update_issue(status="done")` is separate
 and remains subject to the configured approval policy. Neither a report nor a
 status change grants permission to merge, deploy or perform other external actions.
@@ -223,8 +253,9 @@ Use `get_project_floor(project_id=...)` for visible open issues, occupants and
 blockers, `get_attention_ranking()` for actor-filtered questions/signals, and
 `get_issue_history(issue_id=...)` for the source-cited narrative. The floor reserves
 nothing and drops done issues; retain known issue IDs to inspect completed work.
-Attention exposes visible issue blockers but only your own claim/control signals
-without admin authority. Empty or clipped results do not prove fleet health,
+Without admin authority, attention exposes visible issue blockers, your own
+claim/control signals, and the claims on issues you can see and answer for: you are
+the assignee, or you delegated the issue to its holder. Empty or clipped results do not prove fleet health,
 process liveness or complete history.
 
 Narrow profiles carry `wait_for_events`, not `recent_events`. To drain immediately,
@@ -234,7 +265,10 @@ batches, and advance with `advance_desk_cursor(after_id=last_processed_id)` only
 through the unfiltered visible prefix actually handled. If processing stops, retain
 that prefix and resume there; do not jump to the desk's newest visible ID. A filtered
 read cannot justify advancing past unseen events. The same tool with a positive
-wait can wait for later work; waiting does not acknowledge anything.
+wait can wait for later work; waiting does not acknowledge anything. On entry the
+feed records a lapsed lease you answer for as one `lease_lapsed` event, with a
+notification, so a seat that went away reaches you within one wait. Re-delegate or
+reclaim deliberately; the lapse releases nothing.
 
 Acknowledge each notification only after handling it, with
 `mark_notification_read(notification_id=...)`. Desk reads, cursor advances and claim

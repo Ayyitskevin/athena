@@ -3,13 +3,18 @@
 `/activity` (activity_api.py) serves humans scrolling recent history newest-first.
 `/events` serves a *consumer*: an agent or integration that wants to drain the same
 append-only trail in order and resume exactly where it left off. The audit log is
-already an event log (every action has a monotonic id), so this is a pure read over
-it — no new store, no duplicated truth.
+already an event log (every action has a monotonic id), so this is a read over it —
+no new store, no duplicated truth.
 
 Contract: pass the last event id you processed as `?after=`; you get the next batch
 in ascending id order plus a `next_after` cursor and a `has_more` flag. Loop while
 `has_more` to catch up, then poll `next_after` for new events. Authentication is the
 gate, like the activity feed — a `read`-scoped token is enough.
+
+The read itself writes nothing. On entry, before it, the registered feed observers
+(``feed_observers``) record what the clock made and nobody wrote down: a lapsed
+lease the caller answers for becomes one ``lease_lapsed`` event (C4, D11), written
+in its own transaction, so this read returns it.
 """
 
 from __future__ import annotations
@@ -21,7 +26,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
-from athena.core import activity, event_wait
+from athena.core import activity, event_wait, feed_observers
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 from athena.core.refusals import Refusal
@@ -140,6 +145,12 @@ async def events(
             limit=limit + 1,
             actor=actor,
         )
+
+    # On entry, before the read: record what the clock made and nobody wrote
+    # down, such as a lapsed lease this caller is accountable for (C4, D11), so
+    # this very read can return it. Each observer reads without a transaction
+    # and writes in its own; nothing below runs under the writer lock.
+    await asyncio.to_thread(feed_observers.observe, conn, actor)
 
     waited: dict | None = None
     if wait <= 0:

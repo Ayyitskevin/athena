@@ -79,5 +79,8 @@ list_security_events(verb="scope_denied", since="2026-07-25 00:00:00")
 - The rollup is a count of *what is recorded*, not a health check. Nothing here
   observes an agent process, and `ACTIVE_WORK.md`'s rule stands: `observed` means
   "no known reason applied at the snapshot", never "healthy".
-- There is no alerting, no notification, and no escalation — the operator still has
-  to look. Pushing these signals outward is roadmap work.
+- There is no alerting and no escalation, and only one signal notifies anyone: a
+  lapsed lease is recorded once as a `lease_lapsed` event and told to the issue's
+  assignee and the account that delegated it
+  ([ACTIVE_WORK.md](ACTIVE_WORK.md#a-lapsed-lease-is-an-event)). For the rest the
+  operator still has to look. Pushing these signals outward is roadmap work.

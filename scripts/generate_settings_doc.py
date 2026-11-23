@@ -16,6 +16,7 @@ committed tables no longer match the registry.
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import sys
 
@@ -87,4 +88,14 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # --help answers without doing the work (tests/test_scripts_runnable.py).
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="exit 1 if the document drifted, write nothing",
+    )
+    parser.parse_args()
     raise SystemExit(main())

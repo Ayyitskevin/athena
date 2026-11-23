@@ -152,6 +152,42 @@ Each row keeps independent facts independent:
 `observed` means only that none of those known reasons applied at the snapshot.
 It is intentionally not called healthy or running.
 
+### A lapsed lease is an event
+
+`lease_expired` is the clock's verdict, and the clock tells nobody. So the first
+request that observes an expired, unsettled lease on an issue its account answers
+for records one native `lease_lapsed` event for that lease generation (requirement
+C4, decision D11). An account answers for a lease when it is the issue's assignee
+or it delegated the issue to the holder. Two reads observe: `GET /events`
+(`wait_for_events`, `list_events`) on entry, before it reads, so a caller in a wait
+loop learns of the lapse within one wait; and `GET /attention/ranking`
+(`get_attention_ranking`) after it reads. Each reads its candidates with no
+transaction open and writes in its own immediate transaction, so no reader holds
+the writer lock while it reads; a write that cannot get the lock is left for the
+next observer and never fails the read.
+
+- **Actor and subject.** The event's actor is the observing account; the holder,
+  who did nothing, is the subject. The detail reads
+  `generation <g>; holder_id <n>; expired_at <t>; holder <name>`. The event
+  carries no run coordinates: observing is not work in the observer's run.
+- **Once per generation.** The command re-checks under the writer lock that no
+  native `lease_lapsed` event names the generation, so a second observer, racing
+  or later, writes nothing. A reacquired lease that lapses again is a new
+  generation and a new event. A settled lease (its row is gone) and a lease on a
+  done or archived issue record nothing.
+- **Who is told.** The assignee and the delegating account get a notification,
+  even when one of them is the observer, and a `claim_needs_attention` row in their
+  attention ranking. An account that cannot see the issue records, receives and
+  counts nothing.
+- **Nothing is released.** The row stays until its holder clears it with
+  `complete_claim` or the next claim replaces it (ruling K1). Automation never fires
+  on `lease_lapsed`, and it does not reset a schedule's inactivity clock.
+
+For an account without admin authority, the attention ranking's
+`claim_needs_attention` rows are the claims it holds plus, on issues it can see,
+the claims it answers for; the count and the rows use the same filter. The record
+is [the lapse decision](decisions/2026-11-22-lease-lapse-events.md).
+
 Summary counts carry `scope=returned_items`: active, expired, and attention totals
 describe only the bounded `items` window, never undisplayed claims when `clipped=true`.
 
@@ -213,22 +249,55 @@ never create actionable handoffs. A full SQLite backup/restore preserves them.
 
 ## Qualified declared work roots
 
+### Without a root catalog (the default)
+
+With `ATHENA_LEASE_ROOT_CATALOG` unset, every readable fence sits under one
+implicit root and is compared as written (decision D5). Leases report
+`path_fence: "lexical, root unknown"`, and `office.fence` (on `GET /office` and in
+`my_desk`) says `{"basis": "lexical, root unknown"}` (`"same root"` with a
+catalog). Paths are normalized by the grammar below and compared segment
+by segment across every project: equal paths, or one a directory of the other,
+overlap and refuse `409 fence_overlap`; anything else coexists. A
+`coordination_root` sent to such an instance refuses `409 fence_unresolved`: omit
+it. Lexical comparison cannot see two checkouts of different repositories; give
+their paths distinct leading segments, or configure a catalog.
+
+### The refusals
+
+`fence_overlap` names the caller's overlapping `path` and the `basis` (`same root`
+or `lexical, root unknown`). `fence_unresolved` (basis `unresolved`) says the two
+fences cannot be compared: with a catalog, one of them has no current root, or the
+stored paths are unreadable; or the caller's explicit selector is not in the
+catalog. Both carry the other lease's `issue` (`id`, `key`), `holder` (`id`,
+`name`) and `holder_path` only when the caller could read that lease over REST;
+for a hidden lease those three are null and nothing else in the body differs.
+Every active lease takes part, including same-account and hidden ones; a renewal
+is not compared with its own lease. `claim_next_ready` with `paths` claims nothing
+on either refusal and answers its code as `reason`, with the same `fence`.
+`fence_unresolved` names no next call, because no read returns a selector; its
+detail says to omit `coordination_root` without a catalog, or to obtain a current
+reviewed selector from the operator with one. [OFFICE.md](OFFICE.md#fences) has
+the full body.
+
 ### Reading an unresolved result
 
-- **No selector supplied:** nonempty paths remain `unresolved`. The caller did
-  not select a qualified root; this does **not** tell you whether a private
-  operator catalog is configured. Ask the operator for a reviewed selector via
-  the qualification workflow below. Do not infer it from a host, repo or branch.
-- **Explicit selector stale/missing:** the write refuses; it never silently
-  downgrades to unresolved. Re-read the relevant operator qualification evidence
-  and obtain a current selector before a new deliberate attempt. Do not weaken
-  the fence or send empty paths to bypass a conflict.
+- **No selector supplied (catalog configured):** nonempty paths remain
+  `unresolved`. `office.fence.basis` says a catalog is configured; it does not
+  say which roots it holds. Ask the operator for a reviewed selector via the
+  qualification workflow below. Do not infer it from a host, repo or branch.
+- **Explicit selector stale/missing:** the write refuses `fence_unresolved`; it
+  never silently downgrades to unresolved. Re-read the relevant operator
+  qualification evidence and obtain a current selector before a new deliberate
+  attempt. Do not weaken the fence or send empty paths to bypass a conflict.
 - **Unresolved competitor:** separation is unproven, not proof of a physical
   collision or worker liveness. Hidden competing details remain hidden.
 
-This is guidance only. There is no capability-hint endpoint, private catalog
-dump, automatic root registration or permission grant. A capability hint remains
-unadmitted pending operator evidence; the qualification rules below are unchanged.
+This is guidance only. The office reports the comparison basis, which shows
+whether a catalog is configured (decision D5), and nothing else of it: there is
+no capability-hint endpoint, no read that returns the catalog's digest, root keys
+or contents, no private catalog dump, automatic root registration or permission
+grant. A capability hint remains unadmitted pending operator evidence; the
+qualification rules below are unchanged.
 
 Optional `paths` reserve declared relative POSIX paths on a lease. Optional
 `coordination_root` selects an operator-qualified lexical work surface:
@@ -270,7 +339,8 @@ the same bounded identifier grammar. Evidence is an inert 64-lowercase-hex diges
 of retained operator evidence, never an arbitrary file/URL Athena opens. The
 entire UTF-8 JSON is at most 16384 bytes. Duplicate/unknown fields, duplicate root
 keys, unsupported profiles, malformed values and incomplete qualification refuse
-startup. Unset/empty catalog leaves unknown mode; it does not establish separation.
+startup. Unset/empty catalog compares paths lexically under one implicit root
+(`lexical, root unknown`); that proves nothing about filesystem separation.
 Whitespace changes the exact-byte catalog digest.
 
 Qualification is a declaration backed by separately reviewed evidence, not a
@@ -294,17 +364,20 @@ Covered work must honor these canonical spellings. No case-folding or Unicode
 normalization is inferred.
 
 Aliases/nested roots use the same family and canonical offset. Every other active
-lease participates, including same-account and hidden issues. Conflict details
-do not disclose the competing issue, holder or paths. Two nonempty fences with
-either origin unresolved conflict even when their relative strings differ.
+lease participates, including same-account and hidden issues. A refusal names the
+competing issue, holder and path only to a caller who can read that lease. With a
+catalog, two nonempty fences with either origin unresolved conflict
+(`fence_unresolved`) even when their relative strings differ.
 A missing/stale explicitly selected root refuses; it never silently falls back.
 Valid qualified distinct families may coexist, as may lexical nonoverlap within
 one qualified family. Empty paths reserve no files.
 
 Lease readers expose the accepted selector or null, and `path_fence`:
 `rooted` = a current qualified declaration bound to this possession generation;
-`unresolved` = a nonempty fence without a usable current binding;
-`issue_only` = no declared file fence. None proves process location, confinement,
+`lexical, root unknown` = no catalog is configured, so the paths are compared as
+written; `unresolved` = with a catalog, a nonempty fence without a usable current
+binding, or stored paths that cannot be read; `issue_only` = no declared file
+fence. None proves process location, confinement,
 authority or liveness. Internal family/namespace/epoch/evidence metadata is not
 added to these projections.
 
@@ -348,7 +421,7 @@ generation to the holder). What a renewal does to the declared fence:
 - Changing the coordination root needs a new possession: a renewal that names a
   different root is refused as a conflict.
 - Never infer a root from host, repository or branch strings.
-  Unknown nonempty origins conflict conservatively.
+  Unknown nonempty origins conflict conservatively when a catalog is configured.
 - The response echoes the root; confirm it. An unconfirmed success may already
   exist on the server: read the lease state, never weaken the fence, never retry
   blindly.

@@ -21,6 +21,7 @@ from athena.mcp.server import (
     READ_ONLY,
     SEAT,
     SETS,
+    AnswerSection,
     DispatchIssueId,
     DispatchLimit,
     IdempotencyKey,
@@ -240,7 +241,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         )
 
     @tool(scope=READ_ONLY, profiles=SEAT)
-    def my_desk() -> dict:
+    def my_desk(section: AnswerSection | None = None, offset: ListOffset = 0) -> dict:
         """START HERE. Your desk: who you are, what is asked of you, what you
         are holding, and what changed since you last looked.
 
@@ -265,11 +266,19 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         -> `advance_desk_cursor(after_id=<last id you handled>)`. Creating
         `identity.notebook` needs `full`; editing it, `seat+knowledge`.
 
-        RESERVES NOTHING: seeing work here does not claim it."""
+        RESERVES NOTHING: seeing work here does not claim it.
+
+        A desk over its size budget is cut and says where under `_truncated`,
+        each cut with the `next` call that reads on: a lane's own tool, or
+        `my_desk(section=<that key>, offset=...)`, which answers one place of a
+        fresh desk read: a list's rows from `offset`, a text from character
+        `offset`, or an object."""
         desk = client.my_desk()
         for item in desk.get("work", {}).get("delegations", {}).get("items", []):
             item["issue"] = results.summary(item["issue"])
-        return desk
+        if section is None:
+            return desk
+        return results.section(desk, section, offset)
 
     @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def my_office() -> dict:
@@ -282,17 +291,27 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         (a branch name — Athena does not create git remotes). `next_to_sit`
         is the first delegated issue when you are standing.
 
+        `fence.basis` says how declared paths are compared: "lexical, root
+        unknown" with no root catalog, "same root" with one.
+
         RESERVES NOTHING. Claim through claim_issue. complete_claim stands
         you up; it does not close the issue."""
         return client.my_office()
 
     @tool(scope=READ_ONLY, profiles=CONDUCTOR)
-    def get_project_floor(project_id: int) -> dict:
+    def get_project_floor(
+        project_id: int, section: AnswerSection | None = None, offset: ListOffset = 0
+    ) -> dict:
         """A project's floor: every open issue is a chair. Occupied chairs
         have a sitting agent and optional fenced paths. Empty chairs still
         need a body. `blocked_by` lists open blockers; there is no 'ready'
-        flag. RESERVES NOTHING."""
-        return client.get_project_floor(project_id)
+        flag. RESERVES NOTHING. A floor over its size budget is cut and says
+        where under `_truncated`; `section=<that key>` with `offset` reads one
+        place of a fresh read (a list's rows or a text from `offset`)."""
+        floor = client.get_project_floor(project_id)
+        if section is None:
+            return floor
+        return results.section(floor, section, offset)
 
     @tool(scope=READ_ONLY, profiles=CONDUCTOR)
     def get_project_brief(project_id: ProjectId, limit: ProjectBriefLimit = 5) -> dict:
@@ -317,7 +336,11 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         see new submissions. visible_total and clipped describe the whole queue.
         A replacement, including identical bytes, never inherits an older PASS.
         awaiting_review can also mean the latest review is not visible; unknown
-        means the visible latest report has no usable verdict. Reports are advisory,
+        means the visible latest report has no usable verdict. review_state follows
+        any account's newest review. To gate on a review you requested, read your
+        request in the row's review_requests.items[] (match reviewer_id): its
+        reported_verdict is set only by that reviewer's own report on that review
+        issue, null until then. Reports are advisory,
         not acceptance, independent verification or merge authority. This read changes
         no state and supplies no claim ETag. Workers read full get_issue_work_context
         for the exact candidate and bounded history. See docs/CONDUCTOR_RECIPE.md."""

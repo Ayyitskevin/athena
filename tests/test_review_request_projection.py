@@ -51,7 +51,7 @@ def queue_group(conn, project, who=3):
     return packet["items"][0].get("review_requests")
 
 
-def test_request_is_one_exact_visible_item_across_reads_and_never_a_verdict(board):
+def test_request_is_one_exact_visible_item_across_reads_with_its_own_report(board):
     conn, _, project = board
     build, check = issue(conn, project), issue(conn, project, assignee=3)
     candidate = submit(conn, build)
@@ -62,6 +62,8 @@ def test_request_is_one_exact_visible_item_across_reads_and_never_a_verdict(boar
         **receipt,
         "status": "requested",
         "reviewer_holds_active_lease": False,
+        "fulfillment_event_id": None,
+        "reported_verdict": None,
         "identity": {"kind": "git", "source": "owner/repository", "revision": "a" * 40},
         "source_issue_id": build["id"],
         "completion_event_id": candidate["completion_event_id"],
@@ -89,8 +91,13 @@ def test_request_is_one_exact_visible_item_across_reads_and_never_a_verdict(boar
     ]
     complete(conn, check, held, 3)
     assert desk_group(conn)["items"] == [item]  # ordinary release answers no review
-    review(conn, check, candidate["candidate_id"], verdict="HOLD")
-    fulfilled = {**item, "status": "fulfilled"}
+    held = review(conn, check, candidate["candidate_id"], verdict="HOLD")
+    fulfilled = {
+        **item,
+        "status": "fulfilled",
+        "fulfillment_event_id": held["completion_event_id"],
+        "reported_verdict": "HOLD",
+    }
     assert context(conn, check)["review_request"] == fulfilled
     assert queue_group(conn, project)["items"] == [fulfilled]
     assert desk_group(conn) is None

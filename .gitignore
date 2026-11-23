@@ -34,3 +34,4 @@ venv*/
 
 # Tooling lockfiles we do not track (project uses pip + venv, not uv)
 uv.lock
+.claude/worktrees/

@@ -19,8 +19,9 @@ A path is compared within one base:
   same tree, and the compared path is that root's prefix joined to the declared
   path — the claim command's own canonical form;
 - **lexical, root unknown:** both fences have readable paths but no verified
-  root, so their relative paths are compared as written. This is a warning, not
-  proof: two unknown roots may be different checkouts.
+  root, so their relative paths are compared as written. With no root catalog
+  this is the claim command's own basis (decision D5); with one, it is a
+  warning, not proof: two unknown roots may be different checkouts.
 
 A rooted and an unknown-root fence have no common base and are not compared.
 Issue-only leases (no paths) fence no files. Two paths overlap when they are
@@ -49,8 +50,8 @@ from athena.core import access, coordination_roots
 #: Pairs listed per read; the total says how many exist behind the list.
 PAIR_LIMIT = 50
 
-BASIS_ROOTED = "same root"
-BASIS_LEXICAL = "lexical, root unknown"
+BASIS_ROOTED = leases.BASIS_ROOTED
+BASIS_LEXICAL = leases.BASIS_LEXICAL
 
 
 def _now(now: datetime | None) -> datetime:

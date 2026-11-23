@@ -32,105 +32,29 @@ answer exceeds its tool's declared response budget.
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
-from mcp.client.session import ClientSession
-from mcp.shared.memory import create_connected_server_and_client_session
 import pytest
+from support import (
+    McpAgent as Agent,
+    Meter,
+    lapse_lease,
+    mcp_server_for,
+    mcp_sessions,
+    run_agents,
+)
 
 from athena.core import db, refusal_codes, token_commands, tokens
 from athena.main import create_app
 from athena.mcp import server as mcp_server
-from athena.mcp.client import AthenaClient
 
 SEAT = mcp_server.PROFILES["seat"] or frozenset()
 CEILINGS = Path(__file__).with_name("contract_agent_ceilings.json")
 SEAT_SCOPES = ["read", "issue:write"]
-
-
-# --- measuring what the agent receives --------------------------------------------
-
-
-@dataclass
-class Refusal:
-    agent: str
-    tool: str
-    answer: dict[str, Any]
-    followed: bool = False
-
-
-@dataclass
-class Meter:
-    """Every tool call of the run: how many, the bytes of each answer's text
-    (UTF-8, what the client receives as content), and each refusal."""
-
-    calls: int = 0
-    bytes_received: int = 0
-    over_budget: list[str] = field(default_factory=list)
-    refusals: list[Refusal] = field(default_factory=list)
-
-
-class Agent:
-    """One account's MCP session: it calls tools the way a model does."""
-
-    def __init__(self, name: str, user_id: int, session: ClientSession, meter: Meter):
-        self.name = name
-        self.user_id = user_id
-        self.session = session
-        self.meter = meter
-
-    async def attempt(self, tool: str, **arguments: Any) -> tuple[bool, dict]:
-        assert tool in SEAT, f"{self.name} called {tool}, which `seat` does not carry"
-        result = await self.session.call_tool(tool, arguments)
-        text = "".join(getattr(block, "text", "") for block in result.content)
-        self.meter.calls += 1
-        self.meter.bytes_received += len(text.encode("utf-8"))
-        budget = mcp_server.response_budget(tool)
-        if budget is not None and len(text) > budget:
-            self.meter.over_budget.append(f"{tool}: {len(text)} > {budget}")
-        answer = json.loads(text)
-        assert isinstance(answer, dict), f"{tool} answered {type(answer).__name__}"
-        if result.isError:
-            _assert_registered(answer)
-            self.meter.refusals.append(Refusal(self.name, tool, answer))
-        return not result.isError, answer
-
-    async def call(self, tool: str, **arguments: Any) -> dict:
-        ok, answer = await self.attempt(tool, **arguments)
-        assert ok, f"{self.name}: {tool}({arguments}) refused: {answer}"
-        return answer
-
-    async def refused(self, code: str, tool: str, **arguments: Any) -> dict:
-        ok, answer = await self.attempt(tool, **arguments)
-        assert not ok and answer.get("code") == code, (tool, arguments, answer)
-        return answer
-
-    async def follow(self, answer: dict, **arguments: Any) -> dict:
-        """Make the call the answer's ``next`` names, with arguments its hint
-        describes; it must succeed and must be the registry's call."""
-        named = answer["next"]
-        assert named == refusal_codes.next_call(answer["code"]), answer
-        result = await self.call(named["tool"], **arguments)
-        for refusal in self.meter.refusals:
-            if refusal.answer is answer:
-                refusal.followed = True
-        return result
-
-
-def _assert_registered(answer: dict) -> None:
-    """A refusal's code is in the registry, with a status the entry allows."""
-    code, status = answer.get("code"), answer.get("status_code")
-    if status is None:
-        assert code in refusal_codes.MCP_REFUSAL_CODES, answer
-    else:
-        assert code in refusal_codes.REFUSAL_CODES, answer
-        assert status in refusal_codes.REFUSAL_CODES[code].statuses, answer
-    assert answer.get("next") == refusal_codes.next_call(code), answer
 
 
 # --- the board --------------------------------------------------------------------
@@ -178,31 +102,12 @@ class Board:
         )
 
     def lapse(self, issue_id: int) -> None:
-        """The clock passes the lease's expiry: its stored expires_at moves into
-        the past, as tests/test_desk.py lapses a lease."""
-        conn = db.connect(self.db_file)
-        try:
-            conn.execute(
-                "UPDATE issue_leases SET expires_at = '2000-01-01 00:00:00' "
-                "WHERE issue_id = ?",
-                (issue_id,),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        lapse_lease(self.db_file, issue_id)
 
     def server_for(self, name: str) -> Any:
         """The server athena-mcp builds from the config Athena emitted for this
         seat: its token, its profile, its probed scopes, a fixed run id."""
-        env = self.seats[name]["mcp_config"]["mcpServers"]["athena"]["env"]
-        http = TestClient(
-            self.app, headers={"Authorization": f"Bearer {env['ATHENA_TOKEN']}"}
-        )
-        client = AthenaClient(client=http, run_id=f"contract-{name}-run")
-        profile = mcp_server.profile_from_env(env)
-        return mcp_server.build_server(
-            client, scopes=mcp_server.probe_scopes(client), profile=profile
-        )
+        return mcp_server_for(self.app, self.seats[name], run_id=f"contract-{name}-run")
 
 
 @pytest.fixture
@@ -538,20 +443,17 @@ async def cursor_to_the_last_handled_event(sol: Agent) -> None:
 
 
 async def _play(board: Board, meter: Meter) -> None:
-    sol_server, terra_server = board.server_for("sol"), board.server_for("terra")
-    async with (
-        create_connected_server_and_client_session(
-            sol_server._mcp_server  # noqa: SLF001 — the protocol server under test
-        ) as sol_session,
-        create_connected_server_and_client_session(
-            terra_server._mcp_server  # noqa: SLF001
-        ) as terra_session,
+    async with mcp_sessions(board.server_for("sol"), board.server_for("terra")) as (
+        sol_session,
+        terra_session,
     ):
         for session in (sol_session, terra_session):
             listed = {tool.name for tool in (await session.list_tools()).tools}
             assert listed == SEAT  # the emitted config is the seat surface
-        sol = Agent("sol", board.seats["sol"]["user"]["id"], sol_session, meter)
-        terra = Agent("terra", board.seats["terra"]["user"]["id"], terra_session, meter)
+        sol = Agent("sol", board.seats["sol"]["user"]["id"], sol_session, meter, SEAT)
+        terra = Agent(
+            "terra", board.seats["terra"]["user"]["id"], terra_session, meter, SEAT
+        )
         await pickup_complete_pickup(board, sol)
         await gated_close(board, sol)
         await yield_answer_resume(board, sol, terra)
@@ -565,12 +467,7 @@ def test_a_seat_plays_the_documented_loop_and_every_failure_branch(board):
         env = board.seats[name]["mcp_config"]["mcpServers"]["athena"]["env"]
         assert env["ATHENA_MCP_PROFILE"] == "seat"
     meter = Meter()
-    try:
-        asyncio.run(_play(board, meter))
-    except BaseExceptionGroup as group:  # the sessions' task groups wrap a failure
-        while isinstance(group, BaseExceptionGroup) and len(group.exceptions) == 1:
-            group = group.exceptions[0]
-        raise group from None
+    run_agents(_play(board, meter))
 
     met = {refusal.answer["code"] for refusal in meter.refusals}
     assert {

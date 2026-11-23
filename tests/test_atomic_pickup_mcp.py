@@ -204,6 +204,7 @@ def test_pickup_mcp_keeps_existing_scope_profiles_and_has_no_claim_precondition(
             "limit",
             "lease_seconds",
             "project_id",
+            "paths",
             "idempotency_key",
         }
         assert not schema.get("required")

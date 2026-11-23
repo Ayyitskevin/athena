@@ -25,7 +25,6 @@ import json
 import sqlite3
 
 from fastapi import APIRouter, Depends, Header, Request
-from pydantic import BaseModel
 
 from athena.aegis import forge
 from athena.core import event_source_commands, event_sources, forge_events
@@ -33,6 +32,7 @@ from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor, optional_actor
 from athena.core.refusals import Refusal
+from athena.core.request_models import RequestBody
 
 router = APIRouter(tags=["forge"])
 
@@ -43,13 +43,13 @@ router = APIRouter(tags=["forge"])
 # token must not do it.
 
 
-class SourceCreate(BaseModel):
+class SourceCreate(RequestBody):
     name: str
     kind: str = forge_events.SOURCE_GITHUB
     host: str = "github.com"
 
 
-class EnabledUpdate(BaseModel):
+class EnabledUpdate(RequestBody):
     enabled: bool
 
 
