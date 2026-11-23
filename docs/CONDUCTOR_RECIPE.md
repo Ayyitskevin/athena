@@ -276,8 +276,14 @@ feed records a lapsed lease you answer for as one `lease_lapsed` event, with a
 notification, so a seat that went away reaches you within one wait. Re-delegate or
 reclaim deliberately; the lapse releases nothing.
 
-Acknowledge each notification only after handling it, with
-`mark_notification_read(notification_id=...)`. Desk reads, cursor advances and claim
-completion do not acknowledge notifications. Before ending, resolve or explicitly
+Acknowledge notifications only after handling them, in one call. Drain the feed,
+read `my_desk()`, and pass the newest id in `signals.notifications` as
+`mark_notification_read(through_id=...)`: it acknowledges your unread notifications
+up to and including that id and nothing newer, so one that arrived after your read
+stays unread for the next. `ids=[...]` acknowledges a chosen set and lists any id
+that is not yours under `not_found`; `notification_id` still takes one. A repeat
+changes nothing. Desk reads, cursor advances and claim completion do not acknowledge
+notifications. A lease renewal is an event in the feed and not a notification, so a
+seat keeping its lease alive adds nothing to your inbox. Before ending, resolve or explicitly
 hand off your own claims and record any remaining work, uncertainty and approval
 holds. Keep acceptance separate from a quiet dashboard.

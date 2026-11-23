@@ -219,6 +219,7 @@ def record(
     commit: bool,
     issue_project_ids: Collection[int | None] | object = _AUTO_ISSUE_PROJECTS,
     imported_at: str | None = None,
+    notify: bool = True,
 ) -> dict:
     """Append one activity row and return it. Raises sqlite3.IntegrityError if
     actor_id isn't a real user (the foreign key refuses the orphan). Callers pass
@@ -339,13 +340,16 @@ def record(
         # and suppresses generic fan-out for imported history.
         # Scope rows are already present, and notify_watchers doesn't commit, so the
         # event, its access envelope, and notifications land or roll back together.
-        notifications.notify_watchers(
-            conn,
-            event_id=event_id,
-            actor_id=actor_id,
-            target_kind=target_kind,
-            target_id=target_id,
-        )
+        # ``notify=False`` records an event that is in the trail and the feed
+        # but no one's inbox: a lease renewal (D18).
+        if notify:
+            notifications.notify_watchers(
+                conn,
+                event_id=event_id,
+                actor_id=actor_id,
+                target_kind=target_kind,
+                target_id=target_id,
+            )
         if commit:
             conn.commit()
     except BaseException:

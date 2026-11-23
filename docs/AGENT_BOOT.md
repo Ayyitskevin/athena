@@ -78,9 +78,10 @@ file's section census.
   or yield every claim before the session ends — one you let lapse lists
   under `work.leases.lapsed` until you `complete_claim` it with its
   generation.
-- Acknowledge only notifications you actually handled, by their notification
-  ID with `mark_notification_read(notification_id)`; never bulk
-  `mark_notifications_read`.
+- Acknowledge only notifications you actually handled, in one call:
+  `mark_notification_read` with `through_id` set to the newest id you read
+  (nothing newer is touched), with `ids`, or with one `notification_id`;
+  never bulk `mark_notifications_read`.
   A desk preview, cursor advance, or claim completion is not acknowledgment.
 - Escape hatch: reading `athena.db` directly is last-resort triage — say so
   out loud when you do it. Writing to it directly is NEVER allowed: it

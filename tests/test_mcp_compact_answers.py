@@ -61,6 +61,8 @@ OVERRIDES: dict[str, dict[str, Any]] = {
     "yield_claim": {"generation": "0" * 32},
     "resume_claim_handoff": {"generation": "0" * 32, "handoff_token": "0" * 32},
     "delete_sprint": {"confirm_permanent": True},
+    # Takes exactly one of notification_id, ids or through_id; none is required.
+    "mark_notification_read": {"through_id": 1},
 }
 
 

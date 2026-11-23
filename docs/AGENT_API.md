@@ -190,7 +190,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `decline_run_control` | `POST /run-controls/{control_id}/decline` | idempotent | Decline a control addressed to your run, with the reason the operator … |
 | `heartbeat_agent_run` | `PUT /agent-runs/heartbeat` | additive | Report that this authenticated agent is still working on `run_id`. |
 | `link_mention` | `POST /{base}/{source_id}/link-mention` | destructive | Rewrite the SOURCE document so its first unlinked mention of the target … |
-| `mark_notification_read` | `POST /notifications/{notification_id}/read` | idempotent | Mark ONE visible unread notification in YOUR inbox as read. |
+| `mark_notification_read` | `POST /notifications/read_all`<br>`POST /notifications/{notification_id}/read` | idempotent | Mark notifications in YOUR inbox as read, after handling them. Pass … |
 | `mark_notifications_read` | `POST /notifications/read_all` | additive | Mark ALL unread notifications in YOUR inbox as read, including rows not shown … |
 | `set_watch_preference` | `PUT /watches/{target_kind}/{target_id}/preference` | destructive, idempotent | Replace YOUR preference for an active watch. Omit or pass null for a … |
 | `undo_action` | `POST /activity/{event_id}/undo` | idempotent | Undo one activity event by applying its registered inverse. |

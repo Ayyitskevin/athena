@@ -17,8 +17,8 @@ from pydantic import BaseModel, Field
 from athena.core import authorship
 from athena.core.authorship import AuthoredBy
 from athena.core.request_models import RequestBody
-from athena.core import notifications
-from athena.core.ids import RowIdPath
+from athena.core import notification_commands, notifications
+from athena.core.ids import MAX_SQLITE_INTEGER, RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, personal_write_actor
 from athena.core.refusals import Refusal
@@ -57,6 +57,39 @@ class UnreadCount(BaseModel):
     count: int
 
 
+NotificationId = Annotated[int, Field(ge=1, le=MAX_SQLITE_INTEGER)]
+
+
+class NotificationAcknowledge(RequestBody):
+    """Which of your notifications to acknowledge: ``ids``, or ``through_id``,
+    or neither for all of them. Send one or neither, never both."""
+
+    ids: list[NotificationId] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=notification_commands.MAX_ACKNOWLEDGE_IDS,
+        description="Your notifications to acknowledge. An id that is not yours "
+        "(another account's, missing, or hidden from you now) changes nothing and "
+        "is listed under not_found; one already read is not.",
+    )
+    through_id: NotificationId | None = Field(
+        default=None,
+        description="Acknowledge your unread notifications with an id up to and "
+        "including this one, and nothing newer: pass the newest id you have read.",
+    )
+
+
+class AcknowledgedOut(BaseModel):
+    # How many unread notifications this call marked read.
+    count: int
+    # With ids: those that are not your visible notifications, in the order sent.
+    not_found: list[int] | None = None
+
+
+STATUS_BY_KIND: dict[str, int] = {"invalid": 422}
+CODE_BY_KIND: dict[str, str] = {"invalid": "validation_error"}
+
+
 class WatchCreate(RequestBody):
     target_kind: str
     target_id: int
@@ -88,13 +121,29 @@ def mark_read(
         )
 
 
-@router.post("/notifications/read_all", response_model=UnreadCount)
+@router.post(
+    "/notifications/read_all",
+    response_model=AcknowledgedOut,
+    response_model_exclude_none=True,
+)
 def mark_all_read(
+    payload: NotificationAcknowledge | None = None,
     actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Returns how many were just cleared.
-    return {"count": notifications.mark_all_read(conn, actor["id"], actor=actor)}
+    # Returns how many were just cleared. With no body, every visible unread
+    # notification; with `ids` or `through_id`, only those (F7, D18).
+    body = payload or NotificationAcknowledge()
+    try:
+        return notification_commands.acknowledge(
+            conn, actor=actor, ids=body.ids, through_id=body.through_id
+        )
+    except notification_commands.NotificationCommandError as exc:
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=exc.detail,
+            code=CODE_BY_KIND[exc.kind],
+        ) from exc
 
 
 def _validate_kind(kind: str) -> str:

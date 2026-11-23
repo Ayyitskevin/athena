@@ -784,8 +784,10 @@ def record_issue_claimed(
     detail carries the lease generation and expiry so the trail identifies the exact
     possession and shows how long the claim was good for.
     A renewal (the holder re-claiming) records 'lease_renewed' rather than 'claimed', so
-    the run history distinguishes taking the work from extending the window. ``commit=False``
-    folds it into the claim command's transaction."""
+    the run history distinguishes taking the work from extending the window. A renewal
+    is an event and not a notification (D18): it stays in the trail and the event feed,
+    and no watcher's inbox gains a row for the holder keeping its window open.
+    ``commit=False`` folds it into the claim command's transaction."""
     activity.record(
         conn,
         actor_id=actor_id,
@@ -797,6 +799,7 @@ def record_issue_claimed(
             f"coordination_root {json.dumps(coordination_root, sort_keys=True)}"
         ),
         commit=commit,
+        notify=not renewed,
     )
 
 

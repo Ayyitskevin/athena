@@ -20,7 +20,8 @@ document and the tool descriptions would:
    and submits a replacement; the reviewer reports PASS on the new candidate;
 4. the builder's close is gated behind an approval the operator decides, and
    the conductor closes the review slice and the outcome;
-5. every agent puts down: acknowledges what it handled and records its cursor.
+5. every agent puts down: drains the feed, acknowledges every notification it
+   handled in one call (``through_id``, F7) and records its cursor.
 
 It asserts all four issues end done and no call was refused, and holds tool
 calls, bytes received and single-notification acknowledgements, per role and
@@ -143,8 +144,11 @@ class FleetAgent(McpAgent):
         super().__init__(*args, **kwargs)
         self.role = role
         self.cursor = 0  # the last event this agent has read and handled
+        self.single_acks = 0  # acknowledgements that named one notification
 
     async def call(self, tool: str, **arguments: Any) -> dict:
+        if tool == "mark_notification_read" and "notification_id" in arguments:
+            self.single_acks += 1
         ok, answer = await self.attempt(tool, **arguments)
         if not ok:
             raise Stalled(
@@ -176,21 +180,22 @@ class FleetAgent(McpAgent):
                 return events
 
     async def acknowledge(self, desk: dict) -> None:
-        """Acknowledge each unread notification, one call each: the desk previews
-        some, and a list read finds the rest."""
-        signals = desk["signals"]
-        unread = [row["id"] for row in signals["notifications"] if not row["read_at"]]
-        if signals["unread_notifications"] > len(unread):
-            listed = await self.call("list_notifications", unread=True, limit=100)
-            unread = [row["id"] for row in listed["items"]]
-        for notification_id in unread:
-            await self.call("mark_notification_read", notification_id=notification_id)
+        """Acknowledge what was handled in one call (F7): the desk previews the
+        newest unread notifications, and every unread one up to the newest it
+        shows is acknowledged through that id. One that arrives after the desk
+        read is newer than the bound and stays unread."""
+        unread = [
+            row["id"] for row in desk["signals"]["notifications"] if not row["read_at"]
+        ]
+        if unread:
+            await self.call("mark_notification_read", through_id=max(unread))
 
     async def put_down(self) -> None:
-        """Before ending: acknowledge what was handled, then record the cursor
-        through the prefix actually read."""
-        await self.acknowledge(await self.call("my_desk"))
+        """Before ending: handle the feed, acknowledge through the newest
+        notification the desk shows, then record the cursor through the prefix
+        actually read."""
         await self.catch_up()
+        await self.acknowledge(await self.call("my_desk"))
         await self.call("advance_desk_cursor", after_id=self.cursor)
 
 
@@ -699,8 +704,9 @@ def measure(agents: dict[str, FleetAgent]) -> dict[str, dict[str, int]]:
         role: {
             "tool_calls": agent.meter.calls,
             "bytes_received": agent.meter.bytes_received,
-            # Every acknowledgement the recipe's put-down makes names one id.
-            "single_acks": agent.meter.tools["mark_notification_read"],
+            # Acknowledgements that name one notification; the put-down names a
+            # bound instead (F7).
+            "single_acks": agent.single_acks,
         }
         for role, agent in agents.items()
     }

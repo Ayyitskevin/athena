@@ -388,8 +388,10 @@ To decline a delegation: MCP `decline_delegation(issue_id, generation?)` · REST
   recorded once as a `lease_lapsed` event and told to the issue's assignee and the
   account that delegated it; recording it releases nothing.
 - **Never bulk-acknowledge notifications.** `mark_notifications_read` marks every unread
-  row. Acknowledge one row at a time with `mark_notification_read(notification_id)` /
-  `POST /notifications/{notification_id}/read`.
+  row, including ones that arrived after you read. Acknowledge what you handled with
+  `mark_notification_read`: `through_id` (every unread row up to and including the
+  newest one you read, nothing newer), `ids`, or one `notification_id` /
+  `POST /notifications/read_all` with `{"through_id": ...}` or `{"ids": [...]}`.
 
 ## Read next
 

@@ -1359,6 +1359,22 @@ class AthenaClient:
             idempotency_key=idempotency_key,
         )
 
+    def acknowledge_notifications(
+        self,
+        *,
+        ids: list[int] | None = None,
+        through_id: int | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Acknowledge a set of own notifications in one request: ``ids``, or
+        every unread one up to and including ``through_id``."""
+        return self._mutate(
+            self._client.post,
+            "/notifications/read_all",
+            json=self._params(ids=ids, through_id=through_id),
+            idempotency_key=idempotency_key,
+        )
+
     def mark_all_notifications_read(self) -> Any:
         """Clear the authenticated actor's inbox; returns how many were cleared."""
         return self._mutate(self._client.post, "/notifications/read_all")
