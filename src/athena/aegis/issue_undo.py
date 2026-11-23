@@ -17,7 +17,7 @@ from __future__ import annotations
 import sqlite3
 
 from athena.aegis import rest_support
-from athena.aegis import issue_activity, issue_commands, issues
+from athena.aegis import issue_activity, issue_commands, issue_etags, issues
 from athena.core import labels, undo
 
 
@@ -224,8 +224,14 @@ def _attach_label(conn: sqlite3.Connection, actor: dict | None, event: dict) -> 
         raise _refusal(exc) from exc
 
 
+def _issue_etag(conn: sqlite3.Connection, issue_id: int) -> str | None:
+    issue = issues.get_issue(conn, issue_id)
+    return None if issue is None else issue_etags.current_etag(conn, issue)
+
+
 def register() -> None:
     """Wire Aegis's inverses into the undo engine. Idempotent."""
+    undo.register_validator("issue", _issue_etag)
     undo.register("archived", action_class=undo.TWO_WAY, compensator=_unarchive_issue)
     undo.register("unarchived", action_class=undo.TWO_WAY, compensator=_archive_issue)
     undo.register("labeled", action_class=undo.TWO_WAY, compensator=_detach_label)

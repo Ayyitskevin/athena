@@ -217,6 +217,28 @@ def get_writable_issue(
     return _modifiable_issue(conn, issue, actor)
 
 
+#: The most delegations or blockers one create applies (C9). One create holds
+#: the writer reservation for all of them; more is a loop of separate writes.
+MAX_CREATE_DELEGATES = 20
+MAX_CREATE_BLOCKERS = 20
+
+
+def _id_value(name: str, value: object) -> int | None:
+    if value is not None and (not isinstance(value, int) or isinstance(value, bool)):
+        raise IssueCommandError("invalid", f"{name} must be an integer")
+    return value
+
+
+def _id_list(name: str, values: object, maximum: int) -> list[int]:
+    if not isinstance(values, list | tuple):
+        raise IssueCommandError("invalid", f"{name} must be a list of integers")
+    if len(values) > maximum:
+        raise IssueCommandError("invalid", f"{name} takes at most {maximum} ids")
+    if any(not isinstance(value, int) or isinstance(value, bool) for value in values):
+        raise IssueCommandError("invalid", f"{name} must be a list of integers")
+    return list(values)
+
+
 def create_issue(
     conn: sqlite3.Connection,
     *,
@@ -226,12 +248,33 @@ def create_issue(
     status: str | None = None,
     priority: str = "medium",
     project_id: int | None = None,
+    parent_id: int | None = None,
+    assignee_id: int | None = None,
+    delegate_ids: list[int] | tuple[int, ...] = (),
+    blocked_by: list[int] | tuple[int, ...] = (),
 ) -> dict:
     """Create one issue and its first audit/projection state atomically.
 
+    ``parent_id``, ``assignee_id``, ``delegate_ids`` and ``blocked_by`` set the
+    issue up in the same transaction (C9), each through the command that owns
+    that write when it is made on its own: :func:`set_issue_parent`, the
+    assignee path of :func:`update_issue`, :func:`add_contributor` with
+    ``require_agent`` (the delegate route's) and :func:`link_issues` with
+    ``blocked_by``. Each is checked exactly as that command checks it and
+    records the events it records; a hidden parent or blocker reads as a
+    missing one, as there. The commands compose inside this transaction
+    (``db.transaction`` nests as a savepoint), so a refusal of any part rolls
+    back the issue and every part before it: nothing is created.
+
     Metered: an actor with a durable budget spends one action here (see
-    ``core.budgets``). Unbudgeted actors — the default — are unaffected."""
+    ``core.budgets``), however many parts the create carries; the composed
+    assignment does not charge again. Unbudgeted actors — the default — are
+    unaffected."""
     actor = _require_issue_writer(actor)
+    parent_id = _id_value("parent_id", parent_id)
+    assignee_id = _id_value("assignee_id", assignee_id)
+    delegates = _id_list("delegate_ids", delegate_ids, MAX_CREATE_DELEGATES)
+    blockers = _id_list("blocked_by", blocked_by, MAX_CREATE_BLOCKERS)
     if not isinstance(title, str):
         raise IssueCommandError("invalid", "title must be a string")
     if not isinstance(body, str):
@@ -280,6 +323,44 @@ def create_issue(
             body=issue["body"],
             commit=False,
         )
+        issue_id = issue["id"]
+        if parent_id is not None:
+            issue = set_issue_parent(
+                conn, actor=actor, issue_id=issue_id, parent_id=parent_id
+            )
+        if assignee_id is not None:
+            issue = _update_issue(
+                conn,
+                actor=actor,
+                issue_id=issue_id,
+                enforce_actor_policy=True,
+                title=UNSET,
+                body=UNSET,
+                status=UNSET,
+                priority=UNSET,
+                assignee_id=assignee_id,
+                project_id=UNSET,
+                sprint_id=UNSET,
+                if_match=None,
+                override_blocked_close=False,
+                meter=False,
+            )
+        for user_id in delegates:
+            add_contributor(
+                conn,
+                actor=actor,
+                issue_id=issue_id,
+                user_id=user_id,
+                require_agent=True,
+            )
+        for blocker_id in blockers:
+            link_issues(
+                conn,
+                actor=actor,
+                issue_id=issue_id,
+                target_ref=str(blocker_id),
+                relation="blocked_by",
+            )
     return issue
 
 

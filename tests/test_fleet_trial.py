@@ -10,8 +10,9 @@ only the tools their profile carries; the operator acts over REST. Each agent
 follows docs/CONDUCTOR_RECIPE.md literally, as an agent that read only that
 document and the tool descriptions would:
 
-1. the conductor reads its desk and the project, creates an outcome and three
-   slices (design, build, review), parents, assigns, delegates and links them;
+1. the conductor reads its desk and the project, then creates an outcome and
+   three slices (design, build, review), each create carrying its parent,
+   accountable owner, worker and blocker (C9), and reads the children;
 2. the design seat picks up its slice, yields with a question, the operator
    answers, and the seat picks it up again, resumes the handoff and completes;
 3. the build seat claims with its paths and submits a frozen candidate; the
@@ -307,7 +308,8 @@ def play(fleet: Fleet, scene, roles: tuple[str, ...] = ROLES) -> dict[str, Fleet
 
 
 async def plan_and_delegate(fleet: Fleet, conductor: FleetAgent, workers) -> None:
-    """Record intent and delegate slices: create, parent, assign, delegate, link."""
+    """Record intent and delegate slices: one create each sets up the outcome and
+    every slice (parent, owner, worker, blocker), then one read of the children."""
     project_id = fleet.project_id
     await conductor.start()
     await conductor.call("current_run")
@@ -318,8 +320,10 @@ async def plan_and_delegate(fleet: Fleet, conductor: FleetAgent, workers) -> Non
         project_id=project_id,
         body="Acceptance: the export contract is agreed, and its implementation "
         "is reviewed PASS by a non-author.",
+        assignee_id=conductor.user_id,
     )
     fleet.issues["outcome"] = outcome["id"]
+    previous: int | None = None
     for role, title in (
         ("design", "Design: export contract"),
         ("build", "Build: export"),
@@ -330,39 +334,14 @@ async def plan_and_delegate(fleet: Fleet, conductor: FleetAgent, workers) -> Non
             title=title,
             project_id=project_id,
             body=f"Slice of {outcome['key']}.",
-        )
-        fleet.issues[role] = made["id"]
-    for role in ("design", "build", "review"):
-        slice_id = fleet.issues[role]
-        await conductor.call(
-            "set_issue_parent", issue_id=slice_id, parent_id=outcome["id"]
-        )
-        context = await conductor.call("get_issue_work_context", issue_id=slice_id)
-        await conductor.call(
-            "assign_issue",
-            issue_id=slice_id,
+            parent_id=outcome["id"],
             assignee_id=conductor.user_id,
-            if_match=context["issue_etag"],
+            delegate_ids=[workers[role].user_id],
+            blocked_by=[previous] if previous is not None else None,
         )
-        await conductor.call(
-            "delegate_issue", issue_id=slice_id, agent_user_id=workers[role].user_id
-        )
-    for later, earlier in (("build", "design"), ("review", "build")):
-        await conductor.call(
-            "link_issues",
-            issue_id=fleet.issues[later],
-            target_ref=str(fleet.issues[earlier]),
-            relation="blocked_by",
-        )
+        fleet.issues[role] = previous = made["id"]
     children = await conductor.call("list_subtasks", issue_id=outcome["id"])
     conductor.expect(children["count"] == 3, f"three slices, not {children}")
-    context = await conductor.call("get_issue_work_context", issue_id=outcome["id"])
-    await conductor.call(
-        "assign_issue",
-        issue_id=outcome["id"],
-        assignee_id=conductor.user_id,
-        if_match=context["issue_etag"],
-    )
 
 
 async def design_asks(fleet: Fleet, design: FleetAgent) -> None:

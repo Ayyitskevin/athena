@@ -107,6 +107,28 @@ class IssueCreate(RequestBody):
     status: str | None = None
     priority: Priority = "medium"
     project_id: int | None = None
+    # Set the issue up in the same request (C9), all or nothing: each part goes
+    # through the command its own route calls (PUT /parent, PUT /assignee,
+    # POST /delegate, POST /links with blocked_by) and is refused as it would
+    # be there; any refusal creates nothing. The answer's ETag is the issue's
+    # after every part.
+    parent_id: int | None = Field(
+        default=None, description="Nest the new issue under this visible issue."
+    )
+    assignee_id: int | None = Field(
+        default=None, description="The accountable owner, as PUT /assignee sets it."
+    )
+    delegate_ids: list[int] = Field(
+        default_factory=list,
+        max_length=issue_commands.MAX_CREATE_DELEGATES,
+        description="Agent accounts to delegate to, as POST /delegate adds each.",
+    )
+    blocked_by: list[int] = Field(
+        default_factory=list,
+        max_length=issue_commands.MAX_CREATE_BLOCKERS,
+        description="Visible issues the new issue is blocked by, as POST /links "
+        "records relation blocked_by.",
+    )
 
 
 class IssueUpdate(RequestBody):
@@ -165,6 +187,9 @@ class BulkResult(BaseModel):
     error: str | None = None
     # Stable machine-readable refusal code when the command provides one.
     code: str | None = None
+    # The issue's ETag after this change, on an applied row: the next guarded
+    # write on it needs no read (C9).
+    etag: str | None = None
 
 
 class BulkUpdateOut(BaseModel):
@@ -293,27 +318,25 @@ class CommentOut(BaseModel):
     )
 
 
-def _with_labels(conn: sqlite3.Connection, issue: dict) -> dict:
-    """Attach the issue's labels under a "labels" key. Issues own their core row
-    (issues.py); labels are composed on here so the two modules stay in their
-    lanes and reads still come back as one object for the client."""
-    issue["labels"] = labels.labels_for_issue(conn, issue["id"])
-    return issue
-
-
 def _tagged_issue(
     conn: sqlite3.Connection,
     issue: dict,
     response: Response,
 ) -> dict:
-    """Return the exact public representation and its matching strong ETag."""
+    """Return the exact public representation and its matching strong ETag.
+
+    Every write that changes an issue's representation answers through here,
+    so its answer carries the new ETag and the next guarded write needs no
+    read (C9; tests/test_issue_etag_writes.py derives the list)."""
     public, current_etag = issue_etags.resource_and_etag(conn, issue)
     response.headers["ETag"] = current_etag
     return public
 
 
 def _with_labels_many(conn: sqlite3.Connection, rows: list[dict]) -> list[dict]:
-    """Same as _with_labels but for a list, using one bulk query (no N+1)."""
+    """Attach each issue's labels under a "labels" key, with one bulk query
+    (no N+1). Issues own their core row (issues.py); labels are composed on
+    here so the two modules stay in their lanes."""
     by_issue = labels.labels_for_issues(conn, [r["id"] for r in rows])
     for r in rows:
         r["labels"] = by_issue.get(r["id"], [])
@@ -338,6 +361,10 @@ def create(
             status=payload.status,
             priority=payload.priority,
             project_id=payload.project_id,
+            parent_id=payload.parent_id,
+            assignee_id=payload.assignee_id,
+            delegate_ids=payload.delegate_ids,
+            blocked_by=payload.blocked_by,
         )
     except issue_commands.IssueCommandError as exc:
         raise issue_command_http_error(exc) from exc
@@ -875,6 +902,7 @@ def set_assignee(
 @router.post("/{issue_id}/archive", response_model=IssueOut)
 def archive_issue(
     issue_id: RowIdPath,
+    response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -887,12 +915,13 @@ def archive_issue(
         )
     except issue_commands.IssueCommandError as exc:
         raise issue_command_http_error(exc) from exc
-    return _with_labels(conn, updated)
+    return _tagged_issue(conn, updated, response)
 
 
 @router.post("/{issue_id}/unarchive", response_model=IssueOut)
 def unarchive_issue(
     issue_id: RowIdPath,
+    response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -904,7 +933,7 @@ def unarchive_issue(
         )
     except issue_commands.IssueCommandError as exc:
         raise issue_command_http_error(exc) from exc
-    return _with_labels(conn, updated)
+    return _tagged_issue(conn, updated, response)
 
 
 _BULK_MAX = 500
@@ -912,11 +941,12 @@ _BULK_MAX = 500
 
 def _apply_bulk_update(
     conn: sqlite3.Connection, issue_id: int, provided: dict, actor: dict
-) -> None:
+) -> str:
     """Apply one best-effort batch item through the shared atomic issue command.
 
     Validation failures become this item's HTTP-shaped error. Unexpected persistence,
     audit, or finalization failures still fail loud after the command rolls back.
+    Returns the issue's new ETag.
     """
     command_fields = {
         key: provided[key]
@@ -929,7 +959,10 @@ def _apply_bulk_update(
         )
         if key in provided
     }
-    issue_commands.update_issue(conn, actor=actor, issue_id=issue_id, **command_fields)
+    updated = issue_commands.update_issue(
+        conn, actor=actor, issue_id=issue_id, **command_fields
+    )
+    return issue_etags.current_etag(conn, updated)
 
 
 @router.post("/bulk", response_model=BulkUpdateOut, response_model_exclude_unset=True)
@@ -975,8 +1008,8 @@ def bulk_update(
     results: list[dict] = []
     for issue_id in dict.fromkeys(payload.ids):  # dedupe, preserve first-seen order
         try:
-            _apply_bulk_update(conn, issue_id, provided, actor)
-            results.append({"id": issue_id, "ok": True, "error": None})
+            etag = _apply_bulk_update(conn, issue_id, provided, actor)
+            results.append({"id": issue_id, "ok": True, "error": None, "etag": etag})
         except issue_commands.IssueCommandError as exc:
             result = {
                 "id": issue_id,
@@ -1043,6 +1076,7 @@ def set_project(
 def set_parent(
     issue_id: RowIdPath,
     payload: ParentUpdate,
+    response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -1056,7 +1090,9 @@ def set_parent(
         )
     except issue_commands.IssueCommandError as exc:
         raise issue_command_http_error(exc) from exc
-    return _with_labels(conn, updated)
+    # The parent is in the issue's representation: answer its new ETag, so
+    # the next guarded write needs no read (C9).
+    return _tagged_issue(conn, updated, response)
 
 
 @router.get("/{issue_id}/children", response_model=list[IssueOut])
@@ -1321,6 +1357,7 @@ def remove_link(
 def attach_label(
     issue_id: RowIdPath,
     payload: LabelAttach,
+    response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -1332,13 +1369,14 @@ def attach_label(
         )
     except issue_commands.IssueCommandError as exc:
         raise issue_command_http_error(exc) from exc
-    return _with_labels(conn, issue)
+    return _tagged_issue(conn, issue, response)
 
 
 @router.delete("/{issue_id}/labels/{label_id}", response_model=IssueOut)
 def detach_label(
     issue_id: RowIdPath,
     label_id: RowIdPath,
+    response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -1348,7 +1386,7 @@ def detach_label(
         )
     except issue_commands.IssueCommandError as exc:
         raise issue_command_http_error(exc) from exc
-    return _with_labels(conn, issue)
+    return _tagged_issue(conn, issue, response)
 
 
 # --- Contributors on an issue: delegating teammates (humans or agents) ------

@@ -14,6 +14,7 @@ import sqlite3
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 
+from athena.aegis import issue_etags, issues
 from athena.core.deps import get_conn
 from athena.core.identity import issue_write_actor
 from athena.core.ids import MAX_SQLITE_INTEGER, RowIdPath
@@ -52,7 +53,7 @@ def start_playbook(
     """
     body = payload or StartPlaybookIn()
     try:
-        return playbook_commands.start_playbook(
+        started = playbook_commands.start_playbook(
             conn,
             actor=actor,
             page_id=page_id,
@@ -65,3 +66,11 @@ def start_playbook(
             detail=exc.detail,
             code=playbook_commands.CODE_BY_KIND.get(exc.kind, "bad_request"),
         ) from exc
+    # Several issues are created here, so no one ETag header can describe the
+    # answer: each created issue carries its own, as of the end of the start,
+    # and the next guarded write on it needs no read (C9).
+    for row in (started["parent"], *started["children"]):
+        current = issues.get_issue(conn, row["id"])
+        assert current is not None
+        row["etag"] = issue_etags.current_etag(conn, current)
+    return started

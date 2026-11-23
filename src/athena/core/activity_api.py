@@ -508,6 +508,9 @@ class UndoOut(BaseModel):
 
     reversal: ActivityOut
     reversed_event_id: int
+    # The reversed issue's ETag after the reversal, so the next guarded write on
+    # it needs no read; null for a target kind with no ETag registered (a page).
+    target_etag: str | None = None
 
 
 @router.post("/{event_id}/undo", response_model=UndoOut, status_code=201)
@@ -524,4 +527,8 @@ def undo_event(
     # result is a newly created event; refusals carry a stable `code` (see
     # core/undo.py) so a client branches on the reason rather than the prose.
     reversal = undo.undo(conn, actor, event_id=event_id)
-    return {"reversal": reversal, "reversed_event_id": event_id}
+    return {
+        "reversal": reversal,
+        "reversed_event_id": event_id,
+        "target_etag": undo.target_validator(conn, reversal),
+    }

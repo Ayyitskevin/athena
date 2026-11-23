@@ -334,10 +334,16 @@ def test_bulk_adds_policy_code_without_changing_legacy_shapes(tmp_path):
             "error": POLICY_DETAIL,
             "code": POLICY_CODE,
         }
+        good = client.get(
+            f"/issues/{unblocked['id']}", headers=_actor(scenario.admin["id"])
+        )
+        # An applied row also names the issue's new ETag (C9), additively; the
+        # refused rows keep their legacy shape.
         assert results[unblocked["id"]] == {
             "id": unblocked["id"],
             "ok": True,
             "error": None,
+            "etag": good.headers["ETag"],
         }
         assert results[999_999] == {
             "id": 999_999,
@@ -345,9 +351,6 @@ def test_bulk_adds_policy_code_without_changing_legacy_shapes(tmp_path):
             "error": "no such issue",
         }
         _assert_open(client, scenario)
-        good = client.get(
-            f"/issues/{unblocked['id']}", headers=_actor(scenario.admin["id"])
-        )
         assert good.json()["status"] == CUSTOM_DONE
 
 

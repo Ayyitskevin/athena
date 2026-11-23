@@ -42,23 +42,29 @@ bodies/comments; keep original source, test logs and frozen artifacts in the
 supplied repository or evidence location. Link those exact records from Athena.
 Never write the database directly or copy secrets into evidence.
 
-Create an outcome issue and separate design, build and review issues with
-`create_issue(..., project_id=project_id)`. Record the returned IDs. For each slice:
+Set up the outcome and its slices with one `create_issue` each, in order, and
+record the returned IDs:
 
-1. Attach it with `set_issue_parent(issue_id=slice_id, parent_id=outcome_id)`;
-   `create_issue` does not accept a parent.
-2. Read `get_issue_work_context(issue_id=slice_id)`, then set the accountable owner
-   with `assign_issue(issue_id=slice_id, assignee_id=owner_id, if_match=issue_etag)`.
-   Use the root `issue_etag`, not the work-context packet's top-level `_etag`.
-3. Add the supplied worker account with
-   `delegate_issue(issue_id=slice_id, agent_user_id=worker_id)`. This adds a
-   contributor; it does not replace the assignee or acquire a lease.
-4. Record ordering with `link_issues(issue_id=build_id, target_ref=str(design_id),
-   relation="blocked_by")`, and review blocked by build. Inspect children with
-   `list_subtasks(issue_id=outcome_id)`.
+1. The outcome: `create_issue(title=..., project_id=project_id,
+   assignee_id=owner_id)`. Its accountable owner is not set by creating
+   children or delegating their work.
+2. Each slice, design first: `create_issue(title=..., project_id=project_id,
+   parent_id=outcome_id, assignee_id=owner_id, delegate_ids=[worker_id],
+   blocked_by=[...])`. The build slice is `blocked_by=[design_id]` and the
+   review slice `blocked_by=[build_id]`.
+3. Inspect the children with `list_subtasks(issue_id=outcome_id)`.
 
-Assign an accountable owner to the outcome issue too; it is not set by creating
-children or delegating their work.
+Each part is the write its own tool makes: `parent_id` nests the slice as
+`set_issue_parent` does, `assignee_id` sets the accountable owner as
+`assign_issue` does, `delegate_ids` adds each worker account as a contributor as
+`delegate_issue` does (it does not replace the assignee or acquire a lease), and
+`blocked_by` records ordering as `link_issues(relation="blocked_by")` does. Each
+is refused as that tool would refuse it, and a refusal creates nothing, so a
+retry after a fix starts clean. A hidden parent or blocker reads as a missing
+one. The answer is the issue as all of it left it; its `_etag` is the issue
+ETag a later guarded write takes. The separate tools stay for changes after
+creation, and every write that changes an issue answers its new `_etag`, so a
+guarded write after one needs no `get_issue_work_context` read.
 
 Dependencies guide the ready queue; an ordinary claim does not enforce that every
 blocker is done. The conductor checks prerequisite evidence before asking a worker
