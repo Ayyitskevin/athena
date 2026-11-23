@@ -798,6 +798,7 @@ def record_issue_claimed(
             f"generation {generation}; until {expires_at}; path_fence {path_fence}; "
             f"coordination_root {json.dumps(coordination_root, sort_keys=True)}"
         ),
+        facts={"generation": generation},
         commit=commit,
         notify=not renewed,
     )
@@ -832,6 +833,7 @@ def record_lease_lapsed(
             f"generation {generation}; holder_id {holder_id}; "
             f"expired_at {expired_at}; holder {holder_name}"
         ),
+        facts={"generation": generation},
         commit=commit,
     )
 
@@ -865,6 +867,10 @@ def record_claim_completed(
                 else ""
             )
         ),
+        facts={
+            "generation": generation,
+            "verdict": None if reported is None else reported.get("verdict"),
+        },
         commit=commit,
     )
 
@@ -894,6 +900,7 @@ def record_claim_yielded(
             target_kind="issue",
             target_id=issue_id,
             detail=detail,
+            facts={"generation": generation, "handoff_token": handoff_token},
             commit=False,
         )
         notifications.process_mentions(
@@ -929,6 +936,7 @@ def record_claim_handoff_resumed(
         target_kind="issue",
         target_id=issue_id,
         detail=f"handoff {handoff_token}; generation {generation}",
+        facts={"generation": generation, "handoff_token": handoff_token},
         commit=commit,
     )
 
@@ -955,6 +963,7 @@ def record_delegation_declined(
             if released_generation is None
             else f"released generation {released_generation}"
         ),
+        facts={"generation": released_generation},
         commit=commit,
     )
 

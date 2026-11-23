@@ -284,9 +284,17 @@ batches, and advance with `advance_desk_cursor(after_id=last_processed_id)` only
 through the unfiltered visible prefix actually handled. If processing stops, retain
 that prefix and resume there; do not jump to the desk's newest visible ID. A filtered
 read cannot justify advancing past unseen events. The same tool with a positive
-wait can wait for later work; waiting does not acknowledge anything. On entry the
+wait can wait for later work; waiting does not acknowledge anything. Wait on your
+outcome with `wait_for_events(after=processed_cursor, wait=25, project_id=project_id)`
+(or `mine=true` for the issues you are assigned, delegated or created, and those
+you delegated to another account): only a matching event wakes you, not work elsewhere in the instance. When it wakes you,
+drain unfiltered from the processed cursor as above before advancing. A lease event
+carries its `generation`, a yield its `handoff_token`, and a completion its
+reported `verdict` as fields; read those, not the prose `detail`. On entry the
 feed records a lapsed lease you answer for as one `lease_lapsed` event, with a
-notification, so a seat that went away reaches you within one wait. Re-delegate or
+notification, so a seat that went away reaches you within one wait: a `mine`
+wait always returns it, and a `project_id` wait returns it when the issue is in
+that project. Re-delegate or
 reclaim deliberately; the lapse releases nothing.
 
 Acknowledge notifications only after handling them, in one call. Drain the feed,

@@ -48,6 +48,33 @@ so a wait loop learns of a lapse within one wait
 live in `src/athena/core/event_wait.py` (32 parked requests per process, 25 s each,
 a half-second wake bound).
 
+**Waiting on what you asked about.** `project_id=P` keeps the project's own events
+and those of the issues that were in it when they were recorded; `mine=true` keeps
+the events of the issues you are assigned, delegated or created, and those you
+delegated to another account, as they stand at the read. Either answers, and wakes a wait, only with a matching event: work in an
+unrelated project no longer wakes you. A project you cannot see answers exactly as
+one that does not exist, an empty batch and a wait that runs to its timeout. Both
+are filters, so a filtered read cannot justify advancing the cursor: when one wakes
+you, drain unfiltered from your cursor before you advance it.
+
+`mine` is the set at the read, not at the event. Once an issue is reassigned away
+from you, or you are removed as its delegate, its events leave your `mine` feed,
+the event that took it included; only the unfiltered feed shows that one. A
+subtask someone else files under your issue is not yours. A lapse the feed records
+for you is always in `mine`, because the accounts that answer for a lease are its
+issue's assignee and the account that delegated it. Both filters are cheap from a
+cursor near the newest event, which is where a wait loop reads. A drain from an old
+cursor reads every later event of your issues, or of the project, before it
+returns a page, so drain unfiltered and keep the filters for waiting.
+
+**Facts are fields.** A lease event carries its `generation` (claimed,
+lease_renewed, lease_lapsed, claim_yielded, claim_handoff_resumed, claim_completed,
+and a delegation_declined that released a lease); a yield and a handoff resume carry
+the `handoff_token`; a completion that reported one carries its `verdict`. Each is
+the value the command recorded, and the prose `detail` names the same values for a
+person. An event with none of them has none of the keys, and an event recorded
+before migration 0086 has them only in its `detail`.
+
 ## The lanes
 
 | Lane | Holds | Bound |

@@ -168,7 +168,9 @@ next observer and never fails the read.
 
 - **Actor and subject.** The event's actor is the observing account; the holder,
   who did nothing, is the subject. The detail reads
-  `generation <g>; holder_id <n>; expired_at <t>; holder <name>`. The event
+  `generation <g>; holder_id <n>; expired_at <t>; holder <name>`, and the feed
+  carries the same generation as the event's `generation` field (see
+  [DESK.md](DESK.md), "Facts are fields"). The event
   carries no run coordinates: observing is not work in the observer's run.
 - **Once per generation.** The command re-checks under the writer lock that no
   native `lease_lapsed` event names the generation, so a second observer, racing

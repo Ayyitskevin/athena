@@ -155,6 +155,7 @@ def test_selective_portability_carries_only_generic_imported_activity(board, tmp
 def test_populated_0082_upgrade_and_restored_snapshot(
     tmp_path, monkeypatch, migration_inventory_through
 ):
+    every = db.MIGRATIONS_DIR
     current = migration_inventory_through("0083_issue_review_requests.sql")
     baseline = tmp_path / "0082"
     baseline.mkdir()
@@ -168,6 +169,12 @@ def test_populated_0082_upgrade_and_restored_snapshot(
         closing(db.connect(tmp_path / "after.db")) as after,
     ):
         db.migrate(conn)
+        # The history below is written by today's lease writers, which record
+        # each event's lease facts beside it (0086's table). The upgrade under
+        # test never reads that table, so the historical database gets it
+        # outside the ledger, exactly as the later migration writes it.
+        (facts,) = every.glob("*_event_facts.sql")
+        conn.executescript(facts.read_text(encoding="utf-8"))
         for number, role in [(1, "admin"), (2, "member"), (3, "member")]:
             conn.execute(
                 "INSERT INTO users(id,email,name,role) VALUES (?,?,?,?)",

@@ -187,6 +187,12 @@ def _baseline(tmp_path, monkeypatch, migration_inventory_through):
     return full
 
 
+def _repair_and_later(full) -> list[str]:
+    """What migrating to the full inventory applies: the repair, then every
+    migration written after it (0086 onward), in order."""
+    return sorted(path.name for path in full.glob("*.sql") if path.name >= REPAIR)
+
+
 def _human(conn, user_id, role="admin"):
     conn.execute(
         "INSERT INTO users(id, email, name, role) VALUES (?, ?, ?, ?)",
@@ -228,7 +234,7 @@ def test_repair_clamps_a_poisoned_cursor_and_keeps_the_trigger(
         conn.commit()
 
         monkeypatch.setattr(db, "MIGRATIONS_DIR", full)
-        assert db.migrate(conn) == [REPAIR]
+        assert db.migrate(conn) == _repair_and_later(full)
         assert db.migration_status(conn).current
 
         positions = dict(
@@ -282,6 +288,6 @@ def test_repair_on_an_empty_trail_forgets_the_position(
         assert conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0] == 0
 
         monkeypatch.setattr(db, "MIGRATIONS_DIR", full)
-        assert db.migrate(conn) == [REPAIR]
+        assert db.migrate(conn) == _repair_and_later(full)
         assert conn.execute("SELECT COUNT(*) FROM agent_cursors").fetchone()[0] == 0
         assert _trigger_sql(conn) is not None

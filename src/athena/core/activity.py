@@ -9,7 +9,7 @@ aegis/comments.py.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterator
+from collections.abc import Collection, Iterator, Mapping
 import contextlib
 import contextvars
 import csv
@@ -22,12 +22,57 @@ from athena.core import access, activity_chain, notifications, run_context
 
 # Every read returns the actor's display name alongside the row, so a feed can
 # render "Kevin closed AEGIS-12" without a second lookup.
-_SELECT = (
-    "SELECT a.id, a.actor_id, a.verb, a.target_kind, a.target_id, a.detail, "
+_COLUMNS = (
+    "a.id, a.actor_id, a.verb, a.target_kind, a.target_id, a.detail, "
     "a.created_at, a.run_id, a.parent_run_id, a.forked_from_event_id, "
-    "a.imported_at, a.reverses_event_id, u.name AS actor_name FROM activity a "
+    "a.imported_at, a.reverses_event_id, u.name AS actor_name"
+)
+_SELECT = f"SELECT {_COLUMNS} FROM activity a JOIN users u ON u.id = a.actor_id"
+
+#: The facts an event may carry as fields beside its prose ``detail`` (0086):
+#: a lease generation, a claim handoff's token, a reported verdict. The
+#: recorder that writes the prose passes the same values here; nothing parses
+#: ``detail`` back into them.
+EVENT_FACT_FIELDS = ("generation", "handoff_token", "verdict")
+
+# A project-filtered feed is driven from the event's access envelope (0042):
+# the (project_scope_key, event_id) index yields exactly that project's events
+# in id order, and each one is fetched by rowid. CROSS JOIN pins that order so
+# the planner cannot walk the whole trail by kind and test each row instead.
+_PROJECT_DRIVEN_FROM = (
+    "activity_visibility_projects scope_filter "
+    "CROSS JOIN activity a ON a.id = scope_filter.event_id "
     "JOIN users u ON u.id = a.actor_id"
 )
+_PROJECT_FILTER = (
+    "scope_filter.project_scope_key = "
+    "(SELECT filter_project.activity_scope_key FROM projects filter_project "
+    "WHERE filter_project.id = ?)"
+)
+# The issues an account is assigned, delegated or created, and those it
+# delegated to another account, each read through its own index (0045, 0086);
+# the events of those issues are then read through idx_activity_target, one
+# issue at a time, instead of walking the trail. The delegating account is in
+# the set because it answers for a lapsed lease on that work (C4): the feed's
+# observer records the lapse for it, so its own filter must return it.
+_MINE_FILTER = (
+    "a.target_kind = 'issue' AND a.target_id IN ("
+    "SELECT mine_assigned.id FROM issues mine_assigned "
+    "WHERE mine_assigned.assignee_id = ? "
+    "UNION SELECT mine_delegated.issue_id FROM issue_contributors mine_delegated "
+    "WHERE mine_delegated.user_id = ? "
+    "UNION SELECT mine_gave.issue_id FROM issue_contributors mine_gave "
+    "WHERE mine_gave.added_by = ? "
+    "UNION SELECT mine_created.id FROM issues mine_created "
+    "WHERE mine_created.created_by = ?)"
+)
+_MINE_FROM = (
+    "activity a INDEXED BY idx_activity_target JOIN users u ON u.id = a.actor_id"
+)
+# Only issue and project events carry an access envelope, so only those arms
+# can match a project filter; only issue events can be an account's own.
+_PROJECT_KINDS = frozenset({"issue", "project"})
+_MINE_KINDS = frozenset({"issue"})
 
 # The event the compensating command in flight is reversing (migration 0064), or
 # None outside an undo. A contextvar for the same reason run_context uses one: the
@@ -220,6 +265,7 @@ def record(
     issue_project_ids: Collection[int | None] | object = _AUTO_ISSUE_PROJECTS,
     imported_at: str | None = None,
     notify: bool = True,
+    facts: Mapping[str, str | None] | None = None,
 ) -> dict:
     """Append one activity row and return it. Raises sqlite3.IntegrityError if
     actor_id isn't a real user (the foreign key refuses the orphan). Callers pass
@@ -246,7 +292,21 @@ def record(
     A tagged write also claims (or must match) the run id's binding: the first
     actor to write under a run id owns it, and a write by anyone else raises
     RunBindingError — rolling back the whole command, so a run's trail can never
-    be spliced by a second author."""
+    be spliced by a second author.
+
+    ``facts`` are the event's lease generation, handoff token and verdict
+    (``EVENT_FACT_FIELDS``), written beside the row in the same transaction
+    (0086). The recorder passes the very values its ``detail`` prose names, so
+    the field and the prose have one source. None values are dropped; a native
+    event with none records no facts row, and imported history may carry none."""
+    stored_facts = {
+        name: value for name, value in (facts or {}).items() if value is not None
+    }
+    unknown = set(stored_facts) - set(EVENT_FACT_FIELDS)
+    if unknown:
+        raise ValueError(f"unknown event facts: {sorted(unknown)}")
+    if stored_facts and imported_at is not None:
+        raise ValueError("imported history carries no event facts")
     # Resolve every access-envelope input after acquiring SQLite's writer
     # reservation. A standalone commit=False call leaves this transaction open for
     # its command owner; nested command calls already hold the reservation.
@@ -328,6 +388,17 @@ def record(
         # covers every row this writer records, so the event and its
         # attestation land or roll back together.
         activity_chain.append_entry(conn, event_id)
+        if stored_facts:
+            conn.execute(
+                "INSERT INTO activity_event_facts "
+                "(event_id, generation, handoff_token, verdict) VALUES (?, ?, ?, ?)",
+                (
+                    event_id,
+                    stored_facts.get("generation"),
+                    stored_facts.get("handoff_token"),
+                    stored_facts.get("verdict"),
+                ),
+            )
         conn.executemany(
             "INSERT INTO activity_visibility_projects "
             "(event_id, project_scope_key) VALUES (?, ?)",
@@ -364,6 +435,29 @@ def record(
 def get_activity(conn: sqlite3.Connection, activity_id: int) -> dict | None:
     row = conn.execute(f"{_SELECT} WHERE a.id = ?", (activity_id,)).fetchone()
     return dict(row) if row else None
+
+
+def event_facts(
+    conn: sqlite3.Connection, event_ids: Collection[int]
+) -> dict[int, dict[str, str]]:
+    """The recorded facts (0086) of these events, by event id: only the fields
+    each event carries, and no entry for an event that carries none (every
+    event recorded before 0086 among them). One primary-key read per batch."""
+    ids = sorted({int(event_id) for event_id in event_ids})
+    if not ids:
+        return {}
+    placeholders = ",".join("?" * len(ids))
+    rows = conn.execute(
+        "SELECT event_id, generation, handoff_token, verdict "
+        f"FROM activity_event_facts WHERE event_id IN ({placeholders})",
+        ids,
+    ).fetchall()
+    return {
+        int(row["event_id"]): {
+            name: row[name] for name in EVENT_FACT_FIELDS if row[name] is not None
+        }
+        for row in rows
+    }
 
 
 def get_visible_activity(
@@ -430,6 +524,9 @@ def _paged_feed_sql(
     target_kind: str | None,
     direction: str,
     limit: int,
+    source: str | None = None,
+    order_column: str = "a.id",
+    kinds: Collection[str] | None = None,
 ) -> tuple[str, list] | None:
     """Build one page of the trail, gated, without asking SQLite to read all of it.
 
@@ -450,8 +547,15 @@ def _paged_feed_sql(
 
     Returns None when the gate admits nothing for the requested kind — an actor
     asking for a target kind no arm covers sees an empty feed, not an error.
+
+    ``source`` replaces the FROM clause when a filter drives the read from its
+    own index (the event feed's project and ``mine`` filters); ``order_column``
+    is then the driving column that equals ``a.id``, and ``kinds`` the only
+    target kinds the filter can match. The gate is the same either way: a filter
+    only narrows what the arms admit.
     """
-    order = f"a.id {direction}"
+    order = f"{order_column} {direction}"
+    select = _SELECT if source is None else f"SELECT {_COLUMNS} FROM {source}"
     arms = (
         None
         if actor is _UNGATED
@@ -461,17 +565,19 @@ def _paged_feed_sql(
         # No gate at all: the internal callers, and admins. One plain read, exactly
         # as before — a scan the rowid index already answers in id order.
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        return f"{_SELECT}{where} ORDER BY {order} LIMIT ?", [*params, limit]
+        return f"{select}{where} ORDER BY {order} LIMIT ?", [*params, limit]
 
     if target_kind is not None:
         arms = [arm for arm in arms if arm[0] == target_kind]
-        if not arms:
-            return None
+    if kinds is not None:
+        arms = [arm for arm in arms if arm[0] in kinds]
+    if not arms:
+        return None
     parts: list[str] = []
     merged: list = []
     for _kind, arm_clause, arm_params in arms:
         where = " WHERE " + " AND ".join([f"({arm_clause})", *clauses])
-        parts.append(f"SELECT * FROM ({_SELECT}{where} ORDER BY {order} LIMIT ?)")
+        parts.append(f"SELECT * FROM ({select}{where} ORDER BY {order} LIMIT ?)")
         merged.extend([*arm_params, *params, limit])
     merged.append(limit)
     return " UNION ALL ".join(parts) + f" ORDER BY id {direction} LIMIT ?", merged
@@ -579,6 +685,8 @@ def list_events(
     parent_run_id: str | None = None,
     verb: str | None = None,
     native_only: bool = False,
+    project_id: int | None = None,
+    mine_of: int | None = None,
     limit: int = 50,
     actor: dict | None | object = _UNGATED,
 ) -> list[dict]:
@@ -604,9 +712,46 @@ def list_events(
     target the consumer can't see is dropped (in SQL, before the limit). The default
     (_UNGATED) is no gate, for the system webhook-delivery worker (an admin-configured
     firehose with no per-actor scope); the authenticated GET /events consumer passes
-    its token's actor so an agent only drains the trail it may see."""
+    its token's actor so an agent only drains the trail it may see.
+
+    Two filters narrow the stream to what a waiting agent asked about (F8).
+    ``project_id`` keeps the events whose access envelope (0042) includes that
+    project: the events of the issues that were in it when they were recorded,
+    and the project's own events. A project that does not exist, or that the
+    actor cannot see, matches nothing, the same empty stream either way.
+    ``mine_of`` keeps the events of the issues that account is assigned,
+    delegated (a contributor of) or created, and those it delegated to another
+    account, as they stand at the read. Both only narrow: every row still
+    passes the actor's visibility gate."""
     clauses: list[str] = []
     params: list = []
+    source: str | None = None
+    order_column = "a.id"
+    kinds: set[str] | None = None
+    if project_id is not None and actor is not _UNGATED:
+        # Answered before the trail is read at all, so a project the actor
+        # cannot see costs what a project that does not exist costs. Driving
+        # the envelope index and letting the gate reject each row would take
+        # time in proportion to the hidden project's events.
+        viewer = actor if isinstance(actor, dict) else None
+        if not access.can_see_project(conn, viewer, project_id):
+            return []
+    if project_id is not None:
+        source = _PROJECT_DRIVEN_FROM
+        order_column = "scope_filter.event_id"
+        kinds = set(_PROJECT_KINDS)
+        clauses.append(_PROJECT_FILTER)
+        params.append(project_id)
+        if after_id is not None:
+            # The cursor on the driving index too, so the seek starts there.
+            clauses.append("scope_filter.event_id > ?")
+            params.append(after_id)
+    if mine_of is not None:
+        if source is None:
+            source = _MINE_FROM
+        kinds = set(_MINE_KINDS) if kinds is None else kinds & _MINE_KINDS
+        clauses.append(_MINE_FILTER)
+        params.extend([mine_of, mine_of, mine_of, mine_of])
     if after_id is not None:
         clauses.append("a.id > ?")
         params.append(after_id)
@@ -645,6 +790,9 @@ def list_events(
         target_kind=target_kind,
         direction="ASC",
         limit=limit,
+        source=source,
+        order_column=order_column,
+        kinds=kinds,
     )
     if built is None:
         return []

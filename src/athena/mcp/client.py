@@ -1214,6 +1214,8 @@ class AthenaClient:
         run_id: str | None = None,
         parent_run_id: str | None = None,
         verb: str | None = None,
+        project_id: int | None = None,
+        mine: bool = False,
         limit: int = 50,
     ) -> Any:
         return self._result(
@@ -1228,6 +1230,9 @@ class AthenaClient:
                     run_id=run_id,
                     parent_run_id=parent_run_id,
                     verb=verb,
+                    project_id=project_id,
+                    # Absent unless asked: an unfiltered read sends what it did.
+                    mine=True if mine else None,
                     limit=limit,
                 ),
             )
@@ -1245,6 +1250,8 @@ class AthenaClient:
         run_id: str | None = None,
         parent_run_id: str | None = None,
         verb: str | None = None,
+        project_id: int | None = None,
+        mine: bool = False,
         limit: int = 50,
     ) -> Any:
         """`GET /events` with `wait`: the server may park the request up to `wait`
@@ -1263,6 +1270,8 @@ class AthenaClient:
                     run_id=run_id,
                     parent_run_id=parent_run_id,
                     verb=verb,
+                    project_id=project_id,
+                    mine=True if mine else None,
                     limit=limit,
                 ),
             )
