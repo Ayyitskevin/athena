@@ -8,12 +8,12 @@ from typing import Annotated
 
 from pydantic import Field, SkipValidation, ValidationError
 
-from athena.aegis import lease_commands
+from athena.aegis import issue_commands, lease_commands
 from athena.aegis.review_models import CandidateSubmission, ReviewCandidateId
 from athena.core import tokens
 from athena.core.request_models import CoordinationRootSelector
 from athena.mcp import results
-from athena.mcp.results import ListResult, listing
+from athena.mcp.results import ListResult, listing, paged
 from athena.mcp.server import (
     ADDS,
     CONDUCTOR,
@@ -35,7 +35,9 @@ from athena.mcp.server import (
     HandoffResumeInstructions,
     HandoffResumeNote,
     HandoffToken,
+    EligibleAccountLimit,
     IdempotencyKey,
+    IssueListOffset,
     LeaseGeneration,
     ListOffset,
     PermanentDeleteConfirmation,
@@ -81,11 +83,11 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         the new one ({id, key, title, status}); the issue is created either way, so
         use it to link or comment instead of duplicating.
 
-        Optionally set it up in the same call, all or nothing: parent_id (as
-        set_issue_parent), assignee_id (the accountable owner, as assign_issue),
-        delegate_ids (agents, as delegate_issue) and blocked_by (issue ids, as
-        link_issues relation blocked_by). Each is refused as its own tool would
-        refuse it, and a refusal creates nothing. `_etag` is the issue's after
+        Optionally set it up in the same call, all or nothing: parent_id (the
+        parent issue), assignee_id (the accountable owner), delegate_ids (agents
+        added as contributors) and blocked_by (issue ids this one is blocked by).
+        Each is refused as the standalone write would refuse it, and a refusal
+        creates nothing. `_etag` is the issue's after
         all of it.
 
         To say what done means, write the body as the issue template: six
@@ -191,12 +193,29 @@ def register_work_tools(tool, mutation_tool, client) -> None:
     ) -> ListResult:
         """Delegate an issue to an agent user. The human assignee remains accountable;
         the agent is added as a contributor and a delegated audit event is recorded.
-        Use list_users to resolve agent user ids."""
+        list_eligible_accounts lists the agents that can see and work this issue.
+        Delegation answers an id that is missing, removed or not an agent with
+        the same refusal."""
         return listing(
             client.delegate_issue(
                 issue_id, agent_user_id, idempotency_key=idempotency_key
             )
         )
+
+    @tool(scope=READ_ONLY, profiles=CONDUCTOR)
+    def list_eligible_accounts(
+        issue_id: int,
+        limit: EligibleAccountLimit = issue_commands.ELIGIBLE_ACCOUNTS_DEFAULT_LIMIT,
+        offset: IssueListOffset = 0,
+    ) -> ListResult:
+        """List the accounts that can see and work this issue.
+        Each row is {id, name, is_agent}, by id. Every row is one assign_issue
+        takes, and every row with is_agent=true one delegate_issue takes; whether
+        you may assign or delegate this issue yourself is that call's own check.
+        You need to see the issue and hold a write role; an issue you cannot see
+        is not_found. Advance offset by the number returned."""
+        rows = client.list_eligible_accounts(issue_id, limit=limit, offset=offset)
+        return paged(rows, limit=limit, offset=offset)
 
     # An identical request returns its receipt.
     @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=CONDUCTOR, hints=SETS)

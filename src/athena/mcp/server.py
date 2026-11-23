@@ -37,6 +37,7 @@ from athena.aegis import (
     delegations,
     fleet_metrics,
     fleet_work,
+    issue_commands,
     issue_narrative,
     issues,
     lease_commands,
@@ -52,7 +53,7 @@ from athena.core import (
     tokens,
 )
 from athena.mcp.client import AthenaClient, AthenaError
-from athena.mcp import results
+from athena.mcp import config as mcp_config, results
 from athena.mcp.results import ListResult, ListShape, ObjectShape
 from athena.workflows import workspace_search
 
@@ -130,6 +131,12 @@ RunId = Annotated[
 DelegationLimit = Annotated[int, Field(ge=1, le=delegations.MAX_LIMIT)]
 DelegationOffset = Annotated[int, Field(ge=0, le=delegations.MAX_OFFSET)]
 IssueListLimit = Annotated[int, Field(strict=True, ge=1, le=100)]
+#: The profiles onboarding prints, spelled once in athena.mcp.config.
+OnboardProfile = mcp_config.PrintableProfile
+EligibleAccountLimit = Annotated[
+    int,
+    Field(strict=True, ge=1, le=issue_commands.ELIGIBLE_ACCOUNTS_MAX_LIMIT),
+]
 IssueListOffset = Annotated[int, Field(strict=True, ge=0, le=issues.MAX_OFFSET)]
 IssueFilterId = Annotated[
     int,

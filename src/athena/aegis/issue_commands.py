@@ -99,6 +99,84 @@ BLOCKED_CLOSE_POLICY_ERROR_DETAIL = "blocked issue close policy denied this upda
 #: The structured field a refused status carries: the names the project offers.
 VALID_STATUSES_FIELD = "valid_statuses"
 
+#: The one answer delegation gives for an account it will not take: one that does
+#: not exist, one that was removed and one that is not an agent read alike, so
+#: delegation cannot tell a member which ids exist (D19).
+NO_DELEGATION_TARGET_DETAIL = "no agent account with that id"
+#: The answer assignment and a plain contributor add give for an account they
+#: will not take: one that does not exist and one that was removed read alike.
+NO_ASSIGNMENT_TARGET_DETAIL = "no such user"
+
+
+def account_is_eligible(target: dict | None, *, delegation: bool) -> bool:
+    """The rule every write that takes an account id applies to it: assignment,
+    delegation, a contributor add, and the same parts of a composed create.
+
+    An account that does not exist, or that was removed, is refused: removal
+    hides an account from every list, picker and lookup, so a write must not
+    find it either (F9). Assignment then takes any account; delegation takes an
+    agent. Paused accounts are taken, as they always were.
+    :func:`eligible_accounts` lists only accounts this rule takes.
+    """
+    if target is None or target.get("removed_at"):
+        return False
+    return bool(target["is_agent"]) if delegation else True
+
+
+def _eligible_target(
+    conn: sqlite3.Connection, user_id: int, *, delegation: bool
+) -> dict:
+    """The target account, or the command's one refusal for it."""
+    target = users.get_user(conn, user_id)
+    if not account_is_eligible(target, delegation=delegation):
+        raise IssueCommandError(
+            "invalid",
+            NO_DELEGATION_TARGET_DETAIL if delegation else NO_ASSIGNMENT_TARGET_DETAIL,
+        )
+    assert target is not None
+    return target
+
+
+#: How many eligible accounts one page of :func:`eligible_accounts` holds.
+ELIGIBLE_ACCOUNTS_DEFAULT_LIMIT = 50
+ELIGIBLE_ACCOUNTS_MAX_LIMIT = 100
+
+
+def eligible_accounts(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    issue_id: int,
+    limit: int = ELIGIBLE_ACCOUNTS_DEFAULT_LIMIT,
+    offset: int = 0,
+) -> list[dict]:
+    """The accounts that can see one issue and that the assignment command
+    takes (D19): ``{id, name, is_agent}`` each, ordered by id. Who can see and
+    work the issue, for a caller who can see it and holds a write role; whether
+    the caller may itself assign or delegate this issue is the write's own
+    check. A read, not a write: it changes nothing.
+
+    The issue must be visible to the caller (a hidden one is ``not_found``,
+    exactly like a missing one); then the caller must hold a write role. A row
+    is an account :func:`account_is_eligible` takes for assignment (so never a
+    removed one) and that can see the issue's project. Every listed account is
+    therefore accepted by assignment, and every listed agent by delegation; the
+    commands also accept an account that cannot see the issue, which this list
+    does not show. Paused accounts are listed, with no pause state.
+    """
+    if actor is None:
+        raise IssueCommandError("unauthorized", "authentication required")
+    issue = _visible_issue(conn, actor, issue_id)
+    if not identity.can_write(actor):
+        raise IssueCommandError("forbidden", "viewer role is read-only")
+    rows = [
+        {"id": user["id"], "name": user["name"], "is_agent": bool(user["is_agent"])}
+        for user in users.list_users(conn)
+        if account_is_eligible(user, delegation=False)
+        and access.can_see_project_or_backlog(conn, user, issue["project_id"])
+    ]
+    return rows[offset : offset + limit]
+
 
 def _unknown_status(
     conn: sqlite3.Connection, project_id: int | None
@@ -675,12 +753,8 @@ def _update_issue(
                 )
 
         assignee_value = _nullable_int_value("assignee_id", assignee_id)
-        if (
-            assignee_id is not UNSET
-            and assignee_value is not None
-            and users.get_user(conn, assignee_value) is None
-        ):
-            raise IssueCommandError("invalid", "no such user")
+        if assignee_id is not UNSET and assignee_value is not None:
+            _eligible_target(conn, assignee_value, delegation=False)
 
         title_value = _string_value("title", title)
         normalized_title = title_value.strip() if title_value is not None else None
@@ -1058,11 +1132,10 @@ def _add_contributor(
         resolved, _ = _resolve_write_actor(
             conn, actor, issue_id, enforce_actor_policy=enforce_actor_policy
         )
-        target = users.get_user(conn, user_id)
-        if target is None:
-            raise IssueCommandError("invalid", "no such user")
-        if require_agent and not target["is_agent"]:
-            raise IssueCommandError("invalid", "delegation target must be an agent")
+        # Delegation (require_agent) and a plain contributor add apply the
+        # commands' one target rule; delegation answers a missing and a non-agent
+        # account alike.
+        _eligible_target(conn, user_id, delegation=require_agent)
         changed = contributors_data.add_contributor(
             conn, issue_id, user_id, resolved["id"], commit=False
         )

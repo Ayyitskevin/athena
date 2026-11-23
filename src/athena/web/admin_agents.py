@@ -43,8 +43,8 @@ from athena.core import (
 from athena.core.deps import get_conn
 from athena.mcp.config import (
     athena_mcp_command,
+    PRINTABLE_PROFILES,
     claude_mcp_config,
-    seat_profile_for,
 )
 from athena.web import live
 from athena.web.csrf import verify_csrf
@@ -150,6 +150,8 @@ def _build_agents_context(
         "unanswered_kills_total": stop_total,
         "budget_windows": sorted(budgets.WINDOWS),
         "approval_kinds": sorted(approvals.ACTION_KINDS),
+        # The MCP profiles the onboarding form may print (F9); empty = default.
+        "printable_profiles": PRINTABLE_PROFILES,
         "pending_approvals": pending,
         # Beside the approvals: blocking questions from yielded claims nobody has
         # resumed. The page is admin-only; the reader still applies visibility.
@@ -347,6 +349,7 @@ def onboard_agent(
     scope_issue_write: str | None = Form(None),
     scope_docs_write: str | None = Form(None),
     scope_admin: str | None = Form(None),
+    profile: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """One-click provisioning from the cockpit: agent user + first scoped token
@@ -371,6 +374,9 @@ def onboard_agent(
                 scope_read, scope_issue_write, scope_docs_write, scope_admin
             ),
             token_name=token_name.strip() or None,
+            # Empty means the default; any other value is checked by the
+            # command, exactly as the REST body and the MCP tool are.
+            profile=profile.strip() or None,
         )
     except agent_commands.AgentCommandError as exc:
         return templates.TemplateResponse(
@@ -386,7 +392,7 @@ def onboard_agent(
             claude_mcp_config(
                 base_url=str(request.base_url).rstrip("/"),
                 token=result["token"]["token"],
-                profile=seat_profile_for(result["token"]["scopes"]),
+                profile=result["profile"],
                 command=athena_mcp_command(),
             ),
             indent=2,

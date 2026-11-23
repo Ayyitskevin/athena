@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import (
     Depends,
     HTTPException,
+    Query,
     Request,
     Response,
 )
@@ -35,7 +36,7 @@ from athena.aegis.review_models import (
 )
 from athena.core.ids import MAX_SQLITE_INTEGER, RowIdPath
 from athena.core.deps import get_conn
-from athena.core.identity import issue_write_actor, optional_actor
+from athena.core.identity import current_actor, issue_write_actor, optional_actor
 
 from athena.aegis.api import (
     HandoffEvidenceItem,
@@ -407,6 +408,45 @@ def list_issue_contributors(
     # visible.
     issue_for_read(conn, issue_id, actor)
     return contributors.list_contributors(conn, issue_id)
+
+
+class EligibleAccountOut(BaseModel):
+    """An account that can see the issue and that assignment takes (delegation
+    too, when it is an agent). Only these three fields: no email, role, token or
+    pause state (D19)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    name: str
+    # Delegation takes an agent; assignment takes every row.
+    is_agent: bool
+
+
+@router.get("/{issue_id}/eligible-accounts", response_model=list[EligibleAccountOut])
+def list_eligible_accounts(
+    issue_id: RowIdPath,
+    limit: int = Query(
+        issue_commands.ELIGIBLE_ACCOUNTS_DEFAULT_LIMIT,
+        ge=1,
+        le=issue_commands.ELIGIBLE_ACCOUNTS_MAX_LIMIT,
+    ),
+    offset: int = Query(0, ge=0, le=issues.MAX_OFFSET),
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    """The accounts that can see and work this issue, ordered by id: `id`,
+    `name` and `is_agent`. Every row is one assignment takes, and every agent
+    row one delegation takes; whether the caller may itself assign or delegate
+    this issue is the write's own check. The caller must see the issue and hold
+    a write role: an issue it cannot see is 404, the same as one that does not
+    exist. Advance `offset` by the number returned; a short page ends the list."""
+    try:
+        return issue_commands.eligible_accounts(
+            conn, actor=actor, issue_id=issue_id, limit=limit, offset=offset
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise issue_command_http_error(exc) from exc
 
 
 @router.post(

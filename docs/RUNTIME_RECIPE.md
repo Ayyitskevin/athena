@@ -119,7 +119,7 @@ Python that runs Athena, so the client needs no activated venv; the path above
 is a placeholder for yours. `ATHENA_MCP_PROFILE` is chosen from the token's
 scopes: `seat+knowledge` for a token with `docs:write`, as here (37 tools for
 this token class, including `record_run_learning`), and `seat` otherwise (26
-tools for issue work). Profiles intersect scopes and never add permission. An
+tools for issue work). Onboarding's optional `profile` prints another one. Profiles intersect scopes and never add permission. An
 unset profile still means `full`, and an unknown profile refuses startup. See
 [AGENT_BOOT.md](AGENT_BOOT.md) for the exact sets. Both issue reads accept
 `issue_id=...` or `ref="ATH-12"`; supply exactly one. After reading the full
@@ -127,7 +127,8 @@ work context, `brief=true` keeps the issue, issue ETag, dependencies,
 warnings and work-order report for a compact re-read.
 
 For a conductor coordinating architect, builder and reviewer accounts, use the
-37-tool `conductor` profile and [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md).
+38-tool `conductor` profile (onboard it with `"profile": "conductor"`) and
+[CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md).
 It adds assignment, delegation, dependencies and visible project observation to
 `seat`; it does not add admin authority or launch workers. Keep this recipe's
 `seat+knowledge` profile when the task needs pages or `record_run_learning`.

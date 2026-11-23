@@ -96,6 +96,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `link_graph` | `GET /{base}/{node_id}/graph` | read-only | The link neighbourhood around an issue or page, as you can see it. |
 | `list_activity_runs` | `GET /activity/runs` | read-only | Reconstruct one actor's recent activity into runs. Explicit X-Athena-Run … |
 | `list_dispatches` | `GET /dispatches` | read-only | What Athena has handed to the executor, newest first. Filter by … |
+| `list_eligible_accounts` | `GET /issues/{issue_id}/eligible-accounts` | read-only | List the accounts that can see and work this issue. |
 | `list_issue_comments` | `GET /issues/{issue_id}/comments` | read-only | Read one issue's comment thread, oldest first — the discussion a … |
 | `list_issue_links` | `GET /issues/{issue_id}/links` | read-only | Read an issue's dependency links — what it blocks, what blocks it, and … |
 | `list_issues` | `GET /issues` | read-only | List Aegis issues, optionally filtered by a project-configured status, … |
@@ -304,4 +305,4 @@ with `isError` true and `status_code` null.
 
 ---
 
-*140 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*141 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

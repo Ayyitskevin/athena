@@ -516,6 +516,17 @@ class AthenaClient:
             idempotency_key=idempotency_key,
         )
 
+    def list_eligible_accounts(
+        self, issue_id: int, *, limit: int | None = None, offset: int | None = None
+    ) -> Any:
+        """The accounts assignment and delegation take on this issue (D19)."""
+        return self._result(
+            self._client.get(
+                f"/issues/{issue_id}/eligible-accounts",
+                params=self._params(limit=limit, offset=offset or None),
+            )
+        )
+
     def delegate_issue(
         self, issue_id: int, agent_user_id: int, *, idempotency_key: str | None = None
     ) -> Any:
@@ -994,9 +1005,11 @@ class AthenaClient:
         scopes: list[str],
         email: str | None = None,
         token_name: str | None = None,
+        profile: str | None = None,
     ) -> Any:
         """Admin: provision an agent (user + first scoped token) in one audited
-        move. The response carries the one-time raw token and an MCP config block.
+        move. The response carries the one-time raw token and an MCP config block
+        naming ``profile`` (omitted: the seat profile the scopes suggest).
         Email is optional — omitted becomes ``{slug}@agents.local``.
         Deliberately NO idempotency_key: the server refuses durable replay for
         endpoints that return a one-time secret (the raw token must never sit in
@@ -1005,7 +1018,11 @@ class AthenaClient:
             self._client.post,
             "/users/onboard_agent",
             json=self._params(
-                email=email, name=name, scopes=scopes, token_name=token_name
+                email=email,
+                name=name,
+                scopes=scopes,
+                token_name=token_name,
+                profile=profile,
             ),
         )
 

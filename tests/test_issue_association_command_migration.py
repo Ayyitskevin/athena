@@ -213,8 +213,14 @@ def test_delegate_rejects_a_non_agent_target(tmp_path):
             json={"user_id": human["id"]},
             headers=H1,
         )
+        # The same answer a missing id gets (F9): a write must not tell a
+        # member which ids exist.
         assert r.status_code == 422
-        assert "must be an agent" in r.json()["detail"]
+        assert r.json()["detail"] == "no agent account with that id"
+        missing = c.post(
+            f"/issues/{issue['id']}/delegate", json={"user_id": 9_999}, headers=H1
+        )
+        assert missing.json() == r.json()
 
 
 def test_mcp_client_reaches_the_migrated_association_writes(tmp_path):

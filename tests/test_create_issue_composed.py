@@ -164,11 +164,16 @@ REFUSALS = {
     "missing parent": ({"parent_id": 9999}, 422, "no such parent issue"),
     "hidden parent": (_hidden_parent, 422, "no such parent issue"),
     "missing assignee": ({"assignee_id": 9999}, 422, "no such user"),
-    "missing delegate": ({"delegate_ids": [9999]}, 422, "no such user"),
+    # Delegation answers a missing id and a human alike (F9).
+    "missing delegate": (
+        {"delegate_ids": [9999]},
+        422,
+        "no agent account with that id",
+    ),
     "human delegate": (
         {"delegate_ids": [3]},
         422,
-        "delegation target must be an agent",
+        "no agent account with that id",
     ),
     "missing blocker": ({"blocked_by": [9999]}, 422, "no such target issue"),
     "hidden blocker": (

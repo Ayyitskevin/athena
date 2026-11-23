@@ -82,6 +82,8 @@ CONDUCTOR_ADDITIONS = frozenset(
         "set_issue_parent",
         "list_subtasks",
         "link_issues",
+        # F9: the accounts assignment and delegation take on one issue.
+        "list_eligible_accounts",
     }
 )
 
@@ -144,13 +146,13 @@ def test_the_four_profiles_are_the_whole_vocabulary():
         ("seat", ISSUE_ONLY, 26),
         # the eleven minus the three docs:write tools
         ("seat+knowledge", ISSUE_ONLY, 34),
-        ("conductor", SEAT_SCOPES, 37),
-        ("conductor", ISSUE_ONLY, 37),
-        ("conductor", ADMIN, 37),
-        ("conductor", READ_TOKEN, 17),
+        ("conductor", SEAT_SCOPES, 38),
+        ("conductor", ISSUE_ONLY, 38),
+        ("conductor", ADMIN, 38),
+        ("conductor", READ_TOKEN, 18),
         # docs:write permits six inherited any-write tools (cursor, heartbeat,
         # targeted notification ack and own controls), but no issue writes.
-        ("conductor", DOCS_ONLY, 23),
+        ("conductor", DOCS_ONLY, 24),
         # the eleven reads among the core: my_desk, list_my_delegated_work,
         # search_work, get_issue, get_issue_work_context, list_issue_comments,
         # get_issue_lease, current_run, list_notifications, list_run_controls,
@@ -226,6 +228,7 @@ def test_conductor_assignment_and_delegation_still_require_issue_write():
         "get_project_review_queue",
         "get_issue_history",
         "list_subtasks",
+        "list_eligible_accounts",
     }
     server = mcp_server.build_server(_NoServer(), scopes=READ_TOKEN, profile=profile)
     for tool in asyncio.run(server.list_tools()):
@@ -241,6 +244,30 @@ def test_conductor_never_carries_admin_tools_even_with_admin_credentials():
     assert admin_tools  # This control must exercise a nonempty exclusion set.
     for scopes in (SEAT_SCOPES, ADMIN, None):
         assert admin_tools.isdisjoint(_names(scopes, mcp_server.PROFILES["conductor"]))
+
+
+def test_the_onboarding_scope_table_is_what_registration_does():
+    """Onboarding refuses to print a profile the token's scopes cannot fully use
+    (F9). Its table (athena.mcp.config.PROFILE_SCOPES) must say exactly what the
+    server does: for every token class, the table finds nothing missing iff
+    every tool of the profile registers under those scopes."""
+    from itertools import combinations
+
+    from athena.mcp import config as mcp_config
+
+    assert set(mcp_config.PRINTABLE_PROFILES) == set(mcp_server.PROFILES) - {"full"}
+    vocabulary = ("read", "issue:write", "docs:write", tokens.ADMIN_SCOPE)
+    classes = [
+        frozenset(chosen)
+        for size in range(len(vocabulary) + 1)
+        for chosen in combinations(vocabulary, size)
+    ]
+    for profile_name in mcp_config.PRINTABLE_PROFILES:
+        profile = mcp_server.PROFILES[profile_name]
+        for scopes in classes:
+            whole = _names(scopes, profile) == profile
+            covered = mcp_config.scopes_missing_for(profile_name, scopes) == []
+            assert whole == covered, (profile_name, sorted(scopes))
 
 
 # --- the environment knob -----------------------------------------------------------

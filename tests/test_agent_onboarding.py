@@ -424,3 +424,174 @@ def test_onboard_over_mcp_client(tmp_path):
         assert any(u["email"] == "worker@e.com" for u in ath.list_users())
     finally:
         tc.__exit__(None, None, None)
+
+
+# --- the printed profile (F9) ---------------------------------------------------
+
+
+def _printed_profile(body):
+    return body["mcp_config"]["mcpServers"]["athena"]["env"]["ATHENA_MCP_PROFILE"]
+
+
+def test_onboarding_prints_the_profile_it_is_asked_for(tmp_path):
+    # WHY (F9): an account meant to conduct was printed the `seat` profile, so the
+    # operator had to edit the config before the conductor had its tools.
+    app, _ = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        r = _onboard(c, profile="conductor")
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert _printed_profile(body) == "conductor"
+        # Configuration only: no role and no scope is granted by the profile.
+        assert body["user"]["role"] == "member"
+        assert body["token"]["scopes"] == ["read", "issue:write"]
+        me = c.get(
+            "/users/me", headers={"Authorization": f"Bearer {body['token']['token']}"}
+        ).json()
+        assert me["role"] == "member" and me["scopes"] == ["read", "issue:write"]
+        knowledge = _onboard(
+            c,
+            email="kay@e.com",
+            name="Kay",
+            scopes=["read", "issue:write", "docs:write"],
+            profile="seat+knowledge",
+        )
+        assert _printed_profile(knowledge.json()) == "seat+knowledge"
+
+
+def test_omitting_the_profile_prints_what_it_printed_before(tmp_path):
+    app, _ = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        assert _printed_profile(_onboard(c).json()) == "seat"
+        docs = _onboard(
+            c, email="d@e.com", name="Dee", scopes=["read", "issue:write", "docs:write"]
+        )
+        assert _printed_profile(docs.json()) == "seat+knowledge"
+        reader = _onboard(c, email="r@e.com", name="Rae", scopes=["read"])
+        assert _printed_profile(reader.json()) == "seat"
+
+
+def test_the_profile_is_a_closed_set_and_the_body_stays_closed(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        for profile in ("full", "admin", "Conductor", ""):
+            r = _onboard(c, profile=profile)
+            assert r.status_code == 422, (profile, r.text)
+            assert r.json()["code"] == "validation_error"
+        unknown = _onboard(c, profile="conductor", role="admin")
+        assert unknown.status_code == 422
+        conn = db.connect(db_file)
+        assert users.get_user_by_email(conn, "sol@e.com") is None
+        conn.close()
+
+
+def test_a_profile_the_tokens_scopes_do_not_cover_is_refused(tmp_path):
+    # WHY: a profile is intersected with the token's scopes when the server
+    # starts, so a `conductor` config printed for a read-only token starts a
+    # session without assign_issue, delegate_issue or any other write, and says
+    # nothing. Onboarding refuses the request instead, before anything exists.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        refused = _onboard(c, scopes=["read"], profile="conductor")
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["code"] == "validation_error"
+        assert "issue:write" in refused.json()["detail"]
+        knowledge = _onboard(
+            c, scopes=["read", "issue:write"], profile="seat+knowledge"
+        )
+        assert knowledge.status_code == 422
+        assert "docs:write" in knowledge.json()["detail"]
+        conn = db.connect(db_file)
+        assert users.get_user_by_email(conn, "sol@e.com") is None
+        conn.close()
+        # An admin token implies every scope, so it covers any profile.
+        ok = _onboard(c, scopes=["admin"], profile="conductor")
+        assert ok.status_code == 201, ok.text
+
+
+def test_onboard_over_mcp_client_takes_the_profile(tmp_path):
+    from athena.mcp.client import AthenaClient
+
+    app, _ = _app(tmp_path)
+    tc = TestClient(app)
+    tc.__enter__()
+    try:
+        _bootstrap(tc)
+        raw = tc.post(
+            "/tokens", json={"name": "orch", "scopes": ["admin"]}, headers=H1
+        ).json()["token"]
+        tc.headers.update({"Authorization": f"Bearer {raw}"})
+        ath = AthenaClient(client=tc, run_id="onboarding-run")
+        result = ath.onboard_agent(
+            name="Cora", scopes=["read", "issue:write"], profile="conductor"
+        )
+        assert _printed_profile(result) == "conductor"
+    finally:
+        tc.__exit__(None, None, None)
+
+
+def test_the_command_checks_the_profile_for_every_transport(tmp_path):
+    # The profile check lives in the onboarding command, so REST, MCP and the
+    # cockpit form cannot disagree; a refusal there creates nothing.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+    conn = db.connect(db_file)
+    admin = users.get_user(conn, 1)
+    try:
+        for profile, scopes in (("conductor", ["read"]), ("full", ["admin"])):
+            try:
+                agent_commands.onboard_agent(
+                    conn, actor=admin, name="X", scopes=scopes, profile=profile
+                )
+            except agent_commands.AgentCommandError as exc:
+                assert exc.kind == "invalid", exc
+            else:
+                raise AssertionError(f"{profile} {scopes} was accepted")
+        assert users.get_user_by_email(conn, "x@agents.local") is None
+        made = agent_commands.onboard_agent(
+            conn, actor=admin, name="Y", scopes=["read"], profile=None
+        )
+        assert made["profile"] == "seat"  # the default, unchecked, as before
+    finally:
+        conn.close()
+
+
+def test_web_cockpit_onboarding_takes_the_profile(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        c.post(
+            "/login",
+            data={"email": "ann@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
+        c.headers["X-CSRF-Token"] = c.cookies.get("athena_csrf", "")
+        form = c.get("/admin/agents")
+        assert 'name="profile"' in form.text and 'value="conductor"' in form.text
+        made = c.post(
+            "/admin/agents/onboard",
+            data={
+                "name": "Cora",
+                "scope_read": "1",
+                "scope_issue_write": "1",
+                "profile": "conductor",
+            },
+        )
+        assert made.status_code == 201, made.text
+        assert "&#34;ATHENA_MCP_PROFILE&#34;: &#34;conductor&#34;" in made.text or (
+            '"ATHENA_MCP_PROFILE": "conductor"' in made.text
+        )
+        refused = c.post(
+            "/admin/agents/onboard",
+            data={"name": "Rae", "scope_read": "1", "profile": "conductor"},
+        )
+        assert refused.status_code == 400
+        assert "issue:write" in refused.text
+    conn = db.connect(db_file)
+    assert users.get_user_by_email(conn, "rae@agents.local") is None
+    conn.close()

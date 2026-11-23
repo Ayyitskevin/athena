@@ -7,7 +7,8 @@ or external runtime starts the agents. Delegation does not launch a process.
 ## Supply the identities and boundaries
 
 Before starting, the operator supplies a visible `project_id`, the conductor,
-architect, builder and reviewer **account IDs**, and an explicit accountable
+architect, builder and reviewer **accounts** (their IDs, or names the conductor
+resolves with `list_eligible_accounts`), and an explicit accountable
 `assignee_id` for each issue. The accountable owner may be the conductor account;
 do not infer that it is a human or that delegation sets it. Also supply the outcome,
 acceptance conditions, artifact location, permitted file paths and approval limits.
@@ -22,14 +23,22 @@ Distinct account names alone do not prove independent review.
 | Lease generation | One exact possession of an issue; neither an account ID nor a run ID |
 
 Give the conductor member credentials with `read` and `issue:write`, and set
-`ATHENA_MCP_PROFILE=conductor` in its MCP server environment. This selects the 26
+`ATHENA_MCP_PROFILE=conductor` in its MCP server environment: onboard it with
+`POST /users/onboard_agent` and `"profile": "conductor"`, and the printed config
+names it. This selects the 26
 `seat` tools plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`,
-`assign_issue`, `delegate_issue`, `request_candidate_review`, `set_issue_parent`, `list_subtasks`, and
-`link_issues`: 37 tools before scope filtering. `docs:write` is optional for this
+`assign_issue`, `delegate_issue`, `list_eligible_accounts`, `request_candidate_review`, `set_issue_parent`, `list_subtasks`, and
+`link_issues`: 38 tools before scope filtering. `docs:write` is optional for this
 issue-only loop; page tools remain in `seat+knowledge` or `full`. The default remains
 `full`. Profiles never grant permission, and REST still enforces access.
 
-Use the supplied IDs: this member profile has no admin user directory. Administrative
+This member profile has no admin user directory. To find an account's ID, read
+`list_eligible_accounts(issue_id=slice_id)`: the accounts that can see and work
+that issue, as `{id, name, is_agent}`. `assign_issue` takes every listed account
+and `delegate_issue` every listed one with `is_agent: true`; an account that
+cannot see the issue is not listed, so put it in the project before you hand it
+work. `delegate_issue` answers an ID that is missing, removed or not an agent
+alike. With the IDs supplied, skip the read. Administrative
 approvals, worker controls, budgets, fleet health and dispatch remain in their
 authorized surfaces. See [RUNTIME_RECIPE.md](RUNTIME_RECIPE.md) for runtime wiring
 and [AGENT_BOOT.md](AGENT_BOOT.md) for profile and boot details.
