@@ -163,6 +163,6 @@ skip_empty = false
 # 94.11356/85.56075/92.15366 (previously 92.60/82.30/90.30).
 [tool.athena.coverage]
 line_floor = 93.86
-branch_floor = 85.31
+branch_floor = 85.56
 combined_floor = 91.90
 excluded_line_count = 2
