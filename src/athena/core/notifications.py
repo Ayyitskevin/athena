@@ -280,14 +280,24 @@ def list_notifications(
     unread_only: bool = False,
     limit: int = 50,
     actor: dict | None | object = _UNGATED,
+    before_id: int | None = None,
 ) -> list[dict]:
     """A user's inbox, newest first. unread_only narrows to the unread ones. `actor`
     (the inbox owner viewing it) gates out notifications whose target they can no
-    longer see; _UNGATED leaves it ungated for internal callers/tests."""
+    longer see; _UNGATED leaves it ungated for internal callers/tests. `before_id`
+    starts below that notification id, so a caller can read the inbox a page at a
+    time in the same order.
+
+    The read walks the user's rows newest first through an index
+    (idx_notifications_unread for the unread ones, idx_notifications_inbox for all)
+    and stops at `limit`, so it costs what it returns, not the user's history."""
     where = "WHERE n.user_id = ?"
     params: list = [user_id]
     if unread_only:
         where += " AND n.read_at IS NULL"
+    if before_id is not None:
+        where += " AND n.id < ?"
+        params.append(before_id)
     if actor is not _UNGATED:
         gate, gate_params = access.event_visibility_clause(
             conn, cast(dict | None, actor), alias="a"
@@ -328,15 +338,19 @@ def unread_count(
     gate, gate_params = access.event_visibility_clause(
         conn, cast(dict | None, actor), alias="a"
     )
-    where = "WHERE n.user_id = ? AND n.read_at IS NULL"
-    params: list = [user_id]
-    if gate:
-        where += f" AND {gate}"
-        params.extend(gate_params)
+    if not gate:
+        # An actor who sees every event (an admin) counts exactly what the ungated
+        # count does: every notification's event exists (a foreign key into the
+        # append-only trail), so the join below would drop nothing. Counted from
+        # the unread index alone.
+        return unread_count(conn, user_id)
+    # Every unread row's event is checked: this is linear in the user's UNREAD
+    # rows (read through the partial unread index), not in everything ever received.
     return conn.execute(
         f"SELECT COUNT(*) AS n FROM notifications n "
-        f"JOIN activity a ON a.id = n.event_id {where}",
-        params,
+        f"JOIN activity a ON a.id = n.event_id "
+        f"WHERE n.user_id = ? AND n.read_at IS NULL AND {gate}",
+        (user_id, *gate_params),
     ).fetchone()["n"]
 
 
@@ -392,14 +406,30 @@ def mark_all_read(
 def _visible_own_clause(
     conn: sqlite3.Connection, user_id: int, actor: dict | None
 ) -> tuple[str, list]:
-    """The rows that are this user's and whose event the actor may see now."""
+    """The rows that are this user's and whose event the actor may see now.
+
+    The gate is asked of each row's own event, by its key. Written as
+    ``event_id IN (every visible event)`` it was the same set, but the planner
+    could build that whole set for an acknowledgement of a few ids: 1.7 s for
+    40 ids at 50,000 issues, inside the writer lock, against under a
+    millisecond this way."""
     where = "user_id = ?"
     params: list = [user_id]
     gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
     if gate:
-        where += f" AND event_id IN (SELECT a.id FROM activity a WHERE {gate})"
+        where += (
+            " AND EXISTS (SELECT 1 FROM activity a "
+            f"WHERE a.id = notifications.event_id AND {gate})"
+        )
         params.extend(gate_params)
     return where, params
+
+
+# A statement that names its notifications by id finds each by that key.
+# Left to choose, the planner walks every notification the user has, read or
+# not, through the (user_id, event_id) key and tests each id against the list.
+# NOT INDEXED leaves the row key as the only way in.
+_BY_ID = "notifications NOT INDEXED"
 
 
 def visible_own_ids(
@@ -415,7 +445,7 @@ def visible_own_ids(
     return {
         row["id"]
         for row in conn.execute(
-            f"SELECT id FROM notifications WHERE {where} AND id IN ({marks})",
+            f"SELECT id FROM {_BY_ID} WHERE {where} AND id IN ({marks})",
             (*params, *ids),
         )
     }
@@ -437,16 +467,18 @@ def mark_read_bounded(
     that arrived after the caller's read is above its bound and stays unread."""
     where, params = _visible_own_clause(conn, user_id, actor)
     where += " AND read_at IS NULL"
+    table = "notifications"
     if ids is not None:
         if not ids:
             return 0
+        table = _BY_ID
         where += f" AND id IN ({', '.join('?' for _ in ids)})"
         params.extend(ids)
     if through_id is not None:
         where += " AND id <= ?"
         params.append(through_id)
     cur = conn.execute(
-        f"UPDATE notifications SET read_at = datetime('now') WHERE {where}",
+        f"UPDATE {table} SET read_at = datetime('now') WHERE {where}",
         params,
     )
     if commit:
@@ -466,6 +498,11 @@ PREFERENCE_PRIORITIES = ("low", "medium", "high", "urgent")
 # Closed ranks for filtering and sorting. Stored unknowns are handled by
 # ``_resolve_priority`` and conservatively surface as urgent.
 _PRIORITY_RANK = {name: idx for idx, name in enumerate(PRIORITY_ORDER)}
+
+# How far a priority projection's batch grows (see list_priority_notifications).
+# The first batch is the caller's limit, which the route caps at 200; later
+# ones double up to this. A bound on one read, not on what it returns.
+_PRIORITY_BATCH_MAX = 500
 
 # Bounds for digest windows: a window smaller than 1 minute is meaningless and
 # larger than one week hides signal. Values outside this range are rejected.
@@ -708,127 +745,179 @@ def list_priority_notifications(
     observed_at = _now()
     observed_at_str = observed_at.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Priority and mute are read-time preferences, so SQL cannot safely limit the
-    # inbox before those filters run. Read the complete visible inbox and apply
-    # the caller's limit only after projection; a bounded overfetch could silently
-    # hide an older urgent item behind newer low-priority or muted rows.
-    raw = list_notifications(
-        conn, user_id, unread_only=unread_only, limit=-1, actor=actor
-    )
-
-    targets = {(row["target_kind"], row["target_id"]) for row in raw}
-    target_priorities = (
-        dict(resolve_priorities(conn, targets))
-        if resolve_priorities and targets
-        else {}
-    )
-
-    # Load the user's complete (normally tiny) preference set once. Building one
-    # OR expression per inbox row can exceed SQLite's expression-depth limit and
-    # duplicates work when many notifications share a target.
-    if raw:
-        pref_rows = conn.execute(
-            "SELECT target_kind, target_id, priority, mute_until, "
-            "digest_window_minutes FROM watch_preferences "
-            "WHERE user_id = ?",
-            (user_id,),
-        ).fetchall()
-        preferences = {
-            (row["target_kind"], row["target_id"]): dict(row) for row in pref_rows
-        }
-    else:
-        preferences = {}
-
-    # A space watch fans out page events without rewriting their owning activity
-    # target. Preserve that source ID, but let the space preference shape the
-    # projection when there is no direct page preference. If the page is gone,
-    # its former container cannot be proven and no space preference is guessed.
-    page_ids = sorted({row["target_id"] for row in raw if row["target_kind"] == "page"})
-    page_spaces: dict[int, int] = {}
-    for offset in range(0, len(page_ids), 500):
-        chunk = page_ids[offset : offset + 500]
-        placeholders = ", ".join("?" for _ in chunk)
-        page_space_rows = conn.execute(
-            f"SELECT id, space_id FROM pages WHERE id IN ({placeholders})",
-            chunk,
-        ).fetchall()
-        page_spaces.update({row["id"]: row["space_id"] for row in page_space_rows})
-
     if min_priority is not None and min_priority not in PRIORITY_ORDER:
         raise ValueError(f"min_priority must be one of: {', '.join(PRIORITY_ORDER)}")
     min_rank = _PRIORITY_RANK[min_priority] if min_priority is not None else 0
 
+    # Priority and mute are read-time preferences, so SQL cannot know which rows
+    # survive them and cannot apply the caller's limit. Read the visible inbox
+    # newest first a batch at a time instead, project each row in order, and stop
+    # as soon as the limit is met: the items are exactly the first `limit` of the
+    # whole projected inbox (a bounded overfetch could hide an older urgent item
+    # behind newer low-priority or muted rows; this never stops early), and the
+    # read costs what it must look at, not the user's whole history. A batch
+    # starts at the limit and doubles, so a filter that drops many rows costs few
+    # statements. With no limit (the summary) every visible row is read.
+    batch = max(limit, 1) if limit is not None else _PRIORITY_BATCH_MAX
+    before_id: int | None = None
+    preferences: dict[tuple[str, int], dict] | None = None
     items: list[dict] = []
-    for row in raw:
-        target_kind = row["target_kind"]
-        target_id = row["target_id"]
-        direct_preference_key = (target_kind, target_id)
-        pref = preferences.get(direct_preference_key)
-        preference_key: tuple[str, int] | None = (
-            direct_preference_key if pref is not None else None
+    done = False
+    while not done:
+        raw = list_notifications(
+            conn,
+            user_id,
+            unread_only=unread_only,
+            limit=batch,
+            actor=actor,
+            before_id=before_id,
         )
-        if pref is None and target_kind == "page":
-            space_id = page_spaces.get(target_id)
-            preference_key = ("space", space_id) if space_id is not None else None
-            pref = preferences.get(preference_key) if preference_key else None
-        if pref is None:
-            preference_key = None
-            pref = {}
-
-        target_priority = target_priorities.get((target_kind, target_id))
-        priority, priority_source, priority_valid = _resolve_priority(
-            pref.get("priority"),
-            target_priority,
-        )
-        if _PRIORITY_RANK[priority] < min_rank:
-            continue
-
-        mute_until = pref.get("mute_until")
-        mute_valid = mute_until is None or _parse_iso_timestamp(mute_until) is not None
-        muted = _is_muted(mute_until, observed_at)
-        if muted and not include_muted:
-            continue
-
-        window = pref.get("digest_window_minutes")
-        window_valid = window is None or (
-            isinstance(window, int)
-            and MIN_DIGEST_MINUTES <= window <= MAX_DIGEST_MINUTES
-        )
-        valid_window = window if window_valid else None
-        delivery_state = "muted" if muted else "digest" if valid_window else "immediate"
-        bucket = None
-        if digest and isinstance(valid_window, int):
-            bucket = _digest_bucket(row["event_at"], valid_window)
-
-        preference_valid = priority_valid and mute_valid and window_valid
-
-        item = {
-            **row,
-            "observed_at": observed_at_str,
-            "priority": priority,
-            "muted": muted,
-            "delivery_state": delivery_state,
-            "digest_bucket": bucket,
-            "source": {
-                "target_kind": target_kind,
-                "target_id": target_id,
-                "issue_priority": target_priority if target_kind == "issue" else None,
-                "preference_set": bool(pref),
-                "preference_target_kind": (
-                    preference_key[0] if preference_key is not None else None
-                ),
-                "preference_target_id": (
-                    preference_key[1] if preference_key is not None else None
-                ),
-                "preference_valid": preference_valid,
-                "priority_source": priority_source,
-            },
-        }
-        items.append(item)
-        if limit is not None and len(items) >= limit:
+        if not raw:
             break
 
+        targets = {(row["target_kind"], row["target_id"]) for row in raw}
+        target_priorities = (
+            dict(resolve_priorities(conn, targets))
+            if resolve_priorities and targets
+            else {}
+        )
+
+        # Load the user's complete (normally tiny) preference set once. Building
+        # one OR expression per inbox row can exceed SQLite's expression-depth
+        # limit and duplicates work when many notifications share a target.
+        if preferences is None:
+            pref_rows = conn.execute(
+                "SELECT target_kind, target_id, priority, mute_until, "
+                "digest_window_minutes FROM watch_preferences "
+                "WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+            preferences = {
+                (row["target_kind"], row["target_id"]): dict(row) for row in pref_rows
+            }
+
+        # A space watch fans out page events without rewriting their owning
+        # activity target. Preserve that source ID, but let the space preference
+        # shape the projection when there is no direct page preference. If the page
+        # is gone, its former container cannot be proven and no space preference is
+        # guessed.
+        page_ids = sorted(
+            {row["target_id"] for row in raw if row["target_kind"] == "page"}
+        )
+        page_spaces: dict[int, int] = {}
+        for offset in range(0, len(page_ids), 500):
+            chunk = page_ids[offset : offset + 500]
+            placeholders = ", ".join("?" for _ in chunk)
+            page_space_rows = conn.execute(
+                f"SELECT id, space_id FROM pages WHERE id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            page_spaces.update({row["id"]: row["space_id"] for row in page_space_rows})
+
+        for row in raw:
+            item = _project_priority_row(
+                row,
+                preferences=preferences,
+                page_spaces=page_spaces,
+                target_priorities=target_priorities,
+                min_rank=min_rank,
+                include_muted=include_muted,
+                digest=digest,
+                observed_at=observed_at,
+                observed_at_str=observed_at_str,
+            )
+            if item is None:
+                continue
+            items.append(item)
+            if limit is not None and len(items) >= limit:
+                done = True
+                break
+
+        if len(raw) < batch:
+            break
+        before_id = raw[-1]["id"]
+        batch = min(batch * 2, _PRIORITY_BATCH_MAX)
+
     return {"observed_at": observed_at_str, "items": items}
+
+
+def _project_priority_row(
+    row: dict,
+    *,
+    preferences: Mapping[tuple[str, int], dict],
+    page_spaces: Mapping[int, int],
+    target_priorities: Mapping[tuple[str, int], str | None],
+    min_rank: int,
+    include_muted: bool,
+    digest: bool,
+    observed_at: datetime,
+    observed_at_str: str,
+) -> dict | None:
+    """One inbox row as the priority projection shows it, or None if the caller's
+    priority floor or the mute hides it."""
+    target_kind = row["target_kind"]
+    target_id = row["target_id"]
+    direct_preference_key = (target_kind, target_id)
+    pref = preferences.get(direct_preference_key)
+    preference_key: tuple[str, int] | None = (
+        direct_preference_key if pref is not None else None
+    )
+    if pref is None and target_kind == "page":
+        space_id = page_spaces.get(target_id)
+        preference_key = ("space", space_id) if space_id is not None else None
+        pref = preferences.get(preference_key) if preference_key else None
+    if pref is None:
+        preference_key = None
+        pref = {}
+
+    target_priority = target_priorities.get((target_kind, target_id))
+    priority, priority_source, priority_valid = _resolve_priority(
+        pref.get("priority"),
+        target_priority,
+    )
+    if _PRIORITY_RANK[priority] < min_rank:
+        return None
+
+    mute_until = pref.get("mute_until")
+    mute_valid = mute_until is None or _parse_iso_timestamp(mute_until) is not None
+    muted = _is_muted(mute_until, observed_at)
+    if muted and not include_muted:
+        return None
+
+    window = pref.get("digest_window_minutes")
+    window_valid = window is None or (
+        isinstance(window, int) and MIN_DIGEST_MINUTES <= window <= MAX_DIGEST_MINUTES
+    )
+    valid_window = window if window_valid else None
+    delivery_state = "muted" if muted else "digest" if valid_window else "immediate"
+    bucket = None
+    if digest and isinstance(valid_window, int):
+        bucket = _digest_bucket(row["event_at"], valid_window)
+
+    preference_valid = priority_valid and mute_valid and window_valid
+
+    return {
+        **row,
+        "observed_at": observed_at_str,
+        "priority": priority,
+        "muted": muted,
+        "delivery_state": delivery_state,
+        "digest_bucket": bucket,
+        "source": {
+            "target_kind": target_kind,
+            "target_id": target_id,
+            "issue_priority": target_priority if target_kind == "issue" else None,
+            "preference_set": bool(pref),
+            "preference_target_kind": (
+                preference_key[0] if preference_key is not None else None
+            ),
+            "preference_target_id": (
+                preference_key[1] if preference_key is not None else None
+            ),
+            "preference_valid": preference_valid,
+            "priority_source": priority_source,
+        },
+    }
 
 
 def priority_summary(
