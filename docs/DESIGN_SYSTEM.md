@@ -123,6 +123,19 @@ that shows an agent, show these — the data already exists:
     signal total.
   - **When a lane moves to its own page.** Any fourth lane, or any uncapped list,
     moves the lanes to a dedicated Observe page instead of growing the card.
+- **No template carries a script, a handler or a style attribute.** The
+  content security policy is `script-src 'self'` and a `style-src` with no
+  `'unsafe-inline'`, so an inline `<script>`, an `onchange="…"` or a
+  `style="…"` is silently blocked in the browser and the page looks fine in
+  every test that does not run one. A page asks for behaviour with a data
+  attribute that `static/confirm.js` handles from the document: `data-confirm`
+  (ask before a form submits), `data-autosubmit` (submit the form when the
+  control changes; keep the submit button for a browser without scripts) and
+  `data-copy-command` (copy the text, then say "Copied"). A style that depends
+  on data is a `<style>` element carrying the response's nonce. htmx is
+  configured in `base.html` to add no style of its own and evaluate nothing.
+  `tests/test_no_inline_script_or_handler.py` reads every template and renders
+  every page.
 - An unanswered run control reads as **expired, never as obeyed**. Athena cannot
   signal a process.
 - Budgets meter **actions, not tokens or dollars**. Athena never observes model spend.

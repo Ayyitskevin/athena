@@ -22,7 +22,7 @@
 <form method="get" action="/admin/run-controls" class="activity-filters">
     <label>
         State
-        <select name="state" onchange="this.form.submit()">
+        <select name="state" data-autosubmit>
             {% for s in states %}
             <option value="{{ s }}"{{ " selected" if selected_state == s }}>{{ s }}</option>
             {% endfor %}

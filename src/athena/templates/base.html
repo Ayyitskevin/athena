@@ -15,6 +15,11 @@
     <meta name="color-scheme" content="dark light">
     <title>{% block title %}Athena{% endblock %}</title>
     <link rel="stylesheet" href="/static/styles.css?v={{ static_version }}">
+    {# htmx would otherwise add a style element of its own for its request
+       indicator, which the page's content security policy blocks on every load
+       (U14), and evaluate attribute expressions, which it also blocks. Neither
+       is used. #}
+    <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false}'>
     <script src="/static/htmx.min.js?v={{ static_version }}"></script>
     <script src="/static/confirm.js?v={{ static_version }}"></script>
 </head>

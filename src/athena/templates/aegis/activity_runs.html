@@ -20,7 +20,7 @@
 <form method="get" action="/aegis/activity/runs" class="activity-filters">
     <label>
         Actor
-        <select name="actor" onchange="this.form.submit()">
+        <select name="actor" data-autosubmit>
             <option value="">Choose an actor…</option>
             {% for u in all_users %}
             <option value="{{ u.id }}" {% if f_actor == u.id %}selected{% endif %}>{{ u.name }}{% if u.is_agent %} (agent){% endif %}</option>
