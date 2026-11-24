@@ -2,7 +2,7 @@
 
 Date: 2026-11-22. Review baseline: `0b42d40` (`main` after Waves 0, 0b, 1 and 2
 of [the agentic-use specification](AGENTIC_USE_SPEC_ATHENA.md)).
-Status: **decisions accepted by standing instruction; Waves 3 and 4 built; Wave 6 begun.**
+Status: **decisions accepted by standing instruction; Waves 3 and 4 built; Waves 6 and 7 begun.**
 Evidence: [reports/repo-review-2026-11-22-round2.md](reports/repo-review-2026-11-22-round2.md).
 Finding IDs such as `FLEET-4`, `OPS-5`, `PERF-1` and `COCKPIT-2` refer to that
 report. Requirement IDs that begin A, B or C are carried from the first
@@ -29,7 +29,10 @@ blocked a fleet are fixed. Wave 4 is built in PRs #472 and #473: one outcome
 with three slices costs 88 tool calls and 233,740 bytes where it cost 142 and
 359,223. The first five requirements of Wave 6 are built in PR #474: the desk
 as a seat answers in 34 ms at 10,000 issues and 93 ms at 50,000, where it took
-259 and 1,285. First lanes of Waves 7 and 8, and F10 and F6 of Wave 5, are
+259 and 1,285. The first four requirements of Wave 7 are built in PR #475: the
+operator is told what the instance answers without a credential, a new
+database is private to the service user, and a refused start names what is
+wrong and what to do. First lanes of Wave 8, and F10 and F6 of Wave 5, are
 built and independently reviewed but not merged. Nothing has been re-graded
 since.
 
@@ -82,13 +85,16 @@ From Wave 6: the desk's newest-visible-event read, the ready rule evaluated
 once over the issues that may be open, the search entry found by key, the
 inbox indexes, the fleet-shaped seed and the benchmark with recorded medians,
 and the 40 ms delay of a server started on an inherited socket. "Wave 6
-results" says the same for each.
+results" says the same for each. From Wave 7: the doctor's anonymous-reads
+line and the tailnet refusal, private modes for a database Athena creates,
+startup refusals that name the object and a remedy that runs as printed, and
+start-up notices that are true. "Wave 7 results" says the same for each.
 
 **Next step.** Integrate the lanes already built and reviewed, each wave as its
-own pull request: Wave 7 (C11, H10, H12, H18) and Wave 8 (U3, U9; U6, U7).
-Then Wave 5 in the order its row gives, starting with F10 and F6, which are
-built. The rest of Wave 6 (H6, H5, H7, H9) is not built. Each requirement that
-removes calls lowers the fleet trial's ceilings in the same commit.
+own pull request: Wave 8 (U3, U9; U6, U7), then Wave 5 in the order its row
+gives, starting with F10 and F6, which are built. The rest of Wave 6 (H6, H5,
+H7, H9) and of Wave 7 (H13 to H17, H19, H20) is not built. Each requirement
+that removes calls lowers the fleet trial's ceilings in the same commit.
 
 **How work is done here.** One requirement, one commit, with the test that
 fails without it. Delegated build work is briefed with
@@ -169,7 +175,7 @@ loosened without a line in the wave's results.
 | A comment write, median at 50,000 issues | 75 ms, against 18 ms at 1,000 | Within twice the 1,000-issue figure. Measured after Wave 6: 12.6 ms, against 11.6 ms at 1,000. | 6 |
 | The operator's priority inbox, median at 50,000 issues | 1,875 ms | 100 ms. Measured after Wave 6: 7 ms. | 6 |
 | Webhook deliveries after three duplicate starts over 30 events | 47 | 30 | 7 |
-| Routes that answer without a credential on a default instance | 74 of 156, reported nowhere | Counted and printed by `athena-doctor`; tailnet mode refuses to start without an explicit setting | 7 |
+| Routes that answer without a credential on a default instance | 74 of 156, reported nowhere | Counted and printed by `athena-doctor`; tailnet mode refuses to start without an explicit setting. After Wave 7: both hold. The doctor counts what the credential gate admits, 111 of 162 GET routes, which is more than answer. | 7 |
 | Operator steps that cannot be done in the browser | 4 | 0, or each on a declared list | 8 |
 | Issues an agent holds by lease that the board files under "Unassigned" | 16 of 18 | 0 | 8 |
 | Capabilities on one surface only | 5 groups cockpit-only, 6 API-only | 0, or each on a declared list a gate check reads | 8 |
@@ -452,6 +458,72 @@ Found and not fixed:
   from an uncommitted tree.
 - **The changed profile still does not run the coverage stage.**
 
+### Wave 7 results (first lanes)
+
+This is C11, H10, H12 and H18 (PR #475), one commit each. H13 to H17, H19 and
+H20 are not built. One build agent built the four from a six-part brief; an
+agent that had not built them reviewed them twice against throwaway
+instances, and the build was corrected after each review. The lead then ran
+the operator commands by hand against broken databases, ran every command a
+line printed exactly as printed, and corrected what that found.
+
+| Measure | Before | After Wave 7 |
+|---|---|---|
+| What an instance answers without a credential | Reported nowhere | One `athena-doctor` line: the setting and whether it was chosen, the GET routes the credential gate admits (111 of 162), the public projects and spaces by key, and the reads no container scopes (C11) |
+| Tailnet mode with `ATHENA_ANONYMOUS_READS` unset | Starts, readable without a credential | Refuses to start until the setting is given either way (C11, D7) |
+| A database the documented bootstrap creates | `0644` in a `0755` directory | `0600` in a `0700` directory, whatever the umask (H10) |
+| A refused start | A bare exception text | One line naming the database, the object and the remedy; a command only where it runs as printed (H12) |
+| A database the service account cannot write | Passes preflight, then fails every write | Refused at start (H12) |
+| The cookie advice every start logged | Named a setting `athena-serve` refuses | Says what is true of that start (H18) |
+| A misspelled `ATHENA_` variable | Silently ignored | Named in one warning, without its value (H18) |
+
+The product gate's receipt is in PR #475.
+
+Found by reviewing and probing the builds, and fixed before each was
+committed:
+
+- **C11.** The stored route count was one behind at integration: its test
+  caught the eligible-accounts read Wave 4 had added. A space key could hold
+  a newline and write a line of the doctor's report; a key is printed only
+  when it has a project key's shape, and as `#<id>` otherwise.
+- **H10.** A `chmod` was printed for files in a shared directory, where
+  running it would not make them private, and for a directory holding other
+  applications' entries. It is printed only for a regular file the caller
+  owns in a directory of its own, and for the directory only when it holds
+  nothing but Athena's entries.
+- **H12.** The bootstrap remedy was one command whose token the operator's
+  shell never saw, so the shell could not create the first user; it is an
+  `export` and a start run in one shell. A start command dropped the refused
+  start's `--host` and `--port`. A root-run instance with a `0400` file was
+  refused although root can write it; writability is judged by what a write
+  would meet. Found by the lead: the keep-a-copy command stopped at `mkdir`
+  when a copy from an earlier refusal was still there; the line names that
+  copy and prints no command until it is moved.
+
+Decisions the lead took while building, each reversible by the owner:
+
+- A printed remedy runs exactly as printed and does what its line says, or
+  the line states the condition and prints no command.
+- A kept copy of the database is never overwritten by a printed command.
+- `athena-doctor --deployment` warns about a database its own account cannot
+  write and keeps its exit code, since the account running it may be an
+  operator's and not the service's.
+
+Found and not fixed:
+
+- **A tailnet instance that upgrades must set `ATHENA_ANONYMOUS_READS`
+  before it will start.** This is D7, and the changelog says so.
+- **C11.** The count is what the credential gate admits, not what answers:
+  past the gate a page may still ask the viewer to sign in. It is stored with
+  the release and a test recomputes it, so a new route fails that test until
+  the count is updated. The default stays on (D23).
+- **H10.** An existing database or directory with a wider mode is reported
+  and never changed. A backup or export file's mode is not covered here.
+- **H12.** The lead's probes ran as root, so the not-writable refusals were
+  exercised by the build's tests and the reviewer's runs, not by hand.
+- **H18.** Only `athena-serve` and `athena-doctor` report an undeclared
+  variable; the MCP server and the seat doctor do not.
+
 ## Priorities
 
 - **P0.** A written statement is false, or a fleet following the recipe is
@@ -636,7 +708,7 @@ one change with its own commit, in the order given.
 | 8. The cockpit | U2, U3, U4, U6, U7, U9, U14, U5, U8, U10, U11, U12, U13, U15, C10 | D12, D27 |
 | 9. Debts | G1 to G10, B6b, B11 | D9, D10 |
 
-Waves 3 and 4 are done, and Wave 6 is begun; their results are above. Wave 3 is the six false
+Waves 3 and 4 are done, and Waves 6 and 7 are begun; their results are above. Wave 3 is the six false
 statements and the three findings that block a fleet following the recipe. Wave 4 is where the per-outcome scorecard row moves.
 Waves 6 to 9 do not depend on each other and can be reordered.
 
