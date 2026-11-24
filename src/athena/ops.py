@@ -663,7 +663,7 @@ def _file_mode_warnings(db_path: Path, attach_dir: Path | None = None) -> list[s
             "the database file itself"
         ]
     directory = database.parent
-    secrets = "the database holds password hashes, CSRF tokens and webhook secrets"
+    holds = "the database holds password hashes, CSRF tokens and webhook secrets"
     warnings = []
     shared = _shared_directory(directory)
     try:
@@ -690,7 +690,7 @@ def _file_mode_warnings(db_path: Path, attach_dir: Path | None = None) -> list[s
             advice = f"run `chmod 700 {word}`"
         warnings.append(
             f"data directory {directory} is mode {mode:04o}, open to group or "
-            f"others, and {secrets}; {advice}"
+            f"others, and {holds}; {advice}"
         )
     for path in (
         database,
@@ -728,7 +728,7 @@ def _file_mode_warnings(db_path: Path, attach_dir: Path | None = None) -> list[s
             advice = f"run `chmod 600 {word}`"
         warnings.append(
             f"database file {path} is mode {mode:04o}, open to group or others, "
-            f"and {secrets}; {advice}"
+            f"and {holds}; {advice}"
         )
     return warnings
 
