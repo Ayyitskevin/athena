@@ -82,6 +82,7 @@ directory listed below with its rule — and every link resolves;
 | Doc | One line |
 |---|---|
 | [AI_DEVELOPMENT.md](AI_DEVELOPMENT.md) | How this repo is itself developed with AI agents, and what that provenance looks like. |
+| [PERFORMANCE.md](PERFORMANCE.md) | Hot paths: the seeder and benchmark at three workspace sizes, [PERFORMANCE_MEDIANS.json](PERFORMANCE_MEDIANS.json), where the 10,000-issue medians are recorded (none yet), the plan and work tests the gate holds instead of timings, and where the bounds do not hold. |
 | [COMMAND_MIGRATION.md](COMMAND_MIGRATION.md) | The one-command-owns-each-write migration: target shape, debtor list, how to pay debt down. |
 | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | "Phosphor Ink" — the visual and IA system; read before touching `styles.css` or a template. |
 | [TOKENS.md](TOKENS.md) | **CSS design tokens** (every value in `styles.css` §1) — *not* API tokens; those are in QUICKSTART.md and OPERATIONS.md. |

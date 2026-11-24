@@ -10,6 +10,8 @@ from athena.aegis import issues
 from athena.core import db, links
 from athena.mentor import pages, spaces
 
+from support import index_search_without_entry_keys
+
 
 def seed(conn):
     conn.execute(
@@ -138,6 +140,8 @@ def test_upgrade_freezes_old_body_and_evidence_before_any_new_edits(
         if migration.name < "0084":
             shutil.copy2(migration, baseline / migration.name)
     monkeypatch.setattr(db, "MIGRATIONS_DIR", baseline)
+    # Neither inventory has the search entry map (H2); index as that schema did.
+    index_search_without_entry_keys(monkeypatch)
     with closing(db.connect(tmp_path / "upgrade.db")) as conn:
         db.migrate(conn)
         sp = seed(conn)

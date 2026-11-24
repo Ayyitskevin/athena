@@ -153,11 +153,19 @@ def test_ready_count_and_items_share_a_snapshot_with_a_concurrent_archive(board)
     path, conn, admin, _ = board
     issue = _issue(conn)
     committed = []
+    evaluated = []
 
     def trace(statement):
-        if not committed and statement.startswith(
-            "SELECT i.id, i.title, i.status, i.priority, i.created_at"
-        ):
+        # The rule is one statement (H3): the count and the items cannot
+        # disagree with each other. The lane still reads leases and handoffs
+        # for its items afterwards, so the archive commits as the first of
+        # those reads begins, and the packet must still be one snapshot.
+        if committed:
+            return
+        if statement.startswith("WITH candidate(id) AS"):
+            evaluated.append(True)
+            return
+        if evaluated:
             _write(
                 path,
                 "UPDATE issues SET archived_at = CURRENT_TIMESTAMP WHERE id = ?",

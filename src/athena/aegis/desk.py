@@ -108,16 +108,41 @@ def _events_since(
 def latest_visible_event_id(conn: sqlite3.Connection, *, actor: dict) -> int | None:
     """The newest event id this actor can see — the value a fully-drained
     reader would advance its cursor to. Null on an empty (or fully hidden)
-    trail, which is the honest answer: there is nothing to acknowledge."""
+    trail, which is the honest answer: there is nothing to acknowledge.
+
+    Asked one visibility arm at a time, as the event feed asks (H1). The arms
+    are disjoint on ``target_kind``, so each walks ``idx_activity_kind_id``
+    newest first and stops at its first visible event; the answer is the
+    largest of those four ids, which is the id the single OR-joined predicate
+    gives. Asked as ``MAX`` over that OR, SQLite read every event of every
+    kind and ran the gate on each, on every desk read. Ungated (an admin), the
+    plain ``MAX`` is answered from the end of the rowid index.
+
+    Each arm names its index, so a database with statistics plans it the same
+    way. The bound is the caller's newest visible event of each kind: a caller
+    whose newest events of a kind are hidden (a seat in a workspace that went
+    private around it) still walks past every hidden one, as the OR-joined
+    read did."""
     from athena.core import access
 
-    gate, params = access.event_visibility_clause(conn, actor, alias="a")
-    where = f" WHERE {gate}" if gate else ""
-    row = conn.execute(
-        f"SELECT MAX(a.id) AS m FROM activity a "
-        f"JOIN users u ON u.id = a.actor_id{where}",
-        params,
-    ).fetchone()
+    arms = access.event_visibility_arms(conn, actor, alias="a")
+    if arms is None:
+        row = conn.execute(
+            "SELECT MAX(a.id) AS m FROM activity a NOT INDEXED "
+            "CROSS JOIN users u ON u.id = a.actor_id"
+        ).fetchone()
+    else:
+        newest = " UNION ALL ".join(
+            "SELECT * FROM (SELECT a.id FROM activity a "
+            "INDEXED BY idx_activity_kind_id "
+            f"CROSS JOIN users u ON u.id = a.actor_id WHERE {clause} "
+            "ORDER BY a.id DESC LIMIT 1)"
+            for _kind, clause, _params in arms
+        )
+        row = conn.execute(
+            f"SELECT MAX(id) AS m FROM ({newest})",
+            [param for _kind, _clause, params in arms for param in params],
+        ).fetchone()
     return None if row is None or row["m"] is None else int(row["m"])
 
 
@@ -203,6 +228,16 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
 
     review_requests = review_request_projection.visible_requests(
         conn, actor=actor, lane="desk", scope_id=user_id, now=lease_now
+    )
+    # The ready lane and what the rule holds back from it, from one evaluation
+    # of the ready rule (H3): the same rows the two lanes' own reads give at
+    # this instant, without asking the rule once per lane and per total.
+    ready, not_offered = ready_queue.build_lanes(
+        conn,
+        actor=actor,
+        now=lease_now,
+        limit=ready_queue.READY_LIMIT,
+        not_offered_limit=run_state.LANE_LIMIT,
     )
 
     # --- signals: what changed while I was away ------------------------------
@@ -296,13 +331,11 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
             },
             # What I could claim next, in claim order, with its own total. The
             # same rule as the is:ready atom and claim_next_ready.
-            "ready": ready_queue.build_ready(
-                conn, actor=actor, now=lease_now, limit=ready_queue.READY_LIMIT
-            ),
+            "ready": ready,
             # My own open asks: blocking questions nobody resumed and pending
             # approvals. So an agent sees what it already asked, not re-asks.
             "waiting_on_operator": run_state.waiting_on_operator(
-                conn, actor=actor, now=lease_now
+                conn, actor=actor, now=lease_now, not_offered=not_offered
             ),
             "waiting_on": {
                 "items": waiting_on["items"],

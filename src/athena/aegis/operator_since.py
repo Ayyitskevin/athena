@@ -93,15 +93,51 @@ def _reported_counts(event: dict) -> dict | None:
 def _events_after(
     conn: sqlite3.Connection, *, actor: dict, after_id: int
 ) -> tuple[list[dict], bool]:
-    """The oldest ``SCAN_LIMIT`` visible native events after the cursor."""
-    gate, params = access.event_visibility_clause(conn, actor, alias="a")
-    where = f"a.id > ? AND a.imported_at IS NULL{f' AND {gate}' if gate else ''}"
-    rows = conn.execute(
+    """The oldest ``SCAN_LIMIT`` visible native events after the cursor.
+
+    Asked one visibility arm at a time, as the event feed asks (H1): each arm
+    walks ``idx_activity_kind_id`` upward from the cursor and stops at its own
+    ``SCAN_LIMIT + 1`` rows, and the merge takes the oldest of those. A row of
+    the true answer is in exactly one arm and within that arm's own first
+    rows, so the merge misses none. Asked as one OR, SQLite gathered every
+    visible event after the cursor and sorted them before the limit: with no
+    cursor, the whole trail on every read.
+
+    Each arm names its index (``INDEXED BY``). Without statistics, which is
+    every database the product writes, SQLite picks it anyway; on a database
+    an operator has run ANALYZE on it planned each arm as a walk of the rowid
+    with a sort, reading every event of every other kind on the way.
+
+    A caller whose newest events of an arm are all hidden still pays to skip
+    them: each arm stops at its own visible rows, not at a fixed count."""
+    columns = (
         "SELECT a.id, a.verb, a.target_kind, a.target_id, a.detail, a.created_at, "
-        "a.imported_at, a.actor_id, u.name AS actor_name FROM activity a "
-        f"JOIN users u ON u.id = a.actor_id WHERE {where} ORDER BY a.id LIMIT ?",
-        [after_id, *params, SCAN_LIMIT + 1],
-    ).fetchall()
+        "a.imported_at, a.actor_id, u.name AS actor_name "
+    )
+    where = (
+        "CROSS JOIN users u ON u.id = a.actor_id "
+        "WHERE a.id > ? AND a.imported_at IS NULL"
+    )
+    arms = access.event_visibility_arms(conn, actor, alias="a")
+    if arms is None:
+        sql = f"{columns}FROM activity a NOT INDEXED {where} ORDER BY a.id LIMIT ?"
+        params = [after_id, SCAN_LIMIT + 1]
+    else:
+        arm = f"{columns}FROM activity a INDEXED BY idx_activity_kind_id {where}"
+        sql = (
+            " UNION ALL ".join(
+                f"SELECT * FROM ({arm} AND ({clause}) ORDER BY a.id LIMIT ?)"
+                for _kind, clause, _params in arms
+            )
+            + " ORDER BY id LIMIT ?"
+        )
+        params = [
+            value
+            for _kind, _clause, arm_params in arms
+            for value in (after_id, *arm_params, SCAN_LIMIT + 1)
+        ]
+        params.append(SCAN_LIMIT + 1)
+    rows = conn.execute(sql, params).fetchall()
     events = [dict(row) for row in rows]
     return events[:SCAN_LIMIT], len(events) > SCAN_LIMIT
 

@@ -252,6 +252,43 @@ def lapse_lease(db_file: Path, issue_id: int) -> None:
         conn.close()
 
 
+def index_search_without_entry_keys(monkeypatch: Any) -> None:
+    """Index search as the code before the search entry map did (H2): delete a
+    source's entry by kind and source id, insert, keep no map.
+
+    For a test that writes rows into a database migrated only to an inventory
+    older than the map's migration: today's ``search.index_document`` needs that
+    table, and the code that ran at that schema did not."""
+    from athena.core import search
+
+    def index_document(conn, *, kind, source_id, commit):
+        spec = search._SOURCE[kind]
+        title_col, body_col = spec["title"], spec["body"]
+        cols = body_col if title_col is None else f"{title_col}, {body_col}"
+        row = conn.execute(
+            f"SELECT {cols} FROM {spec['table']} WHERE id = ?", (source_id,)
+        ).fetchone()
+        conn.execute(
+            "DELETE FROM search_index WHERE kind = ? AND source_id = ?",
+            (kind, source_id),
+        )
+        if row is not None:
+            conn.execute(
+                "INSERT INTO search_index (kind, source_id, title, body) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    kind,
+                    source_id,
+                    "" if title_col is None else row[title_col],
+                    row[body_col],
+                ),
+            )
+        if commit:
+            conn.commit()
+
+    monkeypatch.setattr(search, "index_document", index_document)
+
+
 # --- scripted agents over the MCP protocol, metered ---------------------------------
 #
 # tests/test_contract_agent.py (one seat, A16) and tests/test_fleet_trial.py (a

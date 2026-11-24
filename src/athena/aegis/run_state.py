@@ -373,6 +373,7 @@ def waiting_on_operator(
     actor: dict,
     now: datetime | None = None,
     limit: int = LANE_LIMIT,
+    not_offered: dict | None = None,
 ) -> dict:
     """An agent's own open asks: its unresumed blocking questions and its pending
     approvals, oldest first, with the total behind a clipped list.
@@ -381,7 +382,9 @@ def waiting_on_operator(
     until someone else answers (a needs_input yield, or its own completion), with
     the reason for each and its own total. It is a separate list because it is a
     different fact: a question stays open until resumed, while the hold lifts on
-    any answer."""
+    any answer. A caller that has already evaluated the rule at ``now`` (the
+    desk, through ``ready_queue.build_lanes`` with ``limit``) passes the list in,
+    so the rule is not asked again."""
     current = _now(now)
     me = int(actor["id"])
     questions = open_questions(conn, actor=actor, asked_by=me, now=current, limit=limit)
@@ -420,9 +423,9 @@ def waiting_on_operator(
         "total": total,
         "limit": limit,
         "clipped": total > len(merged),
-        "not_offered": ready_queue.build_not_offered(
-            conn, actor=actor, now=current, limit=limit
-        ),
+        "not_offered": not_offered
+        if not_offered is not None
+        else ready_queue.build_not_offered(conn, actor=actor, now=current, limit=limit),
         "meaning": (
             "what you asked a human and is still open: your blocking questions "
             "nobody has resumed and your pending approvals, oldest first. Nothing "

@@ -187,7 +187,17 @@ def ready_clause(
     :class:`ReadyQueueError` for no actor: "ready for me" needs a me."""
     if actor is None:
         raise ReadyQueueError("'is:ready' needs an authenticated caller")
-    clauses, params = _claimable_clauses(actor, now=now, category_expr=category_expr)
+    # First, the open candidates (H3): a key lookup the caller's statement can
+    # be driven by, so the atom visits the issues that may be open rather than
+    # every unarchived one. It removes only issues rule 2 removes, so the
+    # clause, and its negation, mean what they meant.
+    candidates, params = _open_candidates_sql(conn)
+    clauses = [f"i.id IN ({candidates})"]
+    claimable, claimable_params = _claimable_clauses(
+        actor, now=now, category_expr=category_expr
+    )
+    clauses.extend(claimable)
+    params.extend(claimable_params)
     # Last, so the cheap column and lease tests discard most rows before the
     # correlated trail reads run.
     awaiting, awaiting_params = awaiting_answer_sql(conn, actor)
@@ -216,6 +226,16 @@ def _visibility(conn: sqlite3.Connection, actor: dict) -> tuple[str, list[int]]:
     return " AND i.project_id IS NULL", []
 
 
+def _require_limit(limit: object) -> None:
+    """Every lane's limit: an integer from 1 to ``MAX_READY_LIMIT``. A lane's
+    total comes from the rows its limit returns, so a limit that returns none
+    is refused rather than answered with a total of nothing."""
+    if isinstance(limit, bool) or not isinstance(limit, int):
+        raise ValueError("limit must be an integer")
+    if not 1 <= limit <= MAX_READY_LIMIT:
+        raise ValueError(f"limit must be between 1 and {MAX_READY_LIMIT}")
+
+
 def build_ready(
     conn: sqlite3.Connection,
     *,
@@ -226,57 +246,232 @@ def build_ready(
 ) -> dict:
     """The actor's ready lane: up to ``limit`` items in claim order, with the total
     behind them, so a clipped list never reads as the whole queue. Read-only."""
-    if isinstance(limit, bool) or not isinstance(limit, int):
-        raise ValueError("limit must be an integer")
-    if not 1 <= limit <= MAX_READY_LIMIT:
-        raise ValueError(f"limit must be between 1 and {MAX_READY_LIMIT}")
+    _require_limit(limit)
     if project_id is not None and (
         isinstance(project_id, bool)
         or not isinstance(project_id, int)
         or not 1 <= project_id <= MAX_SQLITE_INTEGER
     ):
         raise ValueError("project_id must be a positive signed 64-bit integer")
+    current = _now(now)
     with db.transaction(conn):
-        return _build_ready(
-            conn, actor=actor, now=_now(now), limit=limit, project_id=project_id
+        evaluated = _evaluate(
+            conn,
+            actor=actor,
+            now=current,
+            ready_limit=limit,
+            held_limit=0,
+            project_id=project_id,
         )
+        return _ready_lane(conn, evaluated, actor=actor, now=current, limit=limit)
 
 
-def _build_ready(
+def build_lanes(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict,
+    now: datetime | None = None,
+    limit: int = READY_LIMIT,
+    not_offered_limit: int = READY_LIMIT,
+) -> tuple[dict, dict]:
+    """The ready lane and the not-offered list from ONE evaluation of the rule:
+    what :func:`build_ready` and :func:`build_not_offered` answer at the same
+    instant, for a caller that shows both (the desk). Read-only; the caller
+    owns the snapshot."""
+    _require_limit(limit)
+    _require_limit(not_offered_limit)
+    current = _now(now)
+    evaluated = _evaluate(
+        conn,
+        actor=actor,
+        now=current,
+        ready_limit=limit,
+        held_limit=not_offered_limit,
+        project_id=None,
+    )
+    return (
+        _ready_lane(conn, evaluated, actor=actor, now=current, limit=limit),
+        _not_offered_lane(conn, evaluated, actor=actor, limit=not_offered_limit),
+    )
+
+
+#: Beyond this many closed status names the candidates are every issue: a
+#: compound SELECT is limited to 500 terms, and three are spent per name.
+_MAX_CLOSED_NAMES = 100
+
+_DEFAULT_CLOSED = frozenset(
+    name for name, category in statuses.DEFAULT_STATUSES if category == "done"
+)
+
+
+def _closed_by_name(conn: sqlite3.Connection) -> list[str]:
+    """Every status name that is closed somewhere: a project's own status of
+    the ``done`` category, and each default name of that category (closed in
+    the backlog and in any project that does not list it). An issue whose
+    status is none of these is never closed, whatever its project."""
+    names = {
+        row["name"]
+        for row in conn.execute(
+            "SELECT DISTINCT name FROM project_statuses WHERE category = 'done'"
+        )
+    }
+    return sorted(names | _DEFAULT_CLOSED)
+
+
+def _open_candidates_sql(conn: sqlite3.Connection) -> tuple[str, list]:
+    """The ids of the issues that may be open, read so that an issue closed in
+    its own project is not visited, decided per project as ``category_sql``
+    decides it. Three kinds of read, each through a named index:
+
+    - every status that is closed nowhere, as range reads of
+      ``idx_issues_status`` between the closed names: all of these are open;
+    - a closed name in the projects that list it as to-do or doing (a project
+      that made ``done`` a to-do status), through ``idx_issues_project``: only
+      those projects' issues are visited;
+    - a closed name in the places that do not list it, where it falls to the
+      neutral ``doing``: a project's own closed name (``shipped``) on an issue
+      in the backlog or in a project without it. That case has no index of its
+      own, so every issue carrying that name is visited through
+      ``idx_issues_status`` and dropped unless its project does not list the
+      name. A default closed name (``done``) falls to ``done`` there and needs
+      no read.
+
+    Every issue the rule can return is among them; the rule's own category
+    test still decides."""
+    closed = _closed_by_name(conn)
+    if not closed or len(closed) > _MAX_CLOSED_NAMES:
+        return "SELECT id FROM issues", []
+    parts = ["SELECT id FROM issues INDEXED BY idx_issues_status WHERE status < ?"]
+    params: list = [closed[0]]
+    for low, high in zip(closed, closed[1:], strict=False):
+        parts.append(
+            "SELECT id FROM issues INDEXED BY idx_issues_status "
+            "WHERE status > ? AND status < ?"
+        )
+        params.extend([low, high])
+    parts.append("SELECT id FROM issues INDEXED BY idx_issues_status WHERE status > ?")
+    params.append(closed[-1])
+    placeholders = ",".join("?" for _ in closed)
+    listing: dict[str, list[int]] = {}
+    listed_open: dict[str, list[int]] = {}
+    for row in conn.execute(
+        "SELECT name, project_id, category FROM project_statuses "
+        f"WHERE name IN ({placeholders}) ORDER BY name, project_id",
+        closed,
+    ):
+        listing.setdefault(row["name"], []).append(int(row["project_id"]))
+        if row["category"] != "done":
+            listed_open.setdefault(row["name"], []).append(int(row["project_id"]))
+    for name, projects in listed_open.items():
+        parts.append(
+            "SELECT id FROM issues INDEXED BY idx_issues_project "
+            f"WHERE project_id IN ({','.join('?' for _ in projects)}) AND status = ?"
+        )
+        params.extend([*projects, name])
+    for name in closed:
+        if name in _DEFAULT_CLOSED:
+            continue
+        projects = listing.get(name, [])
+        parts.append(
+            "SELECT id FROM issues INDEXED BY idx_issues_status WHERE status = ? "
+            "AND (project_id IS NULL "
+            f"OR project_id NOT IN ({','.join('?' for _ in projects)}))"
+        )
+        params.extend([name, *projects])
+    return " UNION ALL ".join(parts), params
+
+
+def _evaluate(
     conn: sqlite3.Connection,
     *,
     actor: dict,
     now: datetime,
-    limit: int,
+    ready_limit: int,
+    held_limit: int,
     project_id: int | None,
 ) -> dict:
-    current = now
+    """Rules 1 to 5 over the open candidates, and rule 6 as a column, in one
+    statement: each issue is visited once, whichever lane it falls in.
+
+    Returns the first ``ready_limit`` ready issues in claim order and the first
+    ``held_limit`` issues rule 6 alone holds back in id order, each with its
+    lane's total, read from window functions over the same evaluation. Before
+    H3 the desk asked the rule four times, as a count and a page per lane, and
+    every one of them read every issue that was not archived, closed ones
+    included."""
     category = statuses.category_sql(
         status_column="i.status", category_column="rps.category"
     )
-    rule, rule_params = ready_clause(conn, actor, now=current, category_expr=category)
+    clauses, params = _claimable_clauses(actor, now=now, category_expr=category)
+    awaiting, awaiting_params = awaiting_answer_sql(conn, actor)
     vis_sql, vis_params = _visibility(conn, actor)
-    base = (
-        "FROM issues i LEFT JOIN projects p ON p.id = i.project_id "
+    candidates, candidate_params = _open_candidates_sql(conn)
+    where = " AND ".join(["i.archived_at IS NULL", *clauses]) + vis_sql
+    where_params = [*params, *vis_params]
+    if project_id is not None:
+        where += " AND i.project_id = ?"
+        where_params.append(project_id)
+    rows = conn.execute(
+        f"WITH candidate(id) AS ({candidates}), "
+        "evaluated AS (SELECT i.id, i.title, i.status, i.priority, i.created_at, "
+        "i.project_id, i.project_seq, i.assignee_id, p.key AS project_key, "
+        f"{_delegated_to_me_sql()} AS delegated_to_me, "
+        f"{issues.PRIORITY_RANK_SQL} AS priority_rank, {awaiting} AS awaiting "
+        # CROSS JOIN keeps the candidates as the outer loop: each issue row is
+        # reached by its key from an open candidate, never by a walk of the
+        # issues table or of every unarchived issue.
+        "FROM candidate CROSS JOIN issues i ON i.id = candidate.id "
+        "LEFT JOIN projects p ON p.id = i.project_id "
         "LEFT JOIN project_statuses rps "
         "ON rps.project_id = i.project_id AND rps.name = i.status "
-        f"WHERE i.archived_at IS NULL AND {rule}{vis_sql}"
-    )
-    params = [*rule_params, *vis_params]
-    if project_id is not None:
-        base += " AND i.project_id = ?"
-        params.append(project_id)
-    total = int(conn.execute(f"SELECT COUNT(*) AS n {base}", params).fetchone()["n"])
-    me = int(actor["id"])
-    rows = conn.execute(
-        "SELECT i.id, i.title, i.status, i.priority, i.created_at, i.project_id, "
-        "i.project_seq, i.assignee_id, p.key AS project_key, "
-        f"{_delegated_to_me_sql()} AS delegated_to_me "
-        f"{base} "
-        f"ORDER BY {_delegated_to_me_sql()} DESC, {issues.PRIORITY_RANK_SQL} DESC, "
-        "i.created_at ASC, i.id ASC LIMIT ?",
-        [me, *params, me, limit],
+        f"WHERE {where}), "
+        "ranked AS (SELECT evaluated.*, "
+        "COUNT(*) OVER (PARTITION BY awaiting) AS lane_total, "
+        "ROW_NUMBER() OVER (PARTITION BY awaiting ORDER BY delegated_to_me DESC, "
+        "priority_rank DESC, created_at ASC, id ASC) AS claim_rank, "
+        "ROW_NUMBER() OVER (PARTITION BY awaiting ORDER BY id ASC) AS id_rank "
+        "FROM evaluated) "
+        "SELECT * FROM ranked "
+        "WHERE CASE WHEN awaiting THEN id_rank <= ? ELSE claim_rank <= ? END",
+        [
+            *candidate_params,
+            int(actor["id"]),
+            *awaiting_params,
+            *where_params,
+            held_limit,
+            ready_limit,
+        ],
     ).fetchall()
+    ready = sorted((row for row in rows if not row["awaiting"]), key=_claim_rank)
+    held = sorted((row for row in rows if row["awaiting"]), key=_id_rank)
+    return {
+        "ready": ready,
+        "ready_total": int(ready[0]["lane_total"]) if ready else 0,
+        "held": held,
+        "held_total": int(held[0]["lane_total"]) if held else 0,
+    }
+
+
+def _claim_rank(row: sqlite3.Row) -> int:
+    return int(row["claim_rank"])
+
+
+def _id_rank(row: sqlite3.Row) -> int:
+    return int(row["id_rank"])
+
+
+def _ready_lane(
+    conn: sqlite3.Connection,
+    evaluated: dict,
+    *,
+    actor: dict,
+    now: datetime,
+    limit: int,
+) -> dict:
+    current = now
+    me = int(actor["id"])
+    rows = evaluated["ready"]
+    total = evaluated["ready_total"]
     ids = [int(row["id"]) for row in rows]
     lapsed = _lapsed_leases(conn, ids)
     handoffs = claim_handoffs.open_handoffs_for_issues(conn, ids)
@@ -347,29 +542,28 @@ def build_not_offered(
 ) -> dict:
     """The issues rule 6 alone keeps out of this actor's ready lane: every other
     ready rule holds, visibility included, but the work awaits an answer. Each
-    row says why. Read-only; the caller owns the snapshot (the desk's)."""
-    current = _now(now)
-    category = statuses.category_sql(
-        status_column="i.status", category_column="rps.category"
+    row says why. Read-only; the caller owns the snapshot (the desk's).
+
+    ``limit`` is validated as the ready lane's is (from 1 to
+    ``MAX_READY_LIMIT``): before H3 a limit of 0 or below was passed to SQL as
+    is, and no product caller passes one."""
+    _require_limit(limit)
+    evaluated = _evaluate(
+        conn,
+        actor=actor,
+        now=_now(now),
+        ready_limit=0,
+        held_limit=limit,
+        project_id=None,
     )
-    clauses, params = _claimable_clauses(actor, now=current, category_expr=category)
-    awaiting, awaiting_params = awaiting_answer_sql(conn, actor)
-    clauses.append(awaiting)
-    params.extend(awaiting_params)
-    vis_sql, vis_params = _visibility(conn, actor)
-    base = (
-        "FROM issues i LEFT JOIN projects p ON p.id = i.project_id "
-        "LEFT JOIN project_statuses rps "
-        "ON rps.project_id = i.project_id AND rps.name = i.status "
-        f"WHERE i.archived_at IS NULL AND {' AND '.join(clauses)}{vis_sql}"
-    )
-    params.extend(vis_params)
-    total = int(conn.execute(f"SELECT COUNT(*) AS n {base}", params).fetchone()["n"])
-    rows = conn.execute(
-        "SELECT i.id, i.title, i.status, i.priority, i.project_seq, "
-        f"p.key AS project_key {base} ORDER BY i.id ASC LIMIT ?",
-        [*params, limit],
-    ).fetchall()
+    return _not_offered_lane(conn, evaluated, actor=actor, limit=limit)
+
+
+def _not_offered_lane(
+    conn: sqlite3.Connection, evaluated: dict, *, actor: dict, limit: int
+) -> dict:
+    rows = evaluated["held"]
+    total = evaluated["held_total"]
     settlements = _latest_settlements(conn, [int(row["id"]) for row in rows])
     me = int(actor["id"])
     items = []

@@ -87,21 +87,50 @@ def index_document(
     source, projections, and audit together.
 
     A comment has no title column, so its FTS title is indexed empty (`_SOURCE[kind]`
-    carries title=None); the hit borrows its parent's title at read time (_enrich)."""
+    carries title=None); the hit borrows its parent's title at read time (_enrich).
+
+    This is the ONE writer of `search_index` and of its key map `search_entries`
+    (the search_entry_keys migration and tests/test_search_entry_keys.py hold
+    that). The FTS table's
+    kind and source_id columns are UNINDEXED, so the old entry is found through the
+    map and deleted by rowid: the write's cost does not grow with the index. The
+    rowid delete also checks the kind and source id, so a map row that went stale
+    (an index written around this function) can never delete another source's
+    entry. The map write replaces on either key: a stale row that names the
+    rowid FTS hands the new entry is dropped, where an upsert on the source key
+    alone refused the write, and every later one, on the rowid's uniqueness. A
+    write elsewhere would leave an entry the map does not know, which the next
+    write of that source would then fail to replace."""
     spec = _SOURCE[kind]
     cols = spec["body"] if spec["title"] is None else f"{spec['title']}, {spec['body']}"
     row = conn.execute(
         f"SELECT {cols} FROM {spec['table']} WHERE id = ?", (source_id,)
     ).fetchone()
-    conn.execute(
-        "DELETE FROM search_index WHERE kind = ? AND source_id = ?", (kind, source_id)
-    )
+    entry = conn.execute(
+        "SELECT fts_rowid FROM search_entries WHERE kind = ? AND source_id = ?",
+        (kind, source_id),
+    ).fetchone()
+    if entry is not None:
+        conn.execute(
+            "DELETE FROM search_index WHERE rowid = ? AND kind = ? AND source_id = ?",
+            (entry["fts_rowid"], kind, source_id),
+        )
     if row is not None:
         title = row[spec["title"]] if spec["title"] is not None else ""
-        conn.execute(
+        inserted = conn.execute(
             "INSERT INTO search_index (kind, source_id, title, body) "
             "VALUES (?, ?, ?, ?)",
             (kind, source_id, title, row[spec["body"]]),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO search_entries (kind, source_id, fts_rowid) "
+            "VALUES (?, ?, ?)",
+            (kind, source_id, inserted.lastrowid),
+        )
+    elif entry is not None:
+        conn.execute(
+            "DELETE FROM search_entries WHERE kind = ? AND source_id = ?",
+            (kind, source_id),
         )
     if commit:
         conn.commit()

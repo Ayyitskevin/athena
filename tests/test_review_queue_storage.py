@@ -10,6 +10,8 @@ from athena.aegis.review_queue import build_project_review_queue
 from athena.core import activity, db, portability
 from test_review_queue import board as _board, issue, queue, review, submit
 
+from support import index_search_without_entry_keys
+
 board = _board
 
 
@@ -220,6 +222,8 @@ def test_additive_migration_preserves_populated_baseline_without_backfill(
     conn = db.connect(tmp_path / "upgrade.db")
     try:
         monkeypatch.setattr(db, "MIGRATIONS_DIR", baseline)
+        # The baseline has no search entry map (H2); index as that schema did.
+        index_search_without_entry_keys(monkeypatch)
         db.migrate(conn)
         conn.execute(
             "INSERT INTO users(id,email,name,role) VALUES (1,'owner@example.invalid','Owner','admin')"

@@ -16,7 +16,13 @@ import secrets
 import sqlite3
 from typing import Any, Iterable, Iterator
 
-from athena.core import activity_chain, issue_identity, links, portable_title_links
+from athena.core import (
+    activity_chain,
+    issue_identity,
+    links,
+    portable_title_links,
+    search,
+)
 from athena.core._util import atomic_write_json, utc_now_iso
 
 SCHEMA = "athena.portability.v1"
@@ -1191,49 +1197,23 @@ def _bounded_created_at(raw: object, fallback: str, ceiling: datetime) -> str:
 def _index_imported_issues(
     conn: sqlite3.Connection, issues: list[dict], issue_map: dict[int, int]
 ) -> int:
-    count = 0
+    # The imported row already holds the title and the rewritten body, so the one
+    # writer of the search index re-derives the entry from it like any other write.
     for issue in issues:
-        source_id = issue["id"]
-        target_id = issue_map[source_id]
-        body = _rewrite_body_refs(issue.get("body", ""), {"issue": issue_map})
-        _replace_search_index(
-            conn, kind="issue", source_id=target_id, title=issue["title"], body=body
+        search.index_document(
+            conn, kind="issue", source_id=issue_map[issue["id"]], commit=False
         )
-        count += 1
-    return count
+    return len(issues)
 
 
 def _index_imported_pages(
     conn: sqlite3.Connection, pages: list[dict], page_map: dict[int, int]
 ) -> int:
-    count = 0
     for page in pages:
-        source_id = page["id"]
-        target_id = page_map[source_id]
-        body = _rewrite_body_refs(page.get("body", ""), {"page": page_map})
-        _replace_search_index(
-            conn, kind="page", source_id=target_id, title=page["title"], body=body
+        search.index_document(
+            conn, kind="page", source_id=page_map[page["id"]], commit=False
         )
-        count += 1
-    return count
-
-
-def _replace_search_index(
-    conn: sqlite3.Connection,
-    *,
-    kind: str,
-    source_id: int,
-    title: str,
-    body: str,
-) -> None:
-    conn.execute(
-        "DELETE FROM search_index WHERE kind = ? AND source_id = ?",
-        (kind, source_id),
-    )
-    conn.execute(
-        "INSERT INTO search_index (kind, source_id, title, body) VALUES (?, ?, ?, ?)",
-        (kind, source_id, title, body),
-    )
+    return len(pages)
 
 
 def _rewrite_body_refs(body: str | None, maps: dict[str, dict[int, int]]) -> str:
