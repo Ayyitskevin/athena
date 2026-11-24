@@ -46,6 +46,7 @@ from athena.core import (
     coordination_roots,
     db,
     identity,
+    packet_time,
     reported_usage,
 )
 
@@ -477,7 +478,7 @@ def claim_issue(
                     actor,
                     existing,
                     f"issue is claimed by {existing['holder_name']} until "
-                    f"{existing['expires_at']}",
+                    f"{packet_time.rfc3339(existing['expires_at'])}",
                 )
             if generation is None:
                 # The holder repeated the claim without saying so. Say what this

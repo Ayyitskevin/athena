@@ -416,9 +416,20 @@ def test_lease_and_etag_refusals_carry_codes(world):
     )
     assert held["detail"].startswith("issue is claimed by Ann until ")
     # The holder and the expiry the detail names are fields too (F11).
-    assert set(held) == {"detail", "code", "holder", "expires_at", "events_after"}
+    # A refusal keeps the packet conventions (A13): the expiry in the one
+    # shape, its seconds beside it.
+    assert set(held) == {
+        "detail",
+        "code",
+        "holder",
+        "expires_at",
+        "expires_in_seconds",
+        "events_after",
+    }
     assert held["holder"] == {"id": 1, "name": "Ann"}
     assert held["detail"].endswith(held["expires_at"])
+    assert held["expires_at"].endswith("Z") and "T" in held["expires_at"]
+    assert 0 < held["expires_in_seconds"] <= 86400
 
     not_yours = _assert_coded(
         client.post(f"{path}/complete", json={}, headers=world["writer"]),

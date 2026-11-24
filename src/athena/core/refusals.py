@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.utils import is_body_allowed_for_status_code
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from athena.core import packet_time
 from athena.core.refusal_codes import code_for_status
 
 #: FastAPI's own 422 body for a request that does not match the route's schema.
@@ -45,7 +46,10 @@ class Refusal(HTTPException):
     ``code`` is keyword-only and required, so a call site cannot forget it;
     ``scripts/check_refusal_codes.py`` also refuses a code the registry lacks.
     ``extra`` holds structured fields the body carries beside ``detail`` and
-    ``code``; it may not replace either."""
+    ``code``; it may not replace either. A refusal is an answer an agent
+    parses, so its fields keep the packet conventions (A13): a timestamp takes
+    the one shape and an expiry has its seconds beside it, from the clock read
+    the refusal is raised at."""
 
     def __init__(
         self,
@@ -60,7 +64,9 @@ class Refusal(HTTPException):
         if extra is not None and not RESERVED_KEYS.isdisjoint(extra):
             raise ValueError("a refusal's extra fields may not replace detail or code")
         self.code = code
-        self.extra: dict[str, Any] = dict(extra or {})
+        self.extra: dict[str, Any] = packet_time.stamp(
+            dict(extra or {}), now=packet_time.clock()
+        )
 
 
 def code_of(exc: StarletteHTTPException) -> str:

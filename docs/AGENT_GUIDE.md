@@ -436,7 +436,8 @@ shapes; the issue's ETag covers its representation exactly.
   beside it: whole seconds from the packet's own clock read, 0 once passed (and 0 for
   a settled run control). The same read decides `active`, so a lease is active exactly
   when its seconds are above 0. Count down from your own clock; do not subtract
-  wall-clock instants.
+  wall-clock instants. A refusal that carries a timestamp or an expiry (`claim_held`'s
+  `expires_at`) keeps both rules.
 - **Every lane, even empty.** The desk shows every lane [DESK.md](DESK.md#the-lanes)
   documents, empty rather than absent; `asks.review_requests` is
   `{"items":[],"visible_total":0,…}` when nothing is asked of you.

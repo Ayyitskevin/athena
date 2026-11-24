@@ -272,15 +272,14 @@ to conserve usage, and the lead reviewed and probed it instead.
 | Renewing a lease | The generation and a fresh issue ETag | The generation alone (A12) |
 | Registered `next` hints that a test follows from the refusing state | 0 | All 10 that a state can be built for; 1 is recorded as unbuildable (F11) |
 | Timestamp shapes in one desk read | 3 | 1 (A13) |
-| Contract agent, two seats | 56 calls, 109,686 bytes at the head of PR #472 | 55 calls, 110,643 bytes |
+| Contract agent, two seats | 56 calls, 109,686 bytes at the head of PR #472 | 55 calls, 110,671 bytes |
 
 Bytes fell by 129,435 with F12, C9 and F7, and rose by 3,952 across F8, A12,
 F11 and A13 for the fields those add to every answer: event facts, the issue
 ETag beside a lease, `events_after`, expiry seconds and the always-present
 review-request lane.
 
-The product gate runs on the Wave 4 code head, `ff68768`; its receipt is in
-PR #473.
+The product gate runs on the Wave 4 code head; its receipt is in PR #473.
 
 Found by reviewing the builds, and fixed before each was committed:
 
@@ -308,7 +307,10 @@ Found by reviewing the builds, and fixed before each was committed:
 - **A13.** Its paging freeze caught the eligible-accounts read F9 had added in
   the same release, which paged by offset; it pages in D2's vocabulary. `since`
   on the admin security reads compared a packet-shaped timestamp as text and
-  answered with nothing; the edge accepts the packet shape.
+  answered with nothing; the edge accepts the packet shape. Hosted CI then
+  caught F11's `claim_held` refusal carrying its expiry in the stored shape
+  beside a lease read in the new one; a refusal's fields now keep the packet
+  conventions, stamped where every refusal is built.
 - **The branch coverage floor rose to 85.56.** Hosted CI failed the F9 commit
   because coverage had risen more than half a point above the 85.31 floor.
 
