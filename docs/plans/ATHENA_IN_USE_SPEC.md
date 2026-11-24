@@ -40,10 +40,11 @@ Wave 5 are built in PR #477: an edit keeps the text it replaced and can be
 undone, and one unrelated assignment no longer voids every stored idempotency
 receipt. Two more are built in PR #478: a restarted session replays its own
 idempotency key, and stopping an account names its leases and may release
-them. The rest of Wave 5 is built in PRs #479 and #480. Six requirements of
+them. The rest of Wave 5 is built in PRs #479 and #480. Seven requirements of
 Waves 6 and 7 are built in PR #481: the background loops run in one process
 and only once it is bound, every request leaves one log line with an id the
-response carries, and a command removes rows that have no further use.
+response carries, a command removes rows that have no further use, and the runbook says how to
+run its commands, restore onto a new host and upgrade.
 Nothing has been re-graded since.
 
 **Decisions in force.**
@@ -121,8 +122,8 @@ an idempotency key's state, and learnings that reach an issue's parent and
 siblings. Wave 5 is built. "Wave 5 results" says the same for
 each.
 
-**Next step.** Nothing built is waiting. Build the rest of Wave 6 (H6, H5), of Wave 7
-(H14, H19) and of Wave 8 (U2, U4, U5, U8, U10 to U15, C10), and
+**Next step.** Built and waiting for the next pull request: H6, H14 and U14.
+H5 is being built. Then the rest of Wave 8 (U2, U4, U5, U8, U10 to U13, U15, C10), and
 Wave 9. Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
 
@@ -1001,8 +1002,8 @@ Found and not fixed:
 
 ### Wave 6 results (third lanes) and Wave 7 results (second lanes)
 
-This is H9 from Wave 6 and H16, H17, H13, H15 and H20 from Wave 7 (PR #481),
-one commit each, all built by the lead, test first.
+This is H9 from Wave 6 and H16, H17, H13, H15, H20 and H19 from Wave 7
+(PR #481), one commit each, all built by the lead, test first.
 
 | Measure | Before | After |
 |---|---|---|
@@ -1016,6 +1017,8 @@ one commit each, all built by the lead, test first.
 | An unhandled error in the log | One record with no request named and the traceback three times | One line with the request's id and one traceback; the 500 carries the same id (H15) |
 | A webhook delivery that fails | Not logged | One `WARNING` per attempt, without the URL (H15) |
 | Read notifications, expired sessions, expired idempotency receipts | Never removed, or only as a side effect | `athena-maintain <db>` removes them and prints how many; `docs/OPERATIONS.md` says what is kept and for how long (H20, D26) |
+| What the runbook says about running a command, restoring elsewhere and upgrading | Bare command names; restore in place only; no upgrade section | "Running the Commands" (where the scripts live, all sixteen and what each does), "Restore onto a new host or path" and "Upgrade" (H19) |
+| `RELEASE_READINESS.md` on the schema | "The schema is at migration 0074", eighteen migrations ago | Its counts are stated as those of each dated entry's evidence commit (H19) |
 
 The product gate's receipt is in PR #481.
 
@@ -1053,6 +1056,13 @@ Found while building, and fixed before each was committed:
   subclassed. Its exit status for a failed start is 3, which the wrapper
   keeps. Two mutants survived the first tests: a "start only once" guard
   nothing needed (removed) and the lock's no-symlink flag (now tested).
+  The product gate then failed: the process smoke and the MCP launch smoke
+  each compared the readiness answer with an exact body. Both now expect
+  `background_loops`; a probe of an operator's own that compares the body
+  exactly needs the same.
+- **H19.** The restore sequence for a new host was run before it was written
+  down. The runbook's opening still told an operator to turn both loops off
+  by hand in a second process; since H13 the lock decides.
 - **H15.** The framework answers an unhandled error outside every
   middleware, so the first version logged the request with no status and the
   500 had no id. The traceback's three copies came from a task group named
@@ -1080,9 +1090,11 @@ Found and not fixed:
   state are kept for ever and the document says so. The database file does
   not shrink when rows are removed. Nothing schedules the command: no timer
   unit ships.
-- **H14 and H19 are not built.** H14 (keys left executing by a process that
-  no longer exists, and an admin read and resolution of indeterminate keys)
-  is designed and waits for its own pull request.
+- **H19.** No command installs or upgrades Athena; the runbook says to
+  install the new release "the way this instance was installed". The other
+  dated documents still quote old counts in the present tense (G9).
+- **H14 is not in this pull request.** It is built and waits for the next
+  one with H6.
 
 ## Priorities
 
