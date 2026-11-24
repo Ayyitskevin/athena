@@ -472,8 +472,9 @@ def test_a_release_carries_no_completion_report(tmp_path):
 
 
 def test_no_release_control_without_a_live_lease(tmp_path):
-    """A lapsed row is nobody's to complete but its holder's (complete_claim), so
-    the page offers no release for it; an unclaimed issue offers none either."""
+    """The page's release is for a live lease (U3); a lapsed row is settled by its
+    holder or, naming its generation, by an admin over REST (C8), so the page
+    offers no release for it; an unclaimed issue offers none either."""
     app, db_file = make_app(tmp_path)
     with TestClient(app) as client:
         bootstrap(client)

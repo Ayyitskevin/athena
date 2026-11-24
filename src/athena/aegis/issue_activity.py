@@ -911,7 +911,9 @@ def record_lease_released(
     holder_name: str,
     commit: bool,
 ) -> dict:
-    """Record that an admin ended another account's live lease (U3).
+    """Record that an admin ended another account's live lease (U3), settled its
+    lapsed row, or released it while pausing, revoking or offboarding the
+    account (C8). A lapsed row's lapse is recorded first, as ``lease_lapsed``.
 
     A release, not a completion: the holder finished nothing, so this is its own
     verb and no reader of ``claim_completed`` (settlement, work progress, the

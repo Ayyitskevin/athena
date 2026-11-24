@@ -1568,20 +1568,39 @@ class AthenaClient:
             self._client.get("/automation/rules", params={"failing_only": True})
         )
 
-    def set_user_paused(self, user_id: int, paused: bool) -> Any:
+    @staticmethod
+    def _release_leases(release_leases: bool) -> dict[str, str]:
+        """The acts' explicit option; omitted from the request unless asked."""
+        return {"release_leases": "true"} if release_leases else {}
+
+    def set_user_paused(
+        self, user_id: int, paused: bool, *, release_leases: bool = False
+    ) -> Any:
         """Admin pause lever: freeze (or resume) every authenticated action for a
-        user without revoking anything (admin only)."""
+        user without revoking anything (admin only). Answers with the account's
+        active leases; ``release_leases`` also releases them on a pause."""
         return self._mutate(
-            self._client.put, f"/users/{user_id}/paused", json={"paused": paused}
+            self._client.put,
+            f"/users/{user_id}/paused",
+            json={"paused": paused},
+            params=self._release_leases(release_leases),
         )
 
-    def revoke_agent_tokens(self, user_id: int) -> Any:
+    def revoke_agent_tokens(self, user_id: int, *, release_leases: bool = False) -> Any:
         """Admin kill switch: revoke every live token another user holds (admin only)."""
-        return self._mutate(self._client.delete, f"/users/{user_id}/tokens")
+        return self._mutate(
+            self._client.delete,
+            f"/users/{user_id}/tokens",
+            params=self._release_leases(release_leases),
+        )
 
-    def offboard_user(self, user_id: int) -> Any:
+    def offboard_user(self, user_id: int, *, release_leases: bool = False) -> Any:
         """Admin offboard: demote to viewer + revoke all sessions and tokens (admin only)."""
-        return self._mutate(self._client.post, f"/users/{user_id}/offboard")
+        return self._mutate(
+            self._client.post,
+            f"/users/{user_id}/offboard",
+            params=self._release_leases(release_leases),
+        )
 
     def dispatch_to_icarus(
         self,

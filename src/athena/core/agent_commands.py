@@ -16,6 +16,10 @@ They are the *authoritative* levers over an agent's credential lifecycle:
 - ``offboard_user`` — the full lockout: demote to viewer, revoke every session,
   revoke every token, in one move.
 
+The four acts that stop an account (pause, token revocation, offboarding and
+removal) also answer with the account's active leases, and release each of them
+when the operator asks with ``release_leases`` (C8, D12; ``account_leases``).
+
 Each runs as one atomic, audited transaction (the cardinal "one command owns each
 write" rule): the credential change and the append-only activity event land or
 roll back together, so a lockout can never persist without its record. Web, REST,
@@ -35,6 +39,7 @@ import re
 import sqlite3
 
 from athena.core import (
+    account_leases,
     activity,
     db,
     identity,
@@ -97,6 +102,31 @@ def _require_admin_actor(actor: dict | None) -> dict:
             "forbidden", f"token scope required: {tokens.ADMIN_SCOPE}"
         )
     return actor
+
+
+def _release_option(actor: dict, target_user_id: int, release_leases: bool) -> None:
+    """Refuse ``release_leases`` aimed at the acting account itself.
+
+    A release records an admin ending ANOTHER account's lease
+    (``lease_released``); the same command run on one's own lease records a
+    completion of one's own work, which stopping oneself is not. An admin
+    settles its own leases with ``complete_claim`` or ``yield_claim``."""
+    if release_leases and target_user_id == actor["id"]:
+        raise AgentCommandError(
+            "invalid",
+            "release_leases releases another account's leases; complete or "
+            "yield your own",
+        )
+
+
+def _active_leases(
+    conn: sqlite3.Connection, actor: dict, target_user_id: int, release_leases: bool
+) -> list[dict]:
+    """The target's active leases the actor may see, released when asked. Runs
+    inside the act's transaction, after its change."""
+    return account_leases.name_and_release(
+        conn, actor=actor, holder_id=target_user_id, release=release_leases
+    )
 
 
 def onboard_agent(
@@ -200,7 +230,11 @@ def onboard_agent(
 
 
 def revoke_agent_tokens(
-    conn: sqlite3.Connection, *, actor: dict | None, target_user_id: int
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    target_user_id: int,
+    release_leases: bool = False,
 ) -> dict:
     """Revoke EVERY live API token held by ``target_user_id`` — the credential kill
     switch — and record one audited event attributed to the acting admin.
@@ -210,8 +244,13 @@ def revoke_agent_tokens(
     write share one immediate transaction so a concurrent mint cannot slip a token in
     between the count and the revoke. Raises AgentCommandError("unauthorized"/
     "forbidden") when the
-    actor is missing or lacks the admin role/scope."""
+    actor is missing or lacks the admin role/scope.
+
+    The answer's ``active_leases`` names the account's active leases; with
+    ``release_leases`` each is released in the same transaction, recorded per
+    lease as ``lease_released`` (C8)."""
     actor = _require_admin_actor(actor)
+    _release_option(actor, target_user_id, release_leases)
     with db.transaction(conn, immediate=True):
         target = users.get_user(conn, target_user_id)
         if target is None:
@@ -228,7 +267,12 @@ def revoke_agent_tokens(
             detail=f"revoked {revoked} live token(s)",
             commit=False,
         )
-    return {"user_id": target_user_id, "revoked_token_count": revoked}
+        held = _active_leases(conn, actor, target_user_id, release_leases)
+    return {
+        "user_id": target_user_id,
+        "revoked_token_count": revoked,
+        "active_leases": held,
+    }
 
 
 def set_user_paused(
@@ -237,6 +281,7 @@ def set_user_paused(
     actor: dict | None,
     target_user_id: int,
     paused: bool,
+    release_leases: bool = False,
 ) -> dict:
     """Pause or resume a user — the operator lever BETWEEN watch and revoke.
 
@@ -251,8 +296,19 @@ def set_user_paused(
     Refuses to pause the last ACTIVE admin ("conflict"): a paused admin cannot resume
     anyone — itself included — so that pause would brick the workspace. Raises
     AgentCommandError("not_found") for an unknown target, "unauthorized"/
-    "forbidden" when the actor is missing or lacks the admin role/scope."""
+    "forbidden" when the actor is missing or lacks the admin role/scope.
+
+    The answer is the user with ``active_leases``, the account's active leases.
+    With ``release_leases`` a pause releases each of them in the same
+    transaction, recorded per lease as ``lease_released`` (C8), even when the
+    account was already paused; asked of a resume, the option is refused
+    ("invalid"): releasing belongs to stopping an account."""
     actor = _require_admin_actor(actor)
+    if release_leases and not paused:
+        raise AgentCommandError(
+            "invalid", "release_leases applies to a pause, not a resume"
+        )
+    _release_option(actor, target_user_id, release_leases)
     with db.transaction(conn, immediate=True):
         target = users.get_user(conn, target_user_id)
         if target is None:
@@ -265,23 +321,28 @@ def set_user_paused(
         ):
             raise AgentCommandError("conflict", "cannot pause the last active admin")
         already = bool(target.get("paused_at"))
-        if already == paused:
-            return target
-        updated = users.set_paused(conn, target_user_id, paused, commit=False)
-        activity.record(
-            conn,
-            actor_id=actor["id"],
-            verb=VERB_PAUSED if paused else VERB_RESUMED,
-            target_kind="user",
-            target_id=target_user_id,
-            commit=False,
-        )
+        updated: dict | None = target
+        if already != paused:
+            updated = users.set_paused(conn, target_user_id, paused, commit=False)
+            activity.record(
+                conn,
+                actor_id=actor["id"],
+                verb=VERB_PAUSED if paused else VERB_RESUMED,
+                target_kind="user",
+                target_id=target_user_id,
+                commit=False,
+            )
         assert updated is not None
-    return updated
+        held = _active_leases(conn, actor, target_user_id, release_leases)
+    return {**updated, "active_leases": held}
 
 
 def offboard_user(
-    conn: sqlite3.Connection, *, actor: dict | None, target_user_id: int
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    target_user_id: int,
+    release_leases: bool = False,
 ) -> dict:
     """Lock a user out in one atomic move: demote to viewer, revoke every session,
     revoke every token — the full offboarding lever — and record one audited event.
@@ -292,8 +353,13 @@ def offboard_user(
     last-admin case. Idempotent enough to retry safely: re-running on an already-viewer
     account with no sessions/tokens simply revokes zero of each. Raises
     AgentCommandError("unauthorized"/"forbidden") when the actor is missing or
-    lacks the admin role/scope."""
+    lacks the admin role/scope.
+
+    The answer's ``active_leases`` names the account's active leases; with
+    ``release_leases`` each is released in the same transaction, recorded per
+    lease as ``lease_released`` (C8)."""
     actor = _require_admin_actor(actor)
+    _release_option(actor, target_user_id, release_leases)
     with db.transaction(conn, immediate=True):
         target = users.get_user(conn, target_user_id)
         if target is None:
@@ -319,16 +385,22 @@ def offboard_user(
             ),
             commit=False,
         )
+        held = _active_leases(conn, actor, target_user_id, release_leases)
     return {
         "user_id": target_user_id,
         "role": users.VIEWER_ROLE,
         "revoked_session_count": revoked_sessions,
         "revoked_token_count": revoked_tokens,
+        "active_leases": held,
     }
 
 
 def remove_user(
-    conn: sqlite3.Connection, *, actor: dict | None, target_user_id: int
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    target_user_id: int,
+    release_leases: bool = False,
 ) -> dict:
     """The lever after offboarding: offboard (demote to viewer, revoke every
     session and token) AND stamp the removal tombstone in one atomic move, then
@@ -342,8 +414,13 @@ def remove_user(
     removed admins no longer count). Raises AgentCommandError("not_found") for an
     unknown target, "unauthorized"/"forbidden" when the actor is missing or lacks the admin
     role/scope. Idempotent: re-running on an already-removed account returns
-    its current state and records nothing."""
+    its current state and records nothing but the releases it is asked for.
+
+    The answer's ``active_leases`` names the account's active leases; with
+    ``release_leases`` each is released in the same transaction, recorded per
+    lease as ``lease_released`` (C8)."""
     actor = _require_admin_actor(actor)
+    _release_option(actor, target_user_id, release_leases)
     with db.transaction(conn, immediate=True):
         target = users.get_user(conn, target_user_id)
         if target is None:
@@ -354,6 +431,9 @@ def remove_user(
                 "removed_at": target["removed_at"],
                 "revoked_session_count": 0,
                 "revoked_token_count": 0,
+                "active_leases": _active_leases(
+                    conn, actor, target_user_id, release_leases
+                ),
             }
         if target["role"] == users.ADMIN_ROLE and users.count_admins(conn) <= 1:
             raise AgentCommandError("conflict", "cannot remove the last admin")
@@ -379,11 +459,13 @@ def remove_user(
             ),
             commit=False,
         )
+        held = _active_leases(conn, actor, target_user_id, release_leases)
     return {
         "user_id": target_user_id,
         "removed_at": updated["removed_at"],
         "revoked_session_count": revoked_sessions,
         "revoked_token_count": revoked_tokens,
+        "active_leases": held,
     }
 
 

@@ -49,6 +49,7 @@ from athena.aegis import fleet_work_api as aegis_fleet_work_api
 from athena.aegis import sprints_api as aegis_sprints_api
 from athena.aegis import work_context_api as aegis_work_context_api
 from athena.core import (
+    account_leases,
     activity,
     agent_runs_api,
     activity_api,
@@ -85,6 +86,7 @@ from athena.core import (
     workers_api,
 )
 from athena.aegis import issue_undo as aegis_issue_undo
+from athena.aegis import lease_commands as aegis_lease_commands
 from athena.aegis import lease_lapse_commands as aegis_lease_lapse_commands
 from athena.mentor import api as mentor_api
 from athena.mentor import learnings_api as mentor_learnings_api
@@ -476,6 +478,13 @@ def create_app(
     # down: a lapsed lease its caller is accountable for (C4, D11). Same reason
     # as above: core owns the feed and may not import aegis.
     feed_observers.register("lease_lapses", aegis_lease_lapse_commands.observe_lapses)
+    # Pausing, revoking or offboarding an account names its active leases and,
+    # when the operator asks, releases them through the lease command (C8,
+    # D12). Same reason again: core owns those acts and may not import aegis.
+    account_leases.register(
+        aegis_lease_commands.account_active_leases,
+        aegis_lease_commands.release_account_lease,
+    )
 
     # Every JSON refusal carries a registered `code` beside its unchanged
     # `detail` (core/refusal_codes.py owns the codes): the HTTPException and

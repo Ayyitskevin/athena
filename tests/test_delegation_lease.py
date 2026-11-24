@@ -384,27 +384,34 @@ def test_complete_with_a_stale_generation_on_a_lapsed_lease_is_refused(tmp_path)
 
 def test_complete_never_clears_someone_elses_lapsed_lease(tmp_path):
     # WHY: "the holder clears it" is the rule, and expiry does not turn a row
-    # into common property. Neither another delegated contributor nor an ADMIN
-    # may complete it — the admin release lever exists to break a live deadlock,
-    # and an expired row is not one. The refusal is the one they got before.
+    # into common property: another delegated contributor may not complete it.
+    # The one exception is an admin settling a dead agent's row with its
+    # generation (C8), and that is recorded as a release, never a completion.
     conn = _migrated_conn(tmp_path / "lapsed-not-mine.db")
     _seed(conn)
     issue = _delegated_issue(conn)
     lease = _claim(conn, 2, issue["id"])
     _expire(conn, issue["id"])
 
-    for actor_id in (3, 1):  # AgentB, then the admin.
-        with pytest.raises(issue_commands.IssueCommandError) as refused:
-            lease_commands.complete_claim(
-                conn,
-                actor=_actor(conn, actor_id),
-                issue_id=issue["id"],
-                generation=lease["generation"],
-            )
-        assert refused.value.kind == "conflict"
-        assert refused.value.detail == "no active claim to complete"
-
+    with pytest.raises(issue_commands.IssueCommandError) as refused:
+        lease_commands.complete_claim(
+            conn,
+            actor=_actor(conn, 3),  # AgentB
+            issue_id=issue["id"],
+            generation=lease["generation"],
+        )
+    assert refused.value.kind == "conflict"
+    assert refused.value.detail == "no active claim to complete"
     assert leases.get_lease(conn, issue["id"])["holder_id"] == 2
+
+    settled = lease_commands.complete_claim(
+        conn,
+        actor=_actor(conn, 1),
+        issue_id=issue["id"],
+        generation=lease["generation"],
+    )
+    assert settled["lapsed"] is True
+    assert leases.get_lease(conn, issue["id"]) is None
     assert _completed_generations(conn, issue["id"]) == []
 
 

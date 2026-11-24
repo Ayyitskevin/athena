@@ -128,7 +128,11 @@ def test_revoke_agent_tokens_command_kills_auth_and_audits(tmp_path):
         result = agent_commands.revoke_agent_tokens(
             conn, actor=users.get_user(conn, 1), target_user_id=agent["id"]
         )
-        assert result == {"user_id": agent["id"], "revoked_token_count": 1}
+        assert result == {
+            "user_id": agent["id"],
+            "revoked_token_count": 1,
+            "active_leases": [],
+        }
 
         # One audit event, attributed to the acting admin, targeting the agent user.
         events = activity.list_activity(conn, actor_id=1)
@@ -271,7 +275,11 @@ def test_rest_revoke_tokens_end_to_end(tmp_path):
         # The admin can revoke ANOTHER user's tokens.
         r = client.delete(f"/users/{agent['id']}/tokens", headers=H_ADMIN)
         assert r.status_code == 200, r.text
-        assert r.json() == {"user_id": agent["id"], "revoked_token_count": 1}
+        assert r.json() == {
+            "user_id": agent["id"],
+            "revoked_token_count": 1,
+            "active_leases": [],
+        }
 
         # The revoked bearer token no longer authenticates.
         assert client.get("/users/me", headers=agent_auth).status_code == 401

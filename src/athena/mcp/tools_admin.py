@@ -74,12 +74,14 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         )
 
     @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=SETS)
-    def pause_agent(user_id: int) -> dict:
+    def pause_agent(user_id: int, release_leases: bool = False) -> dict:
         """Admin: PAUSE user_id — every authenticated action it attempts is
         refused until resumed, but nothing is destroyed (tokens and sessions
         stay intact). The lever to reach for BEFORE the kill switch when an
-        agent looks off-course. Audited. Requires an admin token."""
-        return client.set_user_paused(user_id, True)
+        agent looks off-course. Audited. Requires an admin token. Returns its
+        active_leases; release_leases=true also releases each one, recorded
+        per lease as lease_released."""
+        return client.set_user_paused(user_id, True, release_leases=release_leases)
 
     @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=SETS)
     def resume_agent(user_id: int) -> dict:
@@ -88,18 +90,22 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         return client.set_user_paused(user_id, False)
 
     @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=ERASES)
-    def revoke_agent_tokens(user_id: int) -> dict:
+    def revoke_agent_tokens(user_id: int, release_leases: bool = False) -> dict:
         """Admin kill switch: revoke EVERY live API token held by user_id — the
         lever to immediately stop a compromised or runaway agent. Idempotent and
-        audited; returns {user_id, revoked_token_count}. Requires an admin token."""
-        return client.revoke_agent_tokens(user_id)
+        audited; returns {user_id, revoked_token_count, active_leases}.
+        release_leases=true also releases each active lease, recorded per lease
+        as lease_released. Requires an admin token."""
+        return client.revoke_agent_tokens(user_id, release_leases=release_leases)
 
     @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=ERASES)
-    def offboard_agent(user_id: int) -> dict:
+    def offboard_agent(user_id: int, release_leases: bool = False) -> dict:
         """Admin one-click offboard: demote user_id to viewer, revoke every session,
         and revoke every token — one audited lockout. Refuses to strip the last
-        admin. Returns the counts revoked. Requires an admin token."""
-        return client.offboard_user(user_id)
+        admin. Returns the counts revoked and its active_leases;
+        release_leases=true also releases each one, recorded per lease as
+        lease_released. Requires an admin token."""
+        return client.offboard_user(user_id, release_leases=release_leases)
 
     @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=FULL_ONLY, hints=ADDS)
     def dispatch_to_icarus(

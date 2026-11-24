@@ -201,7 +201,8 @@ next observer and never fails the read.
   attention ranking. An account that cannot see the issue records, receives and
   counts nothing.
 - **Nothing is released.** The row stays until its holder clears it with
-  `complete_claim` or the next claim replaces it (ruling K1). Automation never fires
+  `complete_claim`, an admin settles it (below), or the next claim replaces it
+  (ruling K1). Automation never fires
   on `lease_lapsed`, and it does not reset a schedule's inactivity clock.
 
 For an account without admin authority, the attention ranking's
@@ -231,6 +232,54 @@ holder gets a notification. A release carries no completion report.
   released holder that is still the assignee or a contributor may claim the issue
   again at once. Reassign or remove the contributor to move the work.
 
+### An admin settles a lapsed lease without claiming it
+
+An admin may also clear another account's expired lease row (C8): the same
+`complete_claim`, with the row's generation. Only the holder's own lapsed row may
+omit the generation; an admin names it, and a missing one is refused
+`428 lease_generation_required` without handing it out, a stale one
+`409 lease_generation_mismatch`. A member who is not the holder is still refused
+`409 claim_required`.
+
+The clock ended that possession, not the admin, so the command first records its
+lapse through the lapse's one writer, once per generation: if an observer already
+recorded `lease_lapsed` for that generation, nothing more is recorded about the
+lapse, and a lease on a done or archived issue records none. Then it deletes the
+row and records `lease_released`, as above, and the answer says `lapsed: true`.
+One possession thus reads "lapsed, then released by the admin", never "the admin
+ended live work".
+
+### Stopping an account names its leases
+
+Pausing an account, revoking its tokens, offboarding it and removing it stop the
+account, but its leases and their path fences stay live until they expire, and a
+stopped account cannot release them. So each act answers with the account's
+`active_leases`: for each, `issue_id`, `key`, `title`, `generation`,
+`expires_at` and `released` (C8, decision D12). A lease on an issue the acting
+admin cannot see is neither listed nor released, as a hidden issue reads as
+missing everywhere (today an admin sees every project, so none is left out).
+
+| Act | REST | MCP |
+|---|---|---|
+| Pause or resume | `PUT /users/{user_id}/paused` | `pause_agent`, `resume_agent` |
+| Revoke every token | `DELETE /users/{user_id}/tokens` | `revoke_agent_tokens` |
+| Offboard | `POST /users/{user_id}/offboard` | `offboard_agent` |
+| Remove | `POST /users/{user_id}/remove` | none |
+
+The operator may release them in the same act: `?release_leases=true` over REST,
+`release_leases: true` to the MCP tool. It is an explicit option, never a default:
+without it nothing is released (ruling K1). With it, each listed lease is released
+through `complete_claim` with the generation the act read, so each is recorded as
+its own `lease_released` naming the holder, and the holder is told, exactly as an
+admin's release of one lease. The act and its releases are one transaction: they
+commit or roll back together. A pause of an account already paused records no
+second pause but still releases when asked.
+
+The option is refused `422 validation_error` on a resume, where releasing does not
+belong, and on the acting admin's own account, where the command would record the
+admin completing its own work; settle your own leases with `complete_claim` or
+`yield_claim`. The cockpit's buttons on Admin → Agents do not offer the option.
+
 Summary counts carry `scope=returned_items`: active, expired, and attention totals
 describe only the bounded `items` window, never undisplayed claims when `clipped=true`.
 
@@ -258,8 +307,9 @@ possession. Yield, active completion, active-held decline, and handoff resume
 require the exact current generation. For an eligible holder's own lapsed row,
 REST/command completion also accepts an omitted/null generation: it uses the
 server-observed expired generation under the same writer transaction. A supplied
-stale generation still refuses; another actor's lapsed row cannot be completed,
-including by an admin. MCP's `complete_claim` schema and official client require
+stale generation still refuses; another actor's lapsed row can be completed only
+by an admin, with its generation (see "An admin settles a lapsed lease without
+claiming it"). MCP's `complete_claim` schema and official client require
 an explicit generation; use the observed value, not this REST exception as a
 retry workaround (`aegis/lease_commands.py::complete_claim`,
 `aegis/api.py::complete_issue_claim`, `mcp/tools_work.py::complete_claim`).

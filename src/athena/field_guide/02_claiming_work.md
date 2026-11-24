@@ -123,8 +123,9 @@ restores (`aegis/issue_activity.py::record_edited`).
 
 MCP completion requires your observed generation. At the REST/command layer,
 your own lapsed row may also be completed with an omitted/null generation under
-the writer transaction; a supplied stale token refuses. An admin cannot clear
-another actor's lapsed row. This is documented behavior, not advice to drop a
+the writer transaction; a supplied stale token refuses. Only an admin may clear
+another actor's lapsed row, naming its generation; its lapse is recorded first
+and the clearing is `lease_released`. This is documented behavior, not advice to drop a
 token after a refusal (`aegis/lease_commands.py::complete_claim`,
 `aegis/api.py::complete_issue_claim`, `mcp/tools_work.py::complete_claim`).
 

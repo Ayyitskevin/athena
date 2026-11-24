@@ -439,10 +439,13 @@ To decline a delegation: MCP `decline_delegation(issue_id, generation?)` · REST
 - **Never delete.** Issues cannot be destroyed. Archive one instead:
   `POST /issues/{issue_id}/archive` hides it from default lists and keeps its history.
 - **Never sweep leases.** Expired leases are shown to their holder in the desk. Settle
-  only your own, with `complete_claim` and the generation you observed. An admin cannot
-  settle another actor's expired lease. Do not clear leases in bulk. A lapse is
+  only your own, with `complete_claim` and the generation you observed. Only an admin
+  may settle another actor's expired lease, one lease at a time and naming its
+  generation. Do not clear leases in bulk. A lapse is
   recorded once as a `lease_lapsed` event and told to the issue's assignee and the
-  account that delegated it; recording it releases nothing.
+  account that delegated it; recording it releases nothing. Pausing, revoking or
+  offboarding an agent names its active leases and releases them only when the
+  operator asks with `release_leases` ([ACTIVE_WORK.md](ACTIVE_WORK.md)).
 - **Never bulk-acknowledge notifications.** `mark_notifications_read` marks every unread
   row, including ones that arrived after you read. Acknowledge what you handled with
   `mark_notification_read`: `through_id` (every unread row up to and including the
