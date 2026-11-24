@@ -19,6 +19,7 @@ from athena.aegis import (
     issue_etags,
     issues,
     lease_commands,
+    related_learnings,
     review_queue,
     review_request_projection,
     statuses,
@@ -733,6 +734,14 @@ def build_work_context(
                 "path_fence": "rooted: a catalog root; lexical, root unknown: no catalog, compared as written; unresolved: separation unproven; issue_only: none",
             },
             "runbook": runbook_hints.runbook_narration(conn, issue["id"], actor=actor),
+            # What was learned on this issue, its parent and its siblings (W5):
+            # a rule from the slice beside this one reaches whoever takes this.
+            "learnings": related_learnings.related_learnings(
+                conn,
+                issue=issue,
+                actor=actor,
+                visible_project_ids=visible_project_ids,
+            ),
             "complete_does_not_close_issue": True,
             "warnings": [],
             # Which of the six work-order parts the WHOLE body has as headings

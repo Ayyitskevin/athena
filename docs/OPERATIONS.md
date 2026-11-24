@@ -1148,6 +1148,24 @@ are rejected.
 A newly created raw token is shown once. Athena stores only a hash, so a lost raw
 token must be revoked and replaced.
 
+## One writer, and what waits for it
+
+SQLite lets many readers and one writer work at once. A second writer waits
+for the first, for up to five seconds.
+
+- **A bearer-authenticated read does not wait.** A token's `last_used_at` is
+  stamped at most once a minute, so a read takes no write lock unless that
+  stamp is due. A due stamp waits a quarter of a second for a busy writer and
+  is then skipped; the next request tries again. `last_used_at` is therefore
+  accurate to the minute, which is finer than anything that reads it (the
+  agents page warns about a live token unused for 30 days).
+- **A write that waits five seconds for the lock answers `503 busy`** with
+  `Retry-After: 1`, not a 500. Nothing that statement would have written was
+  applied, so the same request can be sent again.
+- A long writer is the thing to find when `busy` appears: a migration that
+  rebuilds a table (see the note on migration 0090 below), or another process
+  holding the database file.
+
 ## Token Scopes
 
 Token scopes narrow a bearer token below the user's role. They never expand a

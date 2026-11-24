@@ -338,6 +338,7 @@ def test_an_issue_with_no_parts_is_created_claimed_and_completed_as_before(board
         "recent_activity",
         "claim_handoffs",
         "definition_of_done",
+        "learnings",
     }
     held = client.post(
         f"/issues/{issue['id']}/claim",

@@ -58,8 +58,8 @@ them. Nothing has been re-graded since.
 
 **Known issues, most serious first.**
 
-1. A learning recorded on one slice does not reach its parent or its
-   siblings: the last of Wave 5 (W5).
+1. Three REST lists return everything and the page list carries bodies:
+   the rest of Wave 6 (H6).
 2. `IssueOut.parent_id` gives the id of a parent issue the caller cannot see
    (found by F6's property test; older than this specification).
 3. The project brief and `/desk/since` without a cursor still grow with
@@ -109,12 +109,12 @@ leases to yield and tells who answers for the work, a HOLD or BLOCKED report
 that asks whoever answers for it, each agent's last refusal readable by
 the operator, a claim renewed with no recorded work raised, a second budget
 counter for comments, claims and delegations, the boot block, guide and
-glossary as MCP resources, a HOLD answer that asks for a rule, and a read of
-an idempotency key's state. "Wave 5 results" says the same for
+glossary as MCP resources, a HOLD answer that asks for a rule, a read of
+an idempotency key's state, and learnings that reach an issue's parent and
+siblings. Wave 5 is built. "Wave 5 results" says the same for
 each.
 
-**Next step.** Nothing built is waiting. Build the rest of Wave 5 in the order
-its row gives (W5). Then the rest of Wave 6 (H6, H5, H7, H9), of Wave 7
+**Next step.** Nothing built is waiting. Build the rest of Wave 6 (H6, H5, H9), of Wave 7
 (H13 to H17, H19, H20) and of Wave 8 (U2, U4, U5, U8, U10 to U15, C10), and
 Wave 9. Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
@@ -938,6 +938,59 @@ Found and not fixed:
 - **A11.** The read cannot say whether a retry would be refused
   `idempotency_mismatch`, which depends on the request. H14's operator view of
   a key is not built.
+
+### Wave 5 results (fourth lanes) and Wave 6 results (second lanes)
+
+This is W5, the last requirement of Wave 5, and H7 from Wave 6 (PR #480), one
+commit each, both built by the lead, test first.
+
+| Measure | Before | After |
+|---|---|---|
+| A learning recorded on one slice of an outcome | Reaches the next agent through that issue's backlinks only | The work-context packet of that issue and of each sibling under the same parent lists it, and a parent's learning reaches every child: `learnings`, newest first, at most five, each with `authored_by` and `advisory_untrusted` (W5, D22) |
+| A bearer-authenticated read while another writer holds the database | Waits up to five seconds to stamp the token's last use, then 500 | Answers at once; the stamp is written at most once a minute and a due one is skipped after a quarter of a second (H7) |
+| A write that waits five seconds for the lock | Unhandled error, 500 | 503 `busy` with `Retry-After` (H7) |
+| Contract agent, two seats | 55 calls and 110,701 bytes | 55 calls and 110,771 bytes: the `learnings` lane on two work-context reads |
+| Fleet trial | 88 calls and 233,853 bytes | 88 calls and 234,203 bytes: the `learnings` lane on ten work-context reads |
+
+The product gate's receipt is in PR #480.
+
+Decisions the lead took while building, each reversible by the owner:
+
+- **A learning row is its event; its text is the runbook's.** No new table
+  (D22). The recorder's event says who and when; the text is read from the
+  runbook page and paired with its event by position, which holds while the
+  page's learning blocks and its recorded learnings agree.
+- **A runbook edited by hand gives no excerpt**, for every row of that page,
+  and names the page. Words are never put under an author the trail does not
+  support.
+- **The parent's packet lists its own and its parent's learnings, not each
+  child's.** The requirement names the issue, its parent and its siblings.
+- **Siblings are read only through a parent the reader can see.**
+- **The last-use stamp is advisory.** It never fails or delays a read: a due
+  stamp that finds the database busy is skipped and tried on the next request.
+- **`busy` is its own code**, beside `unavailable`: it says the request was
+  not applied and can be sent again as it is.
+
+Found while building, and fixed before each was committed:
+
+- **W5.** A first version carried each issue's key and title; the title is
+  peer-written text that would have needed its own author, and the key is on
+  the hierarchy already. Rows carry `issue_id`. One mutant survived the first
+  tests (an imported learning event counted); a test covers it, and twelve
+  are now caught.
+- **H7.** An `UPDATE` that changes no row still takes the writer lock, so the
+  check for a due stamp is a separate read. Seven mutants are each caught.
+
+Found and not fixed:
+
+- **W5.** A learning does not reach other outcomes or the rest of a project.
+  The brief packet (`brief=true`) does not carry the lane. The read examines
+  the newest 50 learning events of the related issues, so `total` is a count
+  among those. A runbook bound to two issues would be listed under both.
+- **H7.** Other writes on a request path still wait the full five seconds:
+  a refused agent request's last-refusal row (F15), a keyed write's claim.
+  `last_used_at` is accurate to the minute, not the second. Whether a keyed
+  write that answers `busy` keeps its key was not established.
 
 ## Priorities
 
