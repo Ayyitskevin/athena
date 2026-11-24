@@ -607,7 +607,8 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         visibility rules apply as if you had made the change by hand, so undo is
         not a way to reach someone else's write.
 
-        Reversible today: issue archive/unarchive and label/unlabel, page
+        Reversible today: issue archive/unarchive and label/unlabel, an issue's
+        title and body edit (refused once a later edit replaced that text), page
         archive/unarchive and label/unlabel. Everything else is refused with a
         reason: a comment or an attachment is one-way (delete it explicitly
         instead), a destroyed row is a trapdoor. Refused too when the event was

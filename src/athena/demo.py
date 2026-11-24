@@ -172,12 +172,18 @@ def _seed_supervision(
     #    above now reads as a live constraint with real consumption against it —
     #    and the trail carries the agent's account of what it did, which is the
     #    thing the operator is being asked to approve in the next step.
+    #    A body edit on a bearer token names the revision it read (D20), as a
+    #    real agent's does; the text it replaces is kept beside the edit.
+    progress_target = issues.get_issue(conn, work_issue_id)
+    if progress_target is None:
+        raise DemoSetupError("the claimed issue disappeared during seeding")
     progress_token = run_context.set_run_id(DEMO_RUN_ID)
     try:
         issue_commands.update_issue(
             conn,
             actor=sol_agent,
             issue_id=work_issue_id,
+            if_match=[issue_etags.current_etag(conn, progress_target)],
             body=(
                 "Authorization now lives in the command, and the adapter only maps "
                 "the refusal kind onto a status code. Ready to close — asking "

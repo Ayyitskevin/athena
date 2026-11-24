@@ -75,6 +75,7 @@ PACKET_READS: dict[str, tuple[str, str]] = {
     "get_project_floor": ("GET", "/projects/{project_id}/floor"),
     "get_project_review_queue": ("GET", "/projects/{project_id}/review-queue"),
     "get_issue_history": ("GET", "/issues/{issue_id}/history"),
+    "get_issue_prior_text": ("GET", "/issues/{issue_id}/prior-texts/{event_id}"),
     "get_attention_ranking": ("GET", "/attention/ranking"),
     # No timestamp in it; the first read to page in D2's vocabulary.
     "list_eligible_accounts": ("GET", "/issues/{issue_id}/eligible-accounts"),

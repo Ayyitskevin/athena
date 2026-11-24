@@ -107,8 +107,10 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    # Destructive: an issue's title and body keep no history.
-    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=SEAT, hints=ERASES)
+    # Not destructive (F10): an edit keeps the title and body it replaced, which
+    # get_issue_prior_text reads and undo restores. Idempotent: the same call
+    # again changes nothing further (with a tag, it is refused 412).
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=SEAT, hints=SETS)
     def update_issue(
         issue_id: int,
         title: str | None = None,
@@ -120,9 +122,17 @@ def register_work_tools(tool, mutation_tool, client) -> None:
     ) -> dict:
         """Update an issue. Send only the fields to change. status must be a name
         configured for its project (the backlog defaults to open/in_progress/done);
-        priority is low/medium/high/urgent. if_match is optional: pass the issue's
-        current `_etag` when the update must not overwrite a revision you have not
-        seen; omitted, the update applies to the current revision.
+        priority is low/medium/high/urgent.
+
+        if_match is REQUIRED with title or body: pass the issue's current `_etag`
+        (get_issue). Without it the call is refused 428 precondition_required:
+        read the issue, check the text you are replacing, and call again with
+        its `_etag` as if_match. A 412 precondition_failed means the issue moved:
+        read it again, merge your change into the current text, retry with the
+        fresh tag. The text an edit replaces is kept: the issue history lists the
+        edit and get_issue_prior_text reads the old text. For status and
+        priority alone if_match is optional; omitted, the update applies to the
+        current revision.
 
         A successful transition into a done category may return held_lease for
         your own row. It describes the row at that transition, not current

@@ -278,6 +278,21 @@ Content-Type: application/json
 
 HTTP 201.
 
+**Editing an issue's title or body** needs the issue's ETag. MCP
+`update_issue(issue_id, title?, body?, if_match)` · REST `PATCH /issues/{issue_id}`
+with `If-Match`. Prefer a comment: the title and body are often the contract and its
+acceptance criteria, written by someone else. If you do edit, read the issue first
+(`get_issue`) and pass its `_etag` as `if_match`. Without it the edit is refused 428
+`precondition_required`, and its `next` names `get_issue`; a stale tag is refused 412
+`precondition_failed`: read again, merge your change into the current text and retry.
+Status, priority, assignee and labels alone need no tag. Every edit keeps the text it
+replaced: the issue history (`get_issue_history`) lists each edit with who made it,
+when and which fields, and (in the `conductor` profile)
+`get_issue_prior_text(issue_id, event_id)` ·
+`GET /issues/{issue_id}/prior-texts/{event_id}` returns the old text exactly. Undoing the
+edit (`POST /activity/{event_id}/undo`) puts it back, and is refused with
+`undo_no_effect` once a later edit has replaced that text.
+
 ## 7. Complete with a structured report
 
 MCP `complete_claim(issue_id, generation, results?, unfinished?, uncertainty?, evidence?, verdict?, findings?, usage?)` ·

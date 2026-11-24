@@ -115,6 +115,29 @@ def _seed(admin: TestClient) -> dict[str, Any]:
         201,
     )
     label = ok(admin.post("/labels", json={"name": "budgeted"}), 201)
+    # A backlog issue whose large body an edit replaced (F10): its prior text is
+    # the large row get_issue_prior_text reads.
+    rewritten = ok(
+        admin.post(
+            "/issues",
+            json={
+                "title": "a rewritten contract",
+                "body": _text(BIG_ISSUE_CHARS, "prior"),
+            },
+        ),
+        201,
+    )
+    ok(admin.patch(f"/issues/{rewritten['id']}", json={"body": "short now"}))
+    (rewrite_event,) = ok(
+        admin.get(
+            "/activity",
+            params={
+                "target_kind": "issue",
+                "target_id": rewritten["id"],
+                "verb": "issue_edited",
+            },
+        )
+    )
 
     # An exact candidate for request_candidate_review: the admin submits it on
     # a build issue; Ray, delegated on a review issue, is the eligible reviewer.
@@ -173,6 +196,8 @@ def _seed(admin: TestClient) -> dict[str, Any]:
         "review": review,
         "space": space,
         "big_page": big_page,
+        "rewritten": rewritten,
+        "rewrite_event": rewrite_event["id"],
     }
 
 
@@ -203,6 +228,13 @@ def _plan(world: dict[str, Any], admin: TestClient) -> list[Step]:
         ("get_issue_work_context", lambda s: {"issue_id": big}),
         ("list_issue_comments", lambda s: {"issue_id": big}),
         ("get_issue_history", lambda s: {"issue_id": big}),
+        (
+            "get_issue_prior_text",
+            lambda s: {
+                "issue_id": world["rewritten"]["id"],
+                "event_id": world["rewrite_event"],
+            },
+        ),
         ("list_eligible_accounts", lambda s: {"issue_id": big}),
         ("get_issue_runbook", lambda s: {"issue_id": big}),
         ("list_subtasks", lambda s: {"issue_id": big}),
@@ -223,7 +255,12 @@ def _plan(world: dict[str, Any], admin: TestClient) -> list[Step]:
         ("comment_on_issue", lambda s: {"issue_id": big, "body": "noted"}),
         (
             "update_issue",
-            lambda s: {"issue_id": big, "title": "the large issue, renamed"},
+            # A title edit with a bearer token sends the issue's tag (D20).
+            lambda s: {
+                "issue_id": big,
+                "title": "the large issue, renamed",
+                "if_match": s["etag"](),
+            },
         ),
         ("attach_label", lambda s: {"issue_id": big, "label_id": world["label"]["id"]}),
         (
@@ -510,6 +547,7 @@ def test_nothing_the_budget_cut_is_cut_silently(budget_run):
         "update_page",
         "get_issue_work_context",
         "list_issue_comments",
+        "get_issue_prior_text",
     ):
         assert name in cut, sorted(cut)
     # With every desk lane at its maximum, the desk and a project floor are cut
@@ -563,6 +601,24 @@ def test_following_next_reads_a_cut_body_whole(seeded_run):
             arguments = mark["next"]["arguments"]
         assert "".join(pieces) == row["body"], tool
         assert reads >= len(row["body"]) // mcp_server.DEFAULT_RESPONSE_BUDGET
+    # An edit's prior body reads on the same way (F10).
+    prior = _text(BIG_ISSUE_CHARS, "prior")
+    pieces, reads = [], 0
+    arguments = {
+        "issue_id": world["rewritten"]["id"],
+        "event_id": world["rewrite_event"],
+    }
+    while True:
+        answer = _call(server, "get_issue_prior_text", arguments)
+        reads += 1
+        pieces.append(answer["prior_body"])
+        mark = (answer.get("_truncated") or {}).get("prior_body")
+        if mark is None or mark["next"] is None:
+            break
+        assert mark["total_chars"] == len(prior)
+        arguments = mark["next"]["arguments"]
+    assert "".join(pieces) == prior
+    assert reads >= len(prior) // mcp_server.DEFAULT_RESPONSE_BUDGET
 
 
 def test_list_and_search_rows_are_summaries(seeded_run):

@@ -47,6 +47,7 @@ not be.
 | `page_labeled` / `page_unlabeled` | detach / attach that label |
 | `changed_status` (issue) | put the issue back in its previous status |
 | `assigned` / `unassigned` (issue) | put the issue back in its previous hands |
+| `issue_edited` | put back the title and/or body the edit replaced |
 
 The first four pairs share one property that made them safe to ship first: **the
 inverse needs no prior state.** A toggle's inverse is the toggle; a label event
@@ -91,6 +92,23 @@ still-in-force gate (the issue's current assignee must be the one this event
 produced), refusal for a pre-0068 event rather than a guess parsed from prose,
 and the ordinary command as the undoing actor. No scope gate: statuses are
 per-project and remapped by a move; an assignee is not.
+
+`issue_edited` needed storage too. The event kept only the new title in its
+`detail`, and the replaced text was nowhere (FLEET-10). `issue_prior_texts` now
+keeps, written by the edit's own recorder in its transaction and keyed 1:1 to the
+event, the prior text of each field the edit changed and a SHA-256 of the text it
+left. The compensator holds the same scalar discipline, per field: each field the
+edit changed must still hold the text the edit left, or `undo_no_effect` (409)
+and nothing is written, so an undo never overwrites a later edit with older text.
+A later edit of the other field, or of status or anything else, does not block
+it. An edit recorded before the table, which has no row, is `undo_not_reversible`
+(422). The restore runs through `issue_commands.restore_issue_text` as the undoing
+actor, which re-checks the digests under the write lock; that check is the
+precondition, so a bearer-token caller undoing an edit sends no `If-Match`. The
+reversal is an ordinary `issue_edited` with its own prior text, so undoing it is
+a redo. A restored title passes through the edit command's normalization, which
+strips surrounding whitespace: a title written through Athena already was, but an
+imported title with surrounding whitespace comes back without it.
 
 Classified and refused today: comments and attachments (`one_way` — delete them
 explicitly), destroyed rows such as `page_deleted` / `space_deleted` /
@@ -145,8 +163,9 @@ reversal with the event it undid.
 
 ## Limitations
 
-- Eleven verbs are reversible (the four archive/label pairs, `changed_status`,
-  and `assigned`/`unassigned`); everything else is refused, with a reason.
+- Twelve verbs are reversible (the four archive/label pairs, `changed_status`,
+  `assigned`/`unassigned` and `issue_edited`); everything else is refused, with
+  a reason.
 - There is no bulk undo, and no "undo this whole run" — each event is its own
   decision.
 - A compensator reverses the *effect*, not the world around it. Undoing a label

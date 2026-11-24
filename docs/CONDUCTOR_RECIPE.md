@@ -27,8 +27,8 @@ Give the conductor member credentials with `read` and `issue:write`, and set
 `POST /users/onboard_agent` and `"profile": "conductor"`, and the printed config
 names it. This selects the 26
 `seat` tools plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`,
-`assign_issue`, `delegate_issue`, `list_eligible_accounts`, `request_candidate_review`, `set_issue_parent`, `list_subtasks`, and
-`link_issues`: 38 tools before scope filtering. `docs:write` is optional for this
+`get_issue_prior_text`, `assign_issue`, `delegate_issue`, `list_eligible_accounts`, `request_candidate_review`, `set_issue_parent`,
+`list_subtasks`, and `link_issues`: 39 tools before scope filtering. `docs:write` is optional for this
 issue-only loop; page tools remain in `seat+knowledge` or `full`. The default remains
 `full`. Profiles never grant permission, and REST still enforces access.
 
@@ -85,6 +85,17 @@ Context. A part left out is reported missing in the issue's work context
 (`work_order.missing`), never refused. For an issue you did not write yourself,
 read that before delegating, and fix the body with `update_issue` rather than
 delegate work that does not say what done means.
+
+A title or body edit over a token needs the issue's ETag: pass the `_etag` of the
+issue you read as `if_match`, or the edit is refused 428 `precondition_required`
+(read it with `get_issue` and retry), and 412 `precondition_failed` when someone changed
+it since your read. No edit erases the contract. Each keeps the text it replaced, and
+`get_issue_history` lists the edits of an issue (who, when, which fields), each with a
+`prior_text.next` that calls `get_issue_prior_text` for the old text. An edit you did
+not want is undone with `POST /activity/{event_id}/undo`, which restores the old text
+exactly and refuses once a later edit has replaced it. An edit needs no lease: a seat
+whose lease lapsed can still edit with a fresh tag, so check the history of a
+contract before you gate on it.
 
 Dependencies guide the ready queue; an ordinary claim does not enforce that every
 blocker is done. The conductor checks prerequisite evidence before asking a worker

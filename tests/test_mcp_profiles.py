@@ -84,6 +84,8 @@ CONDUCTOR_ADDITIONS = frozenset(
         "link_issues",
         # F9: the accounts assignment and delegation take on one issue.
         "list_eligible_accounts",
+        # F10: the text one edit replaced, which the history points at.
+        "get_issue_prior_text",
     }
 )
 
@@ -146,13 +148,13 @@ def test_the_four_profiles_are_the_whole_vocabulary():
         ("seat", ISSUE_ONLY, 26),
         # the eleven minus the three docs:write tools
         ("seat+knowledge", ISSUE_ONLY, 34),
-        ("conductor", SEAT_SCOPES, 38),
-        ("conductor", ISSUE_ONLY, 38),
-        ("conductor", ADMIN, 38),
-        ("conductor", READ_TOKEN, 18),
+        ("conductor", SEAT_SCOPES, 39),
+        ("conductor", ISSUE_ONLY, 39),
+        ("conductor", ADMIN, 39),
+        ("conductor", READ_TOKEN, 19),
         # docs:write permits six inherited any-write tools (cursor, heartbeat,
         # targeted notification ack and own controls), but no issue writes.
-        ("conductor", DOCS_ONLY, 24),
+        ("conductor", DOCS_ONLY, 25),
         # the eleven reads among the core: my_desk, list_my_delegated_work,
         # search_work, get_issue, get_issue_work_context, list_issue_comments,
         # get_issue_lease, current_run, list_notifications, list_run_controls,
@@ -227,6 +229,7 @@ def test_conductor_assignment_and_delegation_still_require_issue_write():
         "get_project_brief",
         "get_project_review_queue",
         "get_issue_history",
+        "get_issue_prior_text",
         "list_subtasks",
         "list_eligible_accounts",
     }

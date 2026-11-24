@@ -30,6 +30,7 @@ from pydantic import BaseModel
 
 from athena.aegis import work_context_api
 from athena.aegis.api import CommentOut as IssueCommentOut
+from athena.aegis.api import IssuePriorTextOut
 from athena.aegis.notification_priority_api import PriorityInboxOut, PrioritySummaryOut
 from athena.aegis.project_brief_models import Excerpt
 from athena.core.notifications_api import NotificationOut
@@ -45,6 +46,7 @@ READS: dict[tuple[str, str], tuple[type[BaseModel], ...]] = {
         work_context_api.IssueWorkContextBriefOut,
     ),
     ("get", "/issues/{issue_id}/comments"): (IssueCommentOut,),
+    ("get", "/issues/{issue_id}/prior-texts/{event_id}"): (IssuePriorTextOut,),
     ("get", "/pages/{page_id}/comments"): (PageCommentOut,),
     ("get", "/pages/{page_id}"): (PageOut,),
     ("get", "/spaces/{space_id}/pages"): (PageOut,),
@@ -116,6 +118,10 @@ NOT_PEER_WRITTEN: dict[str, tuple[str, str]] = {
         "a status name the project's configuration defines",
     ),
     "aegis.work_context_api.LabelOut.name": (NAME, "a label's name"),
+    "aegis.api.EditorOut.name": (
+        NAME,
+        "the display name of the account that made the edit, beside its id",
+    ),
     "aegis.work_context_api.LabelOut.color": (ID, "a label's colour token"),
     "aegis.work_context_api.ContributorOut.name": (
         NAME,

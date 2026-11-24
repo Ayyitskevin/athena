@@ -930,7 +930,9 @@ def test_membership_revocation_fences_private_response_replay(tmp_path):
             headers=bearer,
         ).json()
 
-        keyed = {"Idempotency-Key": "private-edit", **bearer}
+        # A bearer body edit names the revision it read (D20).
+        etag = client.get(f"/issues/{issue['id']}", headers=bearer).headers["ETag"]
+        keyed = {"Idempotency-Key": "private-edit", "If-Match": etag, **bearer}
         first = client.patch(
             f"/issues/{issue['id']}",
             json={"body": "sensitive private body"},
@@ -1203,7 +1205,9 @@ def test_private_project_move_fences_old_issue_response(tmp_path):
             ).status_code
             == 200
         )
-        keyed = {"Idempotency-Key": "source-edit", **bearer}
+        # A bearer body edit names the revision it read (D20).
+        etag = client.get(f"/issues/{issue['id']}", headers=bearer).headers["ETag"]
+        keyed = {"Idempotency-Key": "source-edit", "If-Match": etag, **bearer}
 
         first = client.patch(
             f"/issues/{issue['id']}",

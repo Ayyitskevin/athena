@@ -167,16 +167,22 @@ def test_the_destructive_writes_are_the_ones_that_lose_something():
         "clear_watch_preference",
         "delete_automation_rule",
         "delete_sprint",
-        "link_mention",
         "offboard_agent",
         "revoke_agent_tokens",
         "set_watch_preference",
         "unwatch",
-        "update_issue",
         "update_sprint",
     ]
     # Each of these keeps a version or an audited inverse, so none is destructive.
-    for name in ("update_page", "archive_issue", "detach_label", "unlink_issues"):
+    # An issue edit keeps the text it replaced, and undo restores it (F10).
+    for name in (
+        "update_page",
+        "archive_issue",
+        "detach_label",
+        "unlink_issues",
+        "update_issue",
+        "link_mention",
+    ):
         assert not mcp_server.WRITE_HINTS[name].destructive, name
 
 

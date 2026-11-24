@@ -308,6 +308,82 @@ def _assignee_fact_in_force(conn: sqlite3.Connection, event: dict) -> dict:
     return fact
 
 
+def _text_fact_in_force(conn: sqlite3.Connection, event: dict) -> dict:
+    """The stored prior text of an ``issue_edited`` event whose effect is still
+    in force, or the refusal :func:`_restore_text` documents."""
+    fact = issue_activity.prior_text_for_event(conn, event["id"])
+    if fact is None:
+        raise undo.UndoRefused(
+            "no prior title or body was recorded for this edit",
+            code=undo.NOT_REVERSIBLE_CODE,
+            status_code=422,
+        )
+    issue = issues.get_issue(conn, event["target_id"])
+    if issue is None:
+        raise undo.UndoRefused(
+            "the issue no longer exists",
+            code=undo.NO_EFFECT_CODE,
+            status_code=409,
+        )
+    replaced = [
+        name
+        for name in fact["changed"]
+        if issue_activity.text_digest(issue[name]) != fact[f"after_{name}_sha256"]
+    ]
+    if replaced:
+        raise undo.UndoRefused(
+            f"the issue's {' and '.join(replaced)} has been edited since this "
+            "event; its text is no longer in force, and undo will not overwrite "
+            "the newer text",
+            code=undo.NO_EFFECT_CODE,
+            status_code=409,
+        )
+    return fact
+
+
+def _text_in_force(conn: sqlite3.Connection, actor: dict | None, event: dict) -> None:
+    """The precheck the issue page's offer asks (U9): the edit's text is still
+    the issue's own and the viewer may write the issue."""
+    _text_fact_in_force(conn, event)
+    _writable(conn, actor, event)
+
+
+def _restore_text(conn: sqlite3.Connection, actor: dict | None, event: dict) -> None:
+    """Put back the title and/or body an ``issue_edited`` event replaced.
+
+    The prior text is read from ``issue_prior_texts``, written by the edit's own
+    recorder in its transaction (F10); the event's ``detail`` (the new title) is
+    never used. An edit with no row (recorded before the table, or imported) is
+    ``undo_not_reversible``.
+
+    Text is a scalar with no domain idempotency, so the scalar discipline of
+    status and assignee applies: each field the edit changed must still hold the
+    text the edit left (its stored digest), or the undo refuses with
+    ``undo_no_effect`` and writes nothing, instead of overwriting a later edit
+    with older text. A later edit of the other field, or of any other field,
+    does not block it. The restore runs through ``restore_issue_text`` as the
+    undoing actor, which re-checks the digests under the write lock; that check
+    is its precondition, so a bearer-token caller sends no If-Match to undo.
+
+    The reversal records an ordinary ``issue_edited`` with its own prior text,
+    so undoing the undo is a redo.
+    """
+    fact = _text_fact_in_force(conn, event)
+    unset = issue_commands.UNSET
+    try:
+        issue_commands.restore_issue_text(
+            conn,
+            actor=actor,
+            issue_id=event["target_id"],
+            title=fact["prior_title"] if "title" in fact["changed"] else unset,
+            body=fact["prior_body"] if "body" in fact["changed"] else unset,
+            expect_title_sha256=fact["after_title_sha256"],
+            expect_body_sha256=fact["after_body_sha256"],
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _refusal(exc) from exc
+
+
 def _detach_label(conn: sqlite3.Connection, actor: dict | None, event: dict) -> None:
     try:
         issue_commands.detach_label(
@@ -385,6 +461,14 @@ def register() -> None:
         compensator=_restore_assignee,
         precheck=_assignee_in_force,
     )
+    # The edit's recorder keeps the text it replaced (F10), so an edit is
+    # reversible, and the reversal, an edit itself, is too.
+    undo.register(
+        "issue_edited",
+        action_class=undo.TWO_WAY,
+        compensator=_restore_text,
+        precheck=_text_in_force,
+    )
 
     # Classified, deliberately not reversible. Naming them is the point: a surface
     # can say WHY there is no undo instead of leaving the verb unexplained, and the
@@ -423,11 +507,6 @@ def register() -> None:
         "comment_deleted",
         action_class=undo.TRAPDOOR,
         reason="the comment body is gone; it cannot be restored from the trail",
-    )
-    undo.register(
-        "issue_edited",
-        action_class=undo.ONE_WAY,
-        reason="title and body changes are prose on the trail, not a stored before/after",
     )
     undo.register(
         "changed_priority",

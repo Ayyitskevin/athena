@@ -272,6 +272,7 @@ _SCOPES_AT_F7308D5: dict[str, str] = {
     "get_issue": mcp_server.READ_ONLY,
     "get_issue_history": mcp_server.READ_ONLY,
     "get_issue_lease": mcp_server.READ_ONLY,
+    "get_issue_prior_text": mcp_server.READ_ONLY,
     "get_issue_runbook": mcp_server.READ_ONLY,
     "get_issue_state": mcp_server.READ_ONLY,
     "get_issue_work_context": mcp_server.READ_ONLY,
@@ -484,6 +485,8 @@ def _read_arguments(board) -> dict[str, dict]:
         "get_issue": {"issue_id": issue_id},
         "get_issue_history": {"issue_id": issue_id},
         "get_issue_lease": {"issue_id": issue_id},
+        # No edit of this issue exists: the 404 proves the route was reached.
+        "get_issue_prior_text": {"issue_id": issue_id, "event_id": 1},
         "get_issue_runbook": {"issue_id": issue_id},
         "get_issue_state": {"issue_id": issue_id},
         "get_issue_work_context": {"issue_id": issue_id},

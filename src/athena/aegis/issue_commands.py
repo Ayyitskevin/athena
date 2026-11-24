@@ -96,6 +96,21 @@ BLOCKED_CLOSE_POLICY_ERROR_CODE = "blocked_issue_close_policy"
 BLOCKED_CLOSE_POLICY_ERROR_DETAIL = "blocked issue close policy denied this update"
 
 
+#: The refusal a bearer-token caller meets when it sends an issue's title or body
+#: without If-Match (F10, D20). The browser's forms and the trusted actor header
+#: carry no token and are not asked; other fields keep If-Match optional.
+TEXT_PRECONDITION_REQUIRED_DETAIL = (
+    "If-Match is required to change an issue's title or body with a bearer token: "
+    "read the issue and send its current ETag"
+)
+
+
+def _is_bearer_caller(actor: dict) -> bool:
+    """Whether the actor arrived on a bearer token (``tokens.resolve_token`` stamps
+    ``_token_id``). A browser session and the trusted actor header carry none."""
+    return actor.get("_token_id") is not None
+
+
 #: The structured field a refused status carries: the names the project offers.
 VALID_STATUSES_FIELD = "valid_statuses"
 
@@ -529,6 +544,56 @@ def update_issue_as_automation(
     )
 
 
+def restore_issue_text(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    issue_id: int,
+    title: str | _UnsetType = UNSET,
+    body: str | _UnsetType = UNSET,
+    expect_title_sha256: str | None = None,
+    expect_body_sha256: str | None = None,
+) -> dict:
+    """Put back the title and/or body an ``issue_edited`` event replaced: the
+    write undo makes (``aegis/issue_undo``), as ``actor``, through the same
+    command as every edit, so role, scope, visibility and budget apply.
+
+    Its precondition is the text itself rather than an ETag: each field it
+    restores must still hash to ``expect_*_sha256``, the digest of the text the
+    undone edit left, checked under the write lock. That is exact where it
+    matters (the text a later edit replaced is never overwritten) and lets a
+    later change to any other field stand, so a bearer-token caller undoing an
+    edit sends no If-Match. A mismatch refuses as ``precondition_failed``."""
+    actor = _require_issue_writer(actor)
+    expected: dict[str, str] = {}
+    if title is not UNSET:
+        if expect_title_sha256 is None:
+            raise IssueCommandError("invalid", "a restored title needs its digest")
+        expected["title"] = expect_title_sha256
+    if body is not UNSET:
+        if expect_body_sha256 is None:
+            raise IssueCommandError("invalid", "a restored body needs its digest")
+        expected["body"] = expect_body_sha256
+    if not expected:
+        raise IssueCommandError("invalid", "no fields to update")
+    return _update_issue(
+        conn,
+        actor=actor,
+        issue_id=issue_id,
+        enforce_actor_policy=True,
+        title=title,
+        body=body,
+        status=UNSET,
+        priority=UNSET,
+        assignee_id=UNSET,
+        project_id=UNSET,
+        sprint_id=UNSET,
+        if_match=None,
+        override_blocked_close=False,
+        text_precondition=expected,
+    )
+
+
 def _string_value(name: str, value: str | None | _UnsetType) -> str | None:
     if value is UNSET or value is None:
         return None
@@ -678,6 +743,7 @@ def _update_issue(
     if_match: list[str] | None,
     override_blocked_close: bool,
     meter: bool = True,
+    text_precondition: dict[str, str] | None = None,
 ) -> dict:
     with db.transaction(conn, immediate=True):
         # Charge the actor's durable budget inside the write lock, so the charge and
@@ -776,7 +842,35 @@ def _update_issue(
         # before the precondition result is disclosed. The current representation
         # and comparison are both inside this BEGIN IMMEDIATE transaction, so two
         # writers holding the same tag cannot both pass and mutate.
-        _check_issue_precondition(conn, before, if_match)
+        if text_precondition is not None:
+            # Undo's restore: the text this edit replaced must still be the text
+            # the undone edit left (restore_issue_text).
+            for name, digest in text_precondition.items():
+                if issue_activity.text_digest(before[name]) != digest:
+                    raise IssueCommandError(
+                        "precondition_failed",
+                        f"the issue's {name} has changed since that edit",
+                        current_etag=issue_etags.current_etag(conn, before),
+                    )
+        else:
+            # D20: a bearer-token caller that sends a title or body must say
+            # which revision it read: exactly one strong tag, as a claim takes,
+            # so `*` or a list cannot stand in for a read. A browser form, the
+            # trusted actor header and automation carry no token; every other
+            # field keeps If-Match optional, with its list and wildcard forms.
+            text_sent = any(
+                value is not UNSET and value is not None for value in (title, body)
+            )
+            text_guarded = text_sent and _is_bearer_caller(actor)
+            _check_issue_precondition(
+                conn,
+                before,
+                if_match,
+                required_detail=(
+                    TEXT_PRECONDITION_REQUIRED_DETAIL if text_guarded else None
+                ),
+                exact=text_guarded,
+            )
 
         final_status = status_value or before["status"]
         if (
