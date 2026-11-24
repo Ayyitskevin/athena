@@ -266,7 +266,7 @@ def test_queue_is_one_new_read_and_completion_keeps_its_authority():
         t.name: t for t in asyncio.run(mcp_server.build_server(object()).list_tools())
     }
     name = "get_project_review_queue"
-    assert len(tools) == 141  # F9 added list_eligible_accounts
+    assert len(tools) == 142  # F9: list_eligible_accounts; F10: get_issue_prior_text
     assert mcp_server.TOOL_SCOPES[name] == mcp_server.READ_ONLY
     assert mcp_server.TOOL_SCOPES["complete_claim"] == "issue:write"
     assert name in mcp_server.PROFILES["conductor"]

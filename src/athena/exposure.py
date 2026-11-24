@@ -68,10 +68,10 @@ class RouteExposure:
 #: (pinned by ``tests/test_anonymous_read_exposure.py``).
 ROUTE_COUNTS: dict[bool, RouteExposure] = {
     True: RouteExposure(
-        rest=52, rest_total=103, browser=57, browser_total=57, documents=2
+        rest=53, rest_total=104, browser=57, browser_total=57, documents=2
     ),
     False: RouteExposure(
-        rest=3, rest_total=103, browser=3, browser_total=57, documents=2
+        rest=3, rest_total=104, browser=3, browser_total=57, documents=2
     ),
 }
 
