@@ -8,6 +8,8 @@ import runpy
 from fastapi.testclient import TestClient
 import pytest
 
+from support import lease_facts
+
 from athena import config
 from athena.main import create_app
 
@@ -53,20 +55,6 @@ CATALOG = {
 }
 CATALOG_JSON = json.dumps(CATALOG, separators=(",", ":"))
 CATALOG_SHA = hashlib.sha256(CATALOG_JSON.encode()).hexdigest()
-
-
-def lease_facts(lease: dict) -> dict:
-    """A lease answer without its countdown or the claim answer's issue ETag.
-
-    `expires_in_seconds` falls every second (A13), so two reads of one
-    unchanged lease differ in it whenever they straddle a second; `issue_etag`
-    is beside the lease on a claim answer only (A12). What a test means by
-    "the same lease" is everything else."""
-    return {
-        key: value
-        for key, value in lease.items()
-        if key not in ("expires_in_seconds", "issue_etag")
-    }
 
 
 def root(key="one", prefix=""):
