@@ -9,7 +9,7 @@ import sqlite3
 from typing import Any
 
 from athena.aegis import lease_commands, leases, projects, statuses
-from athena.core import access, db
+from athena.core import access, db, packet_time
 from athena.core.ids import MAX_SQLITE_INTEGER
 
 DEFAULT_LIMIT = 5
@@ -155,6 +155,10 @@ def _build(
                 "issue": _issue(row),
                 "holder": _person(row["holder_id"], row["holder_name"]),
                 "expires_at": row["expires_at"],
+                # From the clock read that decided this claim is live (A13).
+                "expires_in_seconds": packet_time.seconds_until(
+                    row["expires_at"], now=now
+                ),
             }
             for row in rows
         ],

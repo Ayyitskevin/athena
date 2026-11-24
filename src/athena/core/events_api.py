@@ -14,7 +14,20 @@ gate, like the activity feed — a `read`-scoped token is enough.
 The read itself writes nothing. On entry, before it, the registered feed observers
 (``feed_observers``) record what the clock made and nobody wrote down: a lapsed
 lease the caller answers for becomes one ``lease_lapsed`` event (C4, D11), written
-in its own transaction, so this read returns it.
+in its own transaction, so this read returns it. The observers run whatever the
+filters, so a filtered read or wait still records the lapse and, when the event
+matches its filter, returns it.
+
+Two filters narrow the feed to what a waiting agent asked about (F8):
+``project_id`` and ``mine=true`` (the issues the caller is assigned, delegated
+or created, and those it delegated to another account). A filtered wait polls the filtered read, so only a matching event
+wakes it. A project the caller cannot see answers exactly as one that does not
+exist: an empty batch, and a wait that runs to its timeout.
+
+An event that recorded a lease generation, a claim handoff token or a reported
+verdict carries each as a field (``generation``, ``handoff_token``,
+``verdict``), read from the facts its recorder wrote beside the prose (0086).
+An event with none carries none of the keys, so it reads exactly as before.
 """
 
 from __future__ import annotations
@@ -26,9 +39,11 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
-from athena.core import activity, event_wait, feed_observers
+from athena.core import access, activity, event_wait, feed_observers
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
+from athena.core.ids import MAX_SQLITE_INTEGER
+from athena.core.packet_time import Timestamp
 from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/events", tags=["core"])
@@ -42,10 +57,10 @@ class EventOut(BaseModel):
     target_kind: str
     target_id: int
     detail: str
-    created_at: str
+    created_at: Timestamp
     # Stored import provenance, not inferred from the verb. Any non-null value
     # marks an imported event; native events have None.
-    imported_at: str | None = None
+    imported_at: Timestamp | None = None
     # The run this event belongs to (the X-Athena-Run it was recorded under), or None
     # for untagged actions — so a consumer can group a stream into runs by id; and the
     # run that spawned that run (lineage), or None at top level.
@@ -54,6 +69,17 @@ class EventOut(BaseModel):
     # The parent activity event this event's run forked from, if known. This lets a
     # stream consumer place a child run at the exact branch point in its parent.
     forked_from_event_id: int | None = None
+    # The facts the event's recorder wrote beside its prose detail (0086), as
+    # fields: present only on an event that recorded them, absent (not null)
+    # otherwise. `generation` is the lease generation a claim, renewal, lapse,
+    # yield, handoff resume, completion or releasing decline names;
+    # `handoff_token` the claim handoff a yield opened or a resume acknowledged;
+    # `verdict` the verdict a completion reported. `generation` and
+    # `handoff_token` go only to a caller who may read the issue, as
+    # GET /issues/{id}/lease gives them.
+    generation: str | None = None
+    handoff_token: str | None = None
+    verdict: str | None = None
 
 
 class WaitOut(BaseModel):
@@ -106,6 +132,24 @@ async def events(
         None, description="lineage: the events of the child runs this run spawned"
     ),
     verb: str | None = Query(None, description="filter to one event type"),
+    project_id: int | None = Query(
+        None,
+        ge=1,
+        le=MAX_SQLITE_INTEGER,
+        description=(
+            "only events of this project: its own, and those of the issues that "
+            "were in it when they were recorded. A project you cannot see reads "
+            "as one that does not exist: no events"
+        ),
+    ),
+    mine: bool = Query(
+        False,
+        description=(
+            "only events of the issues you are assigned, delegated or created, "
+            "and those you delegated to another account, as they stand at this "
+            "read"
+        ),
+    ),
     limit: int = Query(50, ge=1, le=200),
     wait: int = Query(
         0,
@@ -142,6 +186,8 @@ async def events(
             run_id=run_id,
             parent_run_id=parent_run_id,
             verb=verb,
+            project_id=project_id,
+            mine_of=int(actor["id"]) if mine else None,
             limit=limit + 1,
             actor=actor,
         )
@@ -176,7 +222,50 @@ async def events(
     # Advance the cursor to the last delivered event; if nothing was delivered the
     # consumer is caught up, so hand back the cursor they came in with.
     next_after = batch[-1]["id"] if batch else after
+    if batch:
+        batch = await asyncio.to_thread(_with_facts, conn, batch, actor)
     feed: dict = {"events": batch, "next_after": next_after, "has_more": has_more}
     if waited is not None:
         feed["wait"] = waited
     return feed
+
+
+#: The facts a caller gets only when it may read the issue they belong to: the
+#: lease generation and the handoff token, which GET /issues/{id}/lease and the
+#: handoff history in an issue's work context give to exactly the accounts that
+#: can read the issue. A handoff token names the context a later holder must
+#: acknowledge; resuming it also takes that holder's own active lease, but the
+#: token is still given no wider than the handoff itself.
+_ISSUE_READER_FACTS = ("generation", "handoff_token")
+
+
+def _with_facts(conn: sqlite3.Connection, batch: list[dict], actor: dict) -> list[dict]:
+    """Each event of the batch with the facts recorded beside it (0086).
+
+    Only the keys an event recorded are added, so an event with none is the very
+    row it was before. The event gate has already dropped every event on an issue
+    the caller cannot read; the issue check here states the handoff's own rule
+    where the token is handed out, so no later change to the event gate can widen
+    who receives it."""
+    facts = activity.event_facts(conn, [row["id"] for row in batch])
+    if not facts:
+        return batch
+    readable: dict[int, bool] = {}
+    out: list[dict] = []
+    for row in batch:
+        recorded = facts.get(int(row["id"]))
+        if not recorded:
+            out.append(row)
+            continue
+        shown = dict(recorded)
+        if any(name in shown for name in _ISSUE_READER_FACTS):
+            issue_id = int(row["target_id"])
+            if issue_id not in readable:
+                readable[issue_id] = row["target_kind"] == "issue" and (
+                    access.can_see_issue(conn, actor, issue_id)
+                )
+            if not readable[issue_id]:
+                for name in _ISSUE_READER_FACTS:
+                    shown.pop(name, None)
+        out.append({**row, **shown})
+    return out

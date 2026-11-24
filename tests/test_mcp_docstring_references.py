@@ -37,6 +37,8 @@ _FENCED_CALL = re.compile(r"(?<![\w.`])([a-z_][a-z0-9_]*)\(")
 # Any identifier written as a call, backticked or bare: `my_desk(`, query_help().
 # Attached paren only, so prose such as "full-text search (FTS)" is not a call.
 _ANY_CALL = re.compile(r"(?<![\w.])([a-z_][a-z0-9_]*)`?\(")
+# Any snake_case identifier, as a whole word: a tool name written in prose.
+_TOOL_WORD = re.compile(r"(?<![\w.-])([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?![\w-])")
 DESK_DOC = Path(__file__).resolve().parents[1] / "docs" / "DESK.md"
 NAMED_PROFILES = ("seat", "seat+knowledge", "conductor")
 
@@ -113,6 +115,27 @@ def test_a_profile_is_never_told_to_call_a_tool_it_does_not_carry(profile_name):
     assert dangling == set(), (
         f"the {profile_name!r} profile is told to call tools it does not carry: "
         f"{sorted(dangling)}"
+    )
+
+
+@pytest.mark.parametrize("profile_name", NAMED_PROFILES)
+def test_a_profiles_tool_text_names_only_tools_it_carries(profile_name):
+    """Profile closure, by name and not only by call: an in-profile tool's
+    description that points at a registered tool at all ("Use list_users to
+    resolve agent user ids", F9) points at one the session carries. A conductor
+    read that on `delegate_issue` and had no `list_users`, which a member is
+    refused anyway."""
+    registered = set(_tools())
+    tools = _tools(mcp_server.PROFILES[profile_name])
+    named = {
+        f"{name}: {word}"
+        for name, description in tools.items()
+        for word in _TOOL_WORD.findall(description)
+        if word in registered and word not in tools
+    }
+    assert named == set(), (
+        f"the {profile_name!r} profile's tool texts name tools it does not carry: "
+        f"{sorted(named)}"
     )
 
 

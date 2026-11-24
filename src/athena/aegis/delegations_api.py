@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from athena.core import authorship
 from athena.core.authorship import AuthoredBy
+from athena.core.packet_time import Timestamp
 from athena.aegis import delegations
 from athena.core import tokens
 from athena.core.deps import get_conn
@@ -64,7 +65,7 @@ class ClaimHandoffEventOut(BaseModel):
     event_id: int
     actor_id: int
     actor_name: str
-    created_at: str
+    created_at: Timestamp
     run_id: str | None
 
 
@@ -97,7 +98,7 @@ DelegationWarning = Literal[
 
 class DelegationItemOut(BaseModel):
     issue: DelegatedIssueOut
-    delegated_at: str
+    delegated_at: Timestamp
     delegated_by: DelegatorOut
     visible_to_subject: bool
     visible_open_blockers: list[VisibleBlockerOut]

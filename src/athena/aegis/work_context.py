@@ -32,6 +32,7 @@ from athena.core import (
     etag,
     fleet_roster,
     graph,
+    packet_time,
     runbook_hints,
 )
 
@@ -63,6 +64,15 @@ _RELATED_FROM = "issues i LEFT JOIN projects p ON p.id = i.project_id"
 def context_etag(payload: dict[str, Any]) -> str:
     """Return the strong validator for exactly one work-context payload."""
     return etag.strong_etag("issue-work-context-v1", payload)
+
+
+def agent_packet(payload: dict[str, Any]) -> dict[str, Any]:
+    """The payload as an agent receives it: every timestamp in the one shape
+    (A13, ``core/packet_time.py``). REST and ready pickup hash THIS, so the
+    context tag they report is one value. It holds no expiry, so no clock enters
+    it and the tag stays a function of state; the browser preview renders the
+    payload itself."""
+    return packet_time.stamp(payload, now=packet_time.clock())
 
 
 def _excerpt(value: str | None, limit: int) -> dict[str, Any]:

@@ -233,10 +233,15 @@ async def gated_close(board: Board, sol: Agent) -> None:
             json={"decision": "approve", "note": "reviewed"},
         )
     )
-    # The `next` the ask named: wait for the decision on the gated target.
+    # The `next` the ask named: wait for the decision on the gated target, from
+    # the cursor the ask carries.
     approval = asked["approval"]
     feed = await sol.follow(
-        asked, kind=approval["target_kind"], target=approval["target_id"], wait=0
+        asked,
+        kind=approval["target_kind"],
+        target=approval["target_id"],
+        after=asked["events_after"],
+        wait=0,
     )
     assert "approval_approved" in [event["verb"] for event in feed["events"]]
     applied = await sol.call(
@@ -348,26 +353,35 @@ async def lapse_and_reclaim(board: Board, sol: Agent) -> None:
 async def refusal_branches(board: Board, sol: Agent, terra: Agent) -> None:
     """5. Each refusal carries a registered code, and its `next` resolves it."""
     delta = board.issues["Delta"]
-    # A held claim: Terra, eligible, meets Sol's lease and takes other work.
+    # A held claim: Terra, eligible, meets Sol's lease. The refusal names the
+    # holder and the expiry as fields, and its `next` waits on the issue from
+    # the cursor it carries: with Sol idle it answers empty, not with history,
+    # and Terra takes other work as the hint says (F11).
     board.delegate(delta, "terra")
     echo = board.issue("Echo", "low", "terra")
     tag = (await terra.call("get_issue", issue_id=delta))["_etag"]
     held = await terra.refused(
         "claim_held", "claim_issue", issue_id=delta, if_match=tag
     )
-    other = await terra.follow(held, idempotency_key="s5-terra-pickup")
+    assert held["holder"] == {"id": sol.user_id, "name": "Sol"}, held
+    quiet = await terra.follow(
+        held, kind="issue", target=delta, after=held["events_after"], wait=0
+    )
+    assert quiet["events"] == [], quiet
+    other = await terra.call("claim_next_ready", idempotency_key="s5-terra-pickup")
     assert other["claimed"] is True and other["issue"]["id"] == echo, other
 
-    # A repeated claim without the generation is a renewal that needs it.
-    tag = (await sol.call("get_issue", issue_id=delta))["_etag"]
+    # A repeated claim without the generation is a renewal that needs it; the
+    # holder's refusal names it, so the renewal follows at once (no `next`). The
+    # generation alone renews (A12): the seat does not re-read the issue's ETag.
     renew = await sol.refused(
-        "lease_generation_required", "claim_issue", issue_id=delta, if_match=tag
+        "lease_generation_required", "claim_issue", issue_id=delta
     )
-    lease = await sol.follow(renew, issue_id=delta)
+    assert "next" not in renew, renew
     renewed = await sol.call(
-        "claim_issue", issue_id=delta, if_match=tag, generation=lease["generation"]
+        "claim_issue", issue_id=delta, generation=renew["generation"]
     )
-    assert renewed["generation"] == lease["generation"] and renewed["active"]
+    assert renewed["generation"] == renew["generation"] and renewed["active"]
 
     # A stale precondition: the issue moved after Sol read it.
     foxtrot = board.issue("Foxtrot", "low", "sol")

@@ -9,8 +9,9 @@ claim_issue(issue_id, if_match=...)  # take it
 `claim_issue` requires `if_match` — the issue's ETag. Copy `issue_etag` from
 `my_desk()` or `get_issue_work_context`. Do **not** use the work-context
 packet's top-level `_etag`. Without the issue tag you get `428`, not a silent
-success. Renewing an active claim requires a freshly reviewed issue ETag as well
-as that possession's generation; your own issue edits can stale the earlier tag.
+success. Renewing an active claim needs only that possession's generation, with
+no `if_match`; a renewal that also sends `paths` or `coordination_root` needs a
+freshly reviewed issue ETag as well (your own issue edits can stale an earlier tag).
 Default TTL is 1800 seconds, allowed range 60–86400. Renew with `claim_issue`
 before `expires_at`; after expiry re-read and deliberately acquire a new claim.
 Heartbeat records that the authenticated agent reported for a run, not process

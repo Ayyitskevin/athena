@@ -96,6 +96,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `link_graph` | `GET /{base}/{node_id}/graph` | read-only | The link neighbourhood around an issue or page, as you can see it. |
 | `list_activity_runs` | `GET /activity/runs` | read-only | Reconstruct one actor's recent activity into runs. Explicit X-Athena-Run … |
 | `list_dispatches` | `GET /dispatches` | read-only | What Athena has handed to the executor, newest first. Filter by … |
+| `list_eligible_accounts` | `GET /issues/{issue_id}/eligible-accounts` | read-only | List the accounts that can see and work this issue. |
 | `list_issue_comments` | `GET /issues/{issue_id}/comments` | read-only | Read one issue's comment thread, oldest first — the discussion a … |
 | `list_issue_links` | `GET /issues/{issue_id}/links` | read-only | Read an issue's dependency links — what it blocks, what blocks it, and … |
 | `list_issues` | `GET /issues` | read-only | List Aegis issues, optionally filtered by a project-configured status, … |
@@ -138,7 +139,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `assign_issue` | `PUT /issues/{issue_id}/assignee` | idempotent | Assign an issue to a user id, or pass no assignee_id to unassign it. |
 | `attach_label` | `POST /issues/{issue_id}/labels` | idempotent | Attach an existing label (by id — see list_labels) to an issue. |
 | `bulk_update_issues` | `POST /issues/bulk` | idempotent | Apply the same change to MANY issues at once (one call instead of N). |
-| `claim_issue` | `POST /issues/{issue_id}/claim` | additive | Claim or renew an issue against the exact root issue revision you … |
+| `claim_issue` | `POST /issues/{issue_id}/claim` | additive | Claim or renew an issue. To acquire, omit generation and pass the … |
 | `claim_next_ready` | `POST /issues/claim-next` | additive | Atomically select and claim ready work: delegated first, then priority, … |
 | `comment_on_issue` | `POST /issues/{issue_id}/comments` | additive | Add a comment to an issue, authored by the token's user. |
 | `complete_claim` | `POST /issues/{issue_id}/complete` | idempotent | Release your lease. This does NOT close the issue; update_issue does. |
@@ -188,7 +189,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `clear_watch_preference` | `DELETE /watches/{target_kind}/{target_id}/preference` | destructive, idempotent | Delete YOUR preference for a watch, restoring target/default priority. |
 | `complete_run_control` | `POST /run-controls/{control_id}/complete` | idempotent | Complete a control addressed to your run. |
 | `decline_run_control` | `POST /run-controls/{control_id}/decline` | idempotent | Decline a control addressed to your run, with the reason the operator … |
-| `heartbeat_agent_run` | `PUT /agent-runs/heartbeat` | additive | Report that this authenticated agent is still working on `run_id`. |
+| `heartbeat_agent_run` | `PUT /agent-runs/heartbeat` | additive | Report that this authenticated agent is still working on this … |
 | `link_mention` | `POST /{base}/{source_id}/link-mention` | destructive | Rewrite the SOURCE document so its first unlinked mention of the target … |
 | `mark_notification_read` | `POST /notifications/read_all`<br>`POST /notifications/{notification_id}/read` | idempotent | Mark notifications in YOUR inbox as read, after handling them. Pass … |
 | `mark_notifications_read` | `POST /notifications/read_all` | additive | Mark ALL unread notifications in YOUR inbox as read, including rows not shown … |
@@ -244,16 +245,18 @@ back with `isError` false, `applied: false` and `next`.
 | `bad_request` | 400 | The request is malformed outside its body schema; fix it and resend. |  |
 | `unauthenticated` | 401 | No valid credential: the token or actor is missing, unknown or revoked. Retrying with the same credential fails the same way. |  |
 | `forbidden` | 403 | Authenticated, but your role, ownership or the target's access rules do not allow this action. |  |
-| `scope_denied` | 403 | Your token lacks the scope this call needs (the detail names it); only an operator can issue a wider token. | `my_desk`: identity.scopes lists what this token may do; ask the operator |
+| `scope_denied` | 403 | Your token lacks the scope this call needs (the detail names it); only an operator can issue a wider token, so no call of yours resolves it (my_desk's identity.scopes lists what this one may do). |  |
 | `account_paused` | 403 | The operator paused or removed this account; every authenticated action is refused until it is resumed. Stop and report. |  |
 | `run_binding_conflict` | 403 | The run id on this write belongs to another actor's run; tag the write with a run of your own. |  |
+| `run_id_mismatch` | 422 | The run_id you sent is not the run this session is tagged with (the detail names both); omit run_id to use the session's run. | `current_run`: omit run_id, or pass the run_id it returns |
+| `run_header_invalid` | 422 | The X-Athena-Run header was sent but would not be recorded as sent: a server-reserved namespace, over 200 characters, or not a printable run id (the detail says which). Fix the header; it is never read as absent. |  |
 | `not_found` | 404 | The target does not exist or is not visible to you; the two are deliberately indistinguishable. |  |
 | `method_not_allowed` | 405 | The path exists but does not accept this HTTP method. |  |
 | `conflict` | 409 | The target's current state does not allow this action; read it again before deciding what to do. |  |
-| `payload_too_large` | 413 | The request body or upload exceeds the server's size limit. |  |
+| `payload_too_large` | 413 | The request body or upload exceeds the server's size limit; `limit_bytes` names it. |  |
 | `validation_error` | 422 | The input failed validation; the detail says which part. Resending it unchanged fails the same way. |  |
-| `rate_limited` | 429 | Too many requests from this token or address; wait Retry-After seconds. |  |
-| `capacity_reached` | 409, 429 | A bounded server-side limit is reached (run check-ins, workers, run controls, playbook steps); the detail says which and how to stay within it. |  |
+| `rate_limited` | 429 | Too many requests from this token or address; `rate_limit` carries the limit, what remains and retry_after_seconds to wait. |  |
+| `capacity_reached` | 409, 429 | A bounded server-side limit is reached (run check-ins, workers, run controls, playbook steps); the detail says which and how to stay within it, and `limit` names the bound where it is one. |  |
 | `internal_error` | 500 | The server failed while handling the request; whether a write applied is unknown. Read the target's state before retrying. |  |
 | `unavailable` | 503 | A dependency (the database, the idempotency store or an execution fleet) cannot answer now; retry later. |  |
 | `deployment_boundary` | 421, 503 | Refused before any Athena work: the Host or socket is not one this deployment serves. Check the base URL you were given. |  |
@@ -261,17 +264,17 @@ back with `isError` false, `applied: false` and `next`.
 | `invalid_if_match` | 400 | The If-Match value is not a valid entity tag; send one strong ETag. |  |
 | `if_match_too_large` | 431 | The If-Match header exceeds the parsing limit; send one ETag. |  |
 | `precondition_failed` | 412 | The target changed since the ETag you sent: read it again, merge your change into the current state, then retry. | `get_issue`: fresh _etag (a page's is on get_page); retry with it and a new idempotency_key |
-| `claim_held` | 409 | Another account holds this issue's active lease (the detail names the holder); do not work it. | `claim_next_ready`: take other ready work instead |
+| `claim_held` | 409 | Another account holds this issue's active lease; `holder` and `expires_at` name it and when it ends, and `events_after` is the newest event on the issue you can see. Do not work the issue. | `wait_for_events`: kind=issue, target=the issue, after=events_after: answers when the holder renews, yields, completes or declines; then claim again (also after expires_at). Other work: claim_next_ready |
 | `claim_required` | 409 | This action needs your own active lease on the issue, and there is none: it lapsed, was released, or was never taken. | `get_issue_lease`: issue_id; if it is free, claim_issue takes it again |
-| `lease_generation_required` | 428 | You already hold this lease; a repeated claim is a renewal and needs your current generation (the detail names it). | `get_issue_lease`: issue_id; pass its generation |
+| `lease_generation_required` | 428 | The call needs the lease's current generation (a repeated claim by its holder is a renewal). When you hold the lease, `generation` names it: repeat with it. An admin releasing another account's lease is not told it; get_issue_lease shows it. |  |
 | `invalid_lease_generation` | 422 | The generation is not a 32-character lowercase hex token. | `get_issue_lease`: issue_id; pass its generation |
 | `lease_generation_mismatch` | 409 | The generation you sent is not the lease's current one: your possession lapsed or was replaced. | `get_issue_lease`: issue_id; if the lease is no longer yours, stop work on it |
-| `fence_overlap` | 409 | A path you declared overlaps another active lease's fence; `fence` names your path and the basis, and the other issue, holder and path when you can read that lease (else null). | `claim_next_ready`: take work your paths do not overlap, or claim again once that lease ends |
+| `fence_overlap` | 409 | A path you declared overlaps another active lease's fence; `fence` names your path and the basis, and the other issue, holder, path and newest event (`events_after`) when you can read that lease (else null). | `wait_for_events`: kind=issue, target=fence.issue.id, after=fence.events_after: answers when that holder acts there; then claim again. With fence.issue null, declare paths that do not overlap instead |
 | `fence_unresolved` | 409 | Your fence cannot be placed: the instance's root catalog does not know your coordination_root, or one of two fences has no current root. Without a catalog omit coordination_root; with one, obtain a current reviewed selector from the operator. |  |
-| `blocked_issue_close_policy` | 409 | The project refuses to close an issue that has open blockers; close or unlink the blockers first. | `get_issue_work_context`: dependencies.open_blockers lists them |
+| `blocked_issue_close_policy` | 409 | The project refuses to close an issue that has open blockers; close or unlink the blockers first (get_issue_work_context's dependencies.open_blockers lists them). |  |
 | `cursor_ahead` | 422 | after_id is past the newest event you can see; the body carries latest_visible_event_id, the highest value you may pass. | `advance_desk_cursor`: after_id no higher than latest_visible_event_id |
 | `invalid_query` | 422 | The work query does not parse; detail.error says where. |  |
-| `approval_required` | 202 | The action is gated for you: it was NOT applied, and an operator decision is pending (the body carries the approval). | `wait_for_events`: kind=approval.target_kind, target=approval.target_id; once decided, repeat the call with the same idempotency_key |
+| `approval_required` | 202 | The action is gated for you: it was NOT applied, and an operator decision is pending (the body carries the approval, and `events_after`, the newest event on its target you can see). | `wait_for_events`: kind=approval.target_kind, target=approval.target_id, after=events_after: answers when the operator decides; then repeat the call with the same idempotency_key |
 | `approval_rejected` | 409 | The operator rejected this gated action (the note is in the body); do not retry it. |  |
 | `agent_budget_exhausted` | 429 | Your account's write budget for this window is spent; nothing was applied. Wait Retry-After seconds. |  |
 | `idempotency_key_invalid` | 400 | Send exactly one Idempotency-Key of 1-255 visible ASCII characters. |  |
@@ -304,4 +307,4 @@ with `isError` true and `status_code` null.
 
 ---
 
-*140 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*141 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

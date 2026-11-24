@@ -171,7 +171,10 @@ def test_the_same_path_is_refused_as_an_overlap_naming_it(world):
         "issue": {"id": first, "key": holder_key},
         "holder": {"id": 2, "name": "s2"},
         "holder_path": "src/app/models.py",
+        # The newest event on the holder's issue: the cursor `next` waits from.
+        "events_after": body["fence"]["events_after"],
     }
+    assert isinstance(body["fence"]["events_after"], int)
     assert "src/app/models.py" in body["detail"]
     assert world.lease(second) is None
 
@@ -255,7 +258,7 @@ def test_a_hidden_holder_is_not_named_and_the_two_refusals_differ_only_there(wor
     seen = refused(
         world.claim(3, member_issue, paths=["src/shared/x.py"]), "fence_overlap"
     )
-    named = ("issue", "holder", "holder_path")
+    named = ("issue", "holder", "holder_path", "events_after")
     assert {key: blind["fence"][key] for key in named} == dict.fromkeys(named)
     assert seen["fence"]["issue"]["id"] == hidden
     assert seen["fence"]["holder"] == {"id": 1, "name": "Ann"}
@@ -312,12 +315,15 @@ def test_a_claim_without_paths_is_unchanged_beside_a_fence(world):
         "holder_name",
         "claimed_at",
         "expires_at",
+        "expires_in_seconds",
         "generation",
         "active",
         "declared_paths",
         "coordination_root",
         "path_fence",
         "open_claim_handoff",
+        # The issue's ETag beside the lease, on every claim answer (A12).
+        "issue_etag",
     }
 
 
@@ -565,7 +571,7 @@ def test_over_mcp_an_overlap_is_the_rest_refusal_with_its_next_call(world):
     assert {key: refusal[key] for key in rest} == rest
     assert refusal["status_code"] == 409
     assert refusal["next"] == refusal_codes.next_call("fence_overlap")
-    assert refusal["next"]["tool"] == "claim_next_ready"
+    assert refusal["next"]["tool"] == "wait_for_events"
 
 
 def test_over_mcp_pickup_takes_paths(world):

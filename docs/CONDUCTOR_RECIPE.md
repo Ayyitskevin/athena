@@ -7,7 +7,8 @@ or external runtime starts the agents. Delegation does not launch a process.
 ## Supply the identities and boundaries
 
 Before starting, the operator supplies a visible `project_id`, the conductor,
-architect, builder and reviewer **account IDs**, and an explicit accountable
+architect, builder and reviewer **accounts** (their IDs, or names the conductor
+resolves with `list_eligible_accounts`), and an explicit accountable
 `assignee_id` for each issue. The accountable owner may be the conductor account;
 do not infer that it is a human or that delegation sets it. Also supply the outcome,
 acceptance conditions, artifact location, permitted file paths and approval limits.
@@ -22,14 +23,23 @@ Distinct account names alone do not prove independent review.
 | Lease generation | One exact possession of an issue; neither an account ID nor a run ID |
 
 Give the conductor member credentials with `read` and `issue:write`, and set
-`ATHENA_MCP_PROFILE=conductor` in its MCP server environment. This selects the 26
+`ATHENA_MCP_PROFILE=conductor` in its MCP server environment: onboard it with
+`POST /users/onboard_agent` and `"profile": "conductor"`, and the printed config
+names it. This selects the 26
 `seat` tools plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`,
-`assign_issue`, `delegate_issue`, `request_candidate_review`, `set_issue_parent`, `list_subtasks`, and
-`link_issues`: 37 tools before scope filtering. `docs:write` is optional for this
+`assign_issue`, `delegate_issue`, `list_eligible_accounts`, `request_candidate_review`, `set_issue_parent`, `list_subtasks`, and
+`link_issues`: 38 tools before scope filtering. `docs:write` is optional for this
 issue-only loop; page tools remain in `seat+knowledge` or `full`. The default remains
 `full`. Profiles never grant permission, and REST still enforces access.
 
-Use the supplied IDs: this member profile has no admin user directory. Administrative
+This member profile has no admin user directory. To find an account's ID, read
+`list_eligible_accounts(issue_id=slice_id)`: the accounts that can see and work
+that issue, as `accounts` of `{id, name, is_agent}` (pass `next_cursor` back as
+`cursor` while `has_more` is true). `assign_issue` takes every listed account
+and `delegate_issue` every listed one with `is_agent: true`; an account that
+cannot see the issue is not listed, so put it in the project before you hand it
+work. `delegate_issue` answers an ID that is missing, removed or not an agent
+alike. With the IDs supplied, skip the read. Administrative
 approvals, worker controls, budgets, fleet health and dispatch remain in their
 authorized surfaces. See [RUNTIME_RECIPE.md](RUNTIME_RECIPE.md) for runtime wiring
 and [AGENT_BOOT.md](AGENT_BOOT.md) for profile and boot details.
@@ -108,8 +118,9 @@ checks the current lease, then claims with the freshly read root `issue_etag` an
 its permitted paths. Being the creator alone is insufficient: the claimant must
 be assignee, delegated contributor or otherwise authorized. Record the returned
 generation and keep one stable run for this execution. Heartbeats report check-ins;
-they do not renew leases or prove progress. Renew with the exact generation and a
-fresh issue ETag. Declared paths communicate scope; they are not filesystem locks.
+they do not renew leases or prove progress; `heartbeat_agent_run()` reports on the
+session's run. Renew with the exact generation alone; a renewal that also sends
+`paths` or `coordination_root` needs a fresh issue ETag. Declared paths communicate scope; they are not filesystem locks.
 On an instance with no root catalog (the default) workers' paths are compared
 under one implicit root, in every project: disjoint fences coexist, and a path
 equal to, inside or around another active lease's is refused `fence_overlap`,
@@ -284,9 +295,17 @@ batches, and advance with `advance_desk_cursor(after_id=last_processed_id)` only
 through the unfiltered visible prefix actually handled. If processing stops, retain
 that prefix and resume there; do not jump to the desk's newest visible ID. A filtered
 read cannot justify advancing past unseen events. The same tool with a positive
-wait can wait for later work; waiting does not acknowledge anything. On entry the
+wait can wait for later work; waiting does not acknowledge anything. Wait on your
+outcome with `wait_for_events(after=processed_cursor, wait=25, project_id=project_id)`
+(or `mine=true` for the issues you are assigned, delegated or created, and those
+you delegated to another account): only a matching event wakes you, not work elsewhere in the instance. When it wakes you,
+drain unfiltered from the processed cursor as above before advancing. A lease event
+carries its `generation`, a yield its `handoff_token`, and a completion its
+reported `verdict` as fields; read those, not the prose `detail`. On entry the
 feed records a lapsed lease you answer for as one `lease_lapsed` event, with a
-notification, so a seat that went away reaches you within one wait. Re-delegate or
+notification, so a seat that went away reaches you within one wait: a `mine`
+wait always returns it, and a `project_id` wait returns it when the issue is in
+that project. Re-delegate or
 reclaim deliberately; the lapse releases nothing.
 
 Acknowledge notifications only after handling them, in one call. Drain the feed,

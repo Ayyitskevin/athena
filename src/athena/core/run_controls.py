@@ -16,6 +16,7 @@ import json
 import sqlite3
 
 from athena import config
+from athena.core import packet_time
 
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -355,8 +356,6 @@ def projection(row: dict, *, now: datetime | None = None) -> dict:
     JSON text never leaves this layer raw. Nothing here is credential metadata,
     so the projection is the full row."""
     state = derived_state(row, now=now)
-    expires = datetime.strptime(row["expires_at"], _TS_FORMAT).replace(tzinfo=UTC)
-    remaining = (expires - _utc_now(now)).total_seconds()
     handoff = None
     if row["result_payload"] is not None:
         handoff = json.loads(row["result_payload"])
@@ -365,7 +364,11 @@ def projection(row: dict, *, now: datetime | None = None) -> dict:
         {
             "state": state,
             "expired": state == STATE_EXPIRED,
-            "expires_in_seconds": max(0, int(remaining))
+            # The packet rule (A13): whole seconds from this read's clock,
+            # the same second `expired` compares at; 0 once settled.
+            "expires_in_seconds": packet_time.seconds_until(
+                row["expires_at"], now=_utc_now(now)
+            )
             if row["settlement"] is None
             else 0,
             "handoff": handoff,

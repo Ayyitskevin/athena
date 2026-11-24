@@ -447,7 +447,9 @@ def test_callback_attempts_charge_the_anonymous_perimeter_limit(tmp_path):
         limited = c.post("/callbacks/icarus", content=b"{", headers=headers)
 
     assert limited.status_code == 429
-    assert limited.json() == {
+    limited_body = limited.json()
+    assert limited_body.pop("rate_limit")["remaining"] == 0
+    assert limited_body == {
         "detail": "anonymous rate limit exceeded",
         "code": "rate_limited",
     }

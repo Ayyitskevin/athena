@@ -86,6 +86,7 @@ def _refuse(exc: worker_commands.WorkerCommandError) -> Refusal:
         status_code=worker_commands.STATUS_BY_KIND[exc.kind],
         detail=exc.detail,
         code=worker_commands.CODE_BY_KIND[exc.kind],
+        extra=exc.extra,
     )
 
 

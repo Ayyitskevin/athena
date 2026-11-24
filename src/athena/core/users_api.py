@@ -34,8 +34,8 @@ from athena.core.identity import (
 )
 from athena.mcp.config import (
     athena_mcp_command,
+    PrintableProfile,
     claude_mcp_config,
-    seat_profile_for,
 )
 from athena.core.refusals import Refusal
 
@@ -190,6 +190,10 @@ class AgentOnboard(RequestBody):
     email: str | None = None
     # Defaults to the agent's name.
     token_name: str | None = None
+    # The ATHENA_MCP_PROFILE the printed mcp_config names. Configuration only:
+    # it grants no scope and no role. Omitted → the seat profile the scopes
+    # suggest (seat, or seat+knowledge with docs:write), as before.
+    profile: PrintableProfile | None = None
 
 
 class OnboardedTokenOut(BaseModel):
@@ -374,6 +378,14 @@ def onboard_agent(
     one-time raw token plus a ready-to-paste MCP config block, so "add an agent
     teammate" is a single request instead of three manual steps.
 
+    `profile` names the tool set the printed config selects. It grants nothing:
+    a profile is intersected with the token's scopes when athena-mcp starts, so
+    a profile the scopes cannot fully use would start without some of its tools
+    and say nothing. Only an explicitly requested profile is checked (by the
+    onboarding command); such a request is refused before anything is created.
+    Omitted, the widest seat profile the scopes suggest is printed, unchecked,
+    as before.
+
     Declared before the /{user_id} routes so the literal path wins."""
     try:
         result = agent_commands.onboard_agent(
@@ -383,6 +395,7 @@ def onboard_agent(
             email=payload.email,
             scopes=payload.scopes,
             token_name=payload.token_name,
+            profile=payload.profile,
         )
     except agent_commands.AgentCommandError as exc:
         raise Refusal(
@@ -396,7 +409,7 @@ def onboard_agent(
         "mcp_config": claude_mcp_config(
             base_url=str(request.base_url).rstrip("/"),
             token=result["token"]["token"],
-            profile=seat_profile_for(result["token"]["scopes"]),
+            profile=result["profile"],
             command=athena_mcp_command(),
         ),
     }

@@ -253,6 +253,7 @@ def _enforce_token_rate_limit(request: Request, actor: dict) -> None:
             "X-RateLimit-Remaining": str(decision.remaining),
         },
         code="rate_limited",
+        extra={"rate_limit": rate_limits.public(decision)},
     )
 
 
@@ -302,6 +303,7 @@ def enforce_anon_rate_limit(request: Request) -> None:
             "X-RateLimit-Remaining": str(decision.remaining),
         },
         code="rate_limited",
+        extra={"rate_limit": rate_limits.public(decision)},
     )
 
 

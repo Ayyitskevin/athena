@@ -37,6 +37,7 @@ from athena.aegis import (
     delegations,
     fleet_metrics,
     fleet_work,
+    issue_commands,
     issue_narrative,
     issues,
     lease_commands,
@@ -52,7 +53,7 @@ from athena.core import (
     tokens,
 )
 from athena.mcp.client import AthenaClient, AthenaError
-from athena.mcp import results
+from athena.mcp import config as mcp_config, results
 from athena.mcp.results import ListResult, ListShape, ObjectShape
 from athena.workflows import workspace_search
 
@@ -130,6 +131,13 @@ RunId = Annotated[
 DelegationLimit = Annotated[int, Field(ge=1, le=delegations.MAX_LIMIT)]
 DelegationOffset = Annotated[int, Field(ge=0, le=delegations.MAX_OFFSET)]
 IssueListLimit = Annotated[int, Field(strict=True, ge=1, le=100)]
+#: The profiles onboarding prints, spelled once in athena.mcp.config.
+OnboardProfile = mcp_config.PrintableProfile
+EligibleAccountLimit = Annotated[
+    int,
+    Field(strict=True, ge=1, le=issue_commands.ELIGIBLE_ACCOUNTS_MAX_LIMIT),
+]
+EligibleAccountCursor = Annotated[str, Field(min_length=1, max_length=32)]
 IssueListOffset = Annotated[int, Field(strict=True, ge=0, le=issues.MAX_OFFSET)]
 IssueFilterId = Annotated[
     int,
@@ -254,7 +262,8 @@ SERVER_INSTRUCTIONS = (
     "with two names: `_etag` on get_issue and `issue_etag` on "
     "get_issue_work_context (the same value; the work-context packet's own "
     "top-level `_etag` is a different tag). A page's is `_etag` on get_page. "
-    "claim_issue requires if_match; elsewhere it is optional and stops you from "
+    "claim_issue requires if_match to acquire; elsewhere it is optional and "
+    "stops you from "
     "overwriting a revision you have not seen. A 412 means the revision moved: "
     "read it again, merge your change into the current state, and retry with "
     "the fresh tag and a new idempotency_key.\n\n"
@@ -268,7 +277,8 @@ SERVER_INSTRUCTIONS = (
     "_truncated, with the tool call that reads the rest.\n\n"
     "Leases: claim_issue acquires a free or expired lease. Calling it again "
     "while you hold the issue is a renewal and needs your current generation "
-    "(the 428 names it). complete_claim releases the lease and does NOT close "
+    "(the 428 names it); without paths or a root it needs no if_match. "
+    "complete_claim releases the lease and does NOT close "
     "the issue; update_issue with a status does."
 )
 RETRY_POINTER = "Retry keys and ETags: see the server instructions."

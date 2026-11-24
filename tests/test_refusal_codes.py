@@ -415,7 +415,21 @@ def test_lease_and_etag_refusals_carry_codes(world):
         "claim_held",
     )
     assert held["detail"].startswith("issue is claimed by Ann until ")
-    assert set(held) == {"detail", "code"}
+    # The holder and the expiry the detail names are fields too (F11).
+    # A refusal keeps the packet conventions (A13): the expiry in the one
+    # shape, its seconds beside it.
+    assert set(held) == {
+        "detail",
+        "code",
+        "holder",
+        "expires_at",
+        "expires_in_seconds",
+        "events_after",
+    }
+    assert held["holder"] == {"id": 1, "name": "Ann"}
+    assert held["detail"].endswith(held["expires_at"])
+    assert held["expires_at"].endswith("Z") and "T" in held["expires_at"]
+    assert 0 < held["expires_in_seconds"] <= 86400
 
     not_yours = _assert_coded(
         client.post(f"{path}/complete", json={}, headers=world["writer"]),
@@ -612,6 +626,7 @@ def test_middleware_refusals_carry_codes(tmp_path):
         assert large == {
             "detail": "request body too large",
             "code": "payload_too_large",
+            "limit_bytes": 64,
         }
 
         made = client.post(
@@ -625,7 +640,13 @@ def test_middleware_refusals_carry_codes(tmp_path):
         assert limited == {
             "detail": "token rate limit exceeded",
             "code": "rate_limited",
+            "rate_limit": {
+                "limit": 1,
+                "remaining": 0,
+                "retry_after_seconds": limited["rate_limit"]["retry_after_seconds"],
+            },
         }
+        assert limited["rate_limit"]["retry_after_seconds"] >= 1
 
     with TestClient(app, base_url="http://elsewhere.example") as client:
         boundary = _assert_coded(client.get("/healthz"), 503, "deployment_boundary")
@@ -699,7 +720,9 @@ def test_a_refusal_with_a_resolving_call_names_it(world):
     assert refusal["status_code"] == 409
     assert refusal["detail"].startswith("issue is claimed by Ann until ")
     assert refusal["next"] == refusal_codes.next_call("claim_held")
-    assert refusal["next"]["tool"] == "claim_next_ready"
+    assert refusal["next"]["tool"] == "wait_for_events"
+    assert isinstance(refusal["events_after"], int)
+    assert refusal["holder"]["name"] == "Ann" and refusal["expires_at"]
 
 
 def test_a_refusal_keeps_the_rest_body_extra_fields(world):

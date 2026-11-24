@@ -353,6 +353,7 @@ def test_request_body_limit_rejects_large_payload(tmp_path):
     assert response.json() == {
         "detail": "request body too large",
         "code": "payload_too_large",
+        "limit_bytes": 64,
     }
     assert response.headers["x-content-type-options"] == "nosniff"
 
@@ -402,6 +403,7 @@ def test_request_body_limit_counts_streamed_payload_without_content_length(tmp_p
     assert json.loads(response_body) == {
         "detail": "request body too large",
         "code": "payload_too_large",
+        "limit_bytes": 8,
     }
 
 

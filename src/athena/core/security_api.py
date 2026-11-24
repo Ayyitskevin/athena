@@ -18,7 +18,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from athena.core import security_events
+from athena.core import packet_time, security_events
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor
 from athena.core.refusals import Refusal
@@ -58,7 +58,11 @@ class SecurityCountsOut(BaseModel):
 def events(
     verb: str | None = Query(None, description="one of the four refusal verbs"),
     since: str | None = Query(
-        None, description="server timestamp lower bound, 'YYYY-MM-DD HH:MM:SS'"
+        None,
+        description=(
+            "server timestamp lower bound: RFC 3339 UTC as agent packets give "
+            "it ('2026-11-21T18:19:13Z'), or 'YYYY-MM-DD HH:MM:SS'"
+        ),
     ),
     limit: int = Query(50, ge=1, le=security_events.MAX_LIST_LIMIT),
     actor: dict = Depends(admin_actor),
@@ -68,7 +72,9 @@ def events(
     account it happened to, and a list of who has been probing is operator
     intelligence, not general history."""
     try:
-        return security_events.list_failures(conn, verb=verb, since=since, limit=limit)
+        return security_events.list_failures(
+            conn, verb=verb, since=packet_time.stored(since), limit=limit
+        )
     except ValueError as exc:
         raise Refusal(
             status_code=422, detail=str(exc), code="validation_error"
@@ -77,10 +83,15 @@ def events(
 
 @router.get("/counts", response_model=SecurityCountsOut)
 def counts(
-    since: str | None = Query(None, description="server timestamp lower bound"),
+    since: str | None = Query(
+        None,
+        description=(
+            "server timestamp lower bound: RFC 3339 UTC or 'YYYY-MM-DD HH:MM:SS'"
+        ),
+    ),
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     """How many of each refusal — the number the attention rollup shows. Always
     zero-filled, so a quiet fleet reads as an explicit zero."""
-    return security_events.failure_counts(conn, since=since)
+    return security_events.failure_counts(conn, since=packet_time.stored(since))

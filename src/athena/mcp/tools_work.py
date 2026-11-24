@@ -8,7 +8,7 @@ from typing import Annotated
 
 from pydantic import Field, SkipValidation, ValidationError
 
-from athena.aegis import lease_commands
+from athena.aegis import issue_commands, lease_commands
 from athena.aegis.review_models import CandidateSubmission, ReviewCandidateId
 from athena.core import tokens
 from athena.core.request_models import CoordinationRootSelector
@@ -35,6 +35,8 @@ from athena.mcp.server import (
     HandoffResumeInstructions,
     HandoffResumeNote,
     HandoffToken,
+    EligibleAccountCursor,
+    EligibleAccountLimit,
     IdempotencyKey,
     LeaseGeneration,
     ListOffset,
@@ -81,11 +83,11 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         the new one ({id, key, title, status}); the issue is created either way, so
         use it to link or comment instead of duplicating.
 
-        Optionally set it up in the same call, all or nothing: parent_id (as
-        set_issue_parent), assignee_id (the accountable owner, as assign_issue),
-        delegate_ids (agents, as delegate_issue) and blocked_by (issue ids, as
-        link_issues relation blocked_by). Each is refused as its own tool would
-        refuse it, and a refusal creates nothing. `_etag` is the issue's after
+        Optionally set it up in the same call, all or nothing: parent_id (the
+        parent issue), assignee_id (the accountable owner), delegate_ids (agents
+        added as contributors) and blocked_by (issue ids this one is blocked by).
+        Each is refused as the standalone write would refuse it, and a refusal
+        creates nothing. `_etag` is the issue's after
         all of it.
 
         To say what done means, write the body as the issue template: six
@@ -191,12 +193,29 @@ def register_work_tools(tool, mutation_tool, client) -> None:
     ) -> ListResult:
         """Delegate an issue to an agent user. The human assignee remains accountable;
         the agent is added as a contributor and a delegated audit event is recorded.
-        Use list_users to resolve agent user ids."""
+        list_eligible_accounts lists the agents that can see and work this issue.
+        Delegation answers an id that is missing, removed or not an agent with
+        the same refusal."""
         return listing(
             client.delegate_issue(
                 issue_id, agent_user_id, idempotency_key=idempotency_key
             )
         )
+
+    @tool(scope=READ_ONLY, profiles=CONDUCTOR)
+    def list_eligible_accounts(
+        issue_id: int,
+        limit: EligibleAccountLimit = issue_commands.ELIGIBLE_ACCOUNTS_DEFAULT_LIMIT,
+        cursor: EligibleAccountCursor | None = None,
+    ) -> dict:
+        """List the accounts that can see and work this issue.
+        Returns {accounts, next_cursor, has_more}; each account is {id, name,
+        is_agent}, by id. Every one is an account assign_issue takes, and every
+        one with is_agent=true one delegate_issue takes; whether you may assign
+        or delegate this issue yourself is that call's own check. You need to
+        see the issue and hold a write role; an issue you cannot see is
+        not_found. While has_more is true, pass next_cursor back as cursor."""
+        return client.list_eligible_accounts(issue_id, limit=limit, cursor=cursor)
 
     # An identical request returns its receipt.
     @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=CONDUCTOR, hints=SETS)
@@ -228,20 +247,23 @@ def register_work_tools(tool, mutation_tool, client) -> None:
     @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=SEAT, hints=ADDS)
     def claim_issue(
         issue_id: int,
-        if_match: str,
+        if_match: str | None = None,
         generation: LeaseGeneration | None = None,
         lease_seconds: int | None = None,
         paths: list[str] | None = None,
         coordination_root: CoordinationRootSelector | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Claim or renew an issue against the exact root issue revision you
-        reviewed. if_match is the issue ETag: `_etag` from get_issue or
-        `issue_etag` from get_issue_work_context (the same value; not the
-        work-context packet's own top-level `_etag`). Omit generation to acquire
-        a free or expired lease; if you already hold the issue the call is a
-        renewal and needs your current generation (the 428 names it).
-        lease_seconds defaults to 30 minutes.
+        """Claim or renew an issue. To acquire, omit generation and pass the
+        exact root issue revision you reviewed as if_match: `_etag` from
+        get_issue or `issue_etag` from get_issue_work_context (the same value;
+        not the work-context packet's own top-level `_etag`); without it the
+        claim is refused 428. If you already hold the issue the call is a
+        renewal and needs your current generation (the 428 names it); the
+        generation alone renews, with no if_match, unless the renewal also
+        passes paths or coordination_root. lease_seconds defaults to 30 minutes.
+        The answer carries the issue's current `issue_etag` beside the lease, so a
+        renewal shows whether the issue changed since you read it.
 
         Optional `paths` declares relative POSIX files (`..` and absolute paths
         refuse). my_desk's `office.fence` says how they are compared. With no

@@ -14,10 +14,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from athena.aegis import desk_commands, operator_since, ready_queue
-from athena.core import desk_cursors
+from athena.core import desk_cursors, packet_time
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, personal_write_actor
 from athena.core.ids import MAX_SQLITE_INTEGER
+from athena.core.packet_time import Timestamp
 from athena.core.refusals import Refusal
 
 router = APIRouter(tags=["core"])
@@ -51,7 +52,8 @@ class CursorOut(BaseModel):
     user_id: int
     name: str
     after_id: int
-    updated_at: str
+    # The desk's `cursor` lane, as the advance answers it: one shape (A13).
+    updated_at: Timestamp
 
 
 class AdvanceCursorIn(BaseModel):
@@ -70,7 +72,8 @@ def read_office(
     """The cubicle: one chair, fenced paths, checkout hint. Not a lock."""
     from athena.aegis import office
 
-    return office.build_office(conn, actor=actor)
+    now = packet_time.clock()
+    return packet_time.stamp(office.build_office(conn, actor=actor, now=now), now=now)
 
 
 @router.get("/desk")
@@ -81,8 +84,13 @@ def read_desk(
     # Deliberately un-modelled by a response_model: the desk composes other
     # surfaces' projections verbatim, and re-declaring their shapes here would
     # create a second place for them to drift. The schema field names the
-    # contract version instead.
-    return desk_commands.read_desk(conn, actor=actor)
+    # contract version instead. Every timestamp leaves in one shape and every
+    # expiry with its seconds, from the one clock read the lanes were built at
+    # (A13, core/packet_time.py).
+    now = packet_time.clock()
+    return packet_time.stamp(
+        desk_commands.read_desk(conn, actor=actor, now=now), now=now
+    )
 
 
 @router.get("/desk/ready")
@@ -93,7 +101,10 @@ def read_ready(
 ) -> dict:
     """Your ready lane alone (the desk's ``work.ready``): what you could claim
     now, in claim order, with its own total. A read, not a reservation."""
-    return ready_queue.build_ready(conn, actor=actor, limit=limit)
+    now = packet_time.clock()
+    return packet_time.stamp(
+        ready_queue.build_ready(conn, actor=actor, limit=limit, now=now), now=now
+    )
 
 
 @router.get("/desk/since")
@@ -103,7 +114,10 @@ def read_since(
 ) -> dict:
     """What changed after your desk cursor, by kind. A read: it never moves the
     cursor. Advance it with ``POST /desk/cursor`` to ``last_shown_event_id``."""
-    return operator_since.build_since(conn, actor=actor)
+    now = packet_time.clock()
+    return packet_time.stamp(
+        operator_since.build_since(conn, actor=actor, now=now), now=now
+    )
 
 
 @router.post("/desk/cursor", response_model=CursorOut)

@@ -516,6 +516,18 @@ class AthenaClient:
             idempotency_key=idempotency_key,
         )
 
+    def list_eligible_accounts(
+        self, issue_id: int, *, limit: int | None = None, cursor: str | None = None
+    ) -> Any:
+        """One page of the accounts assignment and delegation take on this issue
+        (D19): {accounts, next_cursor, has_more}."""
+        return self._result(
+            self._client.get(
+                f"/issues/{issue_id}/eligible-accounts",
+                params=self._params(limit=limit, cursor=cursor),
+            )
+        )
+
     def delegate_issue(
         self, issue_id: int, agent_user_id: int, *, idempotency_key: str | None = None
     ) -> Any:
@@ -551,14 +563,16 @@ class AthenaClient:
         self,
         issue_id: int,
         *,
-        if_match: str,
+        if_match: str | None = None,
         generation: str | None = None,
         lease_seconds: int | None = None,
         paths: list[str] | None = None,
         coordination_root: dict | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
-        """Claim against the exact strong root issue ETag the caller reviewed.
+        """Claim against the exact strong root issue ETag the caller reviewed,
+        or renew a held lease with its generation (``if_match`` may then be
+        omitted unless ``paths`` or ``coordination_root`` is sent).
 
         ``paths`` declares relative files. ``coordination_root`` selects a qualified
         operator mapping, not filesystem authority. Omission retains on renewal;
@@ -994,9 +1008,11 @@ class AthenaClient:
         scopes: list[str],
         email: str | None = None,
         token_name: str | None = None,
+        profile: str | None = None,
     ) -> Any:
         """Admin: provision an agent (user + first scoped token) in one audited
-        move. The response carries the one-time raw token and an MCP config block.
+        move. The response carries the one-time raw token and an MCP config block
+        naming ``profile`` (omitted: the seat profile the scopes suggest).
         Email is optional — omitted becomes ``{slug}@agents.local``.
         Deliberately NO idempotency_key: the server refuses durable replay for
         endpoints that return a one-time secret (the raw token must never sit in
@@ -1005,7 +1021,11 @@ class AthenaClient:
             self._client.post,
             "/users/onboard_agent",
             json=self._params(
-                email=email, name=name, scopes=scopes, token_name=token_name
+                email=email,
+                name=name,
+                scopes=scopes,
+                token_name=token_name,
+                profile=profile,
             ),
         )
 
@@ -1214,6 +1234,8 @@ class AthenaClient:
         run_id: str | None = None,
         parent_run_id: str | None = None,
         verb: str | None = None,
+        project_id: int | None = None,
+        mine: bool = False,
         limit: int = 50,
     ) -> Any:
         return self._result(
@@ -1228,6 +1250,9 @@ class AthenaClient:
                     run_id=run_id,
                     parent_run_id=parent_run_id,
                     verb=verb,
+                    project_id=project_id,
+                    # Absent unless asked: an unfiltered read sends what it did.
+                    mine=True if mine else None,
                     limit=limit,
                 ),
             )
@@ -1245,6 +1270,8 @@ class AthenaClient:
         run_id: str | None = None,
         parent_run_id: str | None = None,
         verb: str | None = None,
+        project_id: int | None = None,
+        mine: bool = False,
         limit: int = 50,
     ) -> Any:
         """`GET /events` with `wait`: the server may park the request up to `wait`
@@ -1263,6 +1290,8 @@ class AthenaClient:
                     run_id=run_id,
                     parent_run_id=parent_run_id,
                     verb=verb,
+                    project_id=project_id,
+                    mine=True if mine else None,
                     limit=limit,
                 ),
             )
@@ -1412,8 +1441,13 @@ class AthenaClient:
             )
         )
 
-    def heartbeat_agent_run(self, run_id: str, usage: dict | None = None) -> Any:
+    def heartbeat_agent_run(
+        self, run_id: str | None = None, usage: dict | None = None
+    ) -> Any:
         """Refresh this authenticated agent's server-timed run check-in.
+
+        ``run_id`` omitted reports on this client's run (the ``X-Athena-Run``
+        header it sends); a different one is refused ``run_id_mismatch``.
 
         A heartbeat is intentionally not a durable-idempotency mutation: every PUT
         must reach the server so repeated calls advance the liveness observation.

@@ -2,7 +2,7 @@
 
 Date: 2026-11-22. Review baseline: `0b42d40` (`main` after Waves 0, 0b, 1 and 2
 of [the agentic-use specification](AGENTIC_USE_SPEC_ATHENA.md)).
-Status: **decisions accepted by standing instruction; Wave 3 built.**
+Status: **decisions accepted by standing instruction; Waves 3 and 4 built.**
 Evidence: [reports/repo-review-2026-11-22-round2.md](reports/repo-review-2026-11-22-round2.md).
 Finding IDs such as `FLEET-4`, `OPS-5`, `PERF-1` and `COCKPIT-2` refer to that
 report. Requirement IDs that begin A, B or C are carried from the first
@@ -25,7 +25,10 @@ browser, and none of it slows down as history grows.
 specification's Waves 0, 0b, 1 and 2 are merged (PRs #466 to #469); its Waves 3
 and 4 are carried into this document. This document's Wave 3 is built in PR
 #471: the six false statements are true again and the three findings that
-blocked a fleet are fixed. Nothing has been re-graded since.
+blocked a fleet are fixed. Wave 4 is built in PRs #472 and #473: one outcome
+with three slices costs 88 tool calls and 233,740 bytes where it cost 142 and
+359,223. First lanes of Waves 6, 7 and 8 are built and independently reviewed
+but not merged. Nothing has been re-graded since.
 
 **Decisions in force.**
 
@@ -43,15 +46,16 @@ blocked a fleet are fixed. Nothing has been re-graded since.
 
 **Known issues, most serious first.**
 
-1. One outcome with three slices costs 142 tool calls and 359 KB; 39 of the
-   calls acknowledge one notification each (Wave 4).
-2. Any eligible account can replace an issue's text with no precondition, and
+1. Any eligible account can replace an issue's text with no precondition, and
    the old text is unrecoverable (F10).
-3. One unrelated assignment voids every stored idempotency receipt (F6).
-4. The desk, the inbox and every write slow with history, each from one
+2. One unrelated assignment voids every stored idempotency receipt (F6).
+3. The desk, the inbox and every write slow with history, each from one
    statement (Wave 6).
-5. The cockpit's boards and lists key on the assignee while agents work by
+4. The cockpit's boards and lists key on the assignee while agents work by
    lease, and four operator steps cannot be done in the browser (Wave 8).
+5. Assignment answers with the name of an account that cannot see the issue's
+   project, so a member can learn that the account exists (found in Wave 4;
+   the owner's question below).
 
 **Already fixed; do not redo.** Self-approval, the audit event for a failed
 project delete, the link-mention leak, the three loop defects, refusal codes,
@@ -62,15 +66,28 @@ what each found and left. From this document's Wave 3: the fleet trial as a test
 with ceilings, review pickup, the desk's structural budget, closed write
 bodies, lexical path fences, the `lease_lapsed` event, and the requested
 reviewer's verdict on the request row. "Wave 3 results" below says what each
-changed and what each found and left.
+changed and what each found and left. From Wave 4: compact tool answers, the
+composed create and the ETag on every write that changes one, acknowledging
+many notifications in one call, the work-order report, the event feed's
+`project_id` and `mine` filters with facts as fields, the eligible-accounts
+read and the onboarding profile, renewal on the generation alone, refusal
+facts as fields with every registered `next` followed by a test, and one
+timestamp shape with paging frozen. "Wave 4 results" says the same for each.
 
-**Next step.** Wave 4, in the order its row gives. Each requirement that
-removes calls lowers the fleet trial's ceilings in the same commit.
+**Next step.** Integrate the lanes already built and reviewed, each wave as its
+own pull request: Wave 6 (H8, H1, H3; H2, H4), Wave 7 (C11, H10, H12, H18) and
+Wave 8 (U3, U9; U6, U7). Then Wave 5 in the order its row gives, starting with
+F10 and F6. Each requirement that removes calls lowers the fleet trial's
+ceilings in the same commit.
 
 **How work is done here.** One requirement, one commit, with the test that
 fails without it. Delegated build work is briefed with
 [BUILD_BRIEF_TEMPLATE.md](BUILD_BRIEF_TEMPLATE.md), and the lead reads, re-runs
-and probes each build before committing it. A wave leaves draft when
+and probes each build before committing it. In Wave 4 every build also went to
+a review agent that had not written it and ran it against a throwaway
+instance; each review reproduced defects the build's own tests passed, so a
+build that changes access, a migration or a wire shape is not merged on its
+first pass. A wave leaves draft when
 `scripts/gate.sh --profile product` passes on its head and hosted CI is green.
 
 **Never done on the owner's behalf.** Cutting or pushing a tag, pushing a
@@ -136,8 +153,8 @@ loosened without a line in the wave's results.
 | Largest `my_desk` answer on a seat profile | 23,546 characters | 16,000 | 3 |
 | Agent write bodies that accept unknown fields | 25 of 67 | 0 | 3 |
 | A keyed retry after an unrelated assignment | 409 `idempotency_authorization_changed`; the marker is kept forever | Replays; a marker expires with its receipt | 3 |
-| Tool calls and bytes for one outcome with three slices, full variant | 142 calls and 359,252 bytes, as F1's test measures them in process. The review's run against a live server counted the same 142 calls and 382,369 bytes: its ids were longer and its drains re-read each feed from the first cursor. | 90 calls (arithmetic: 142 less 35 acknowledgements, 15 setup calls and 4 ETag reads) and 250,000 bytes (arithmetic: 30% less) | 4 |
-| Calls that acknowledge one notification each | 39 of 142 | At most 4 | 4 |
+| Tool calls and bytes for one outcome with three slices, full variant | 142 calls and 359,252 bytes, as F1's test measures them in process. The review's run against a live server counted the same 142 calls and 382,369 bytes: its ids were longer and its drains re-read each feed from the first cursor. | 90 calls (arithmetic: 142 less 35 acknowledgements, 15 setup calls and 4 ETag reads) and 250,000 bytes (arithmetic: 30% less). Measured after Wave 4: 88 calls and 233,740 bytes. | 4 |
+| Calls that acknowledge one notification each | 39 of 142 | At most 4. Measured after Wave 4: 0. | 4 |
 | `GET /desk` as a seat, median at 10,000 and 50,000 issues | 259 ms and 1,285 ms | 80 ms and 200 ms (arithmetic: less the trail scan and three of four ready passes) | 6 |
 | A comment write, median at 50,000 issues | 75 ms, against 18 ms at 1,000 | Within twice the 1,000-issue figure | 6 |
 | The operator's priority inbox, median at 50,000 issues | 1,875 ms | 100 ms | 6 |
@@ -233,6 +250,115 @@ Found and not fixed:
   shows when it was last claimed or renewed. Boards and the issue list still
   group by assignee (U2).
 
+### Wave 4 results
+
+Measured on the Wave 4 head in the same 4-CPU, 15 GB container. Wave 4 is F12,
+C9, F7 and W3 (PR #472) and F8, F9, A12, F11 and A13 (PR #473), one commit
+each. Each was built by a build agent from a six-part brief. F8, F9, A12 and
+F11 were also reviewed by an agent that had not built them and ran them
+against a throwaway instance. A13's independent review was stopped unfinished
+to conserve usage, and the lead reviewed and probed it instead.
+
+| Measure | After Wave 3 | After Wave 4 |
+|---|---|---|
+| Tool calls for one outcome with three slices | 142 | 88. The target was 90. |
+| Bytes received for the same outcome | 359,223 | 233,740. The target was 250,000. |
+| Calls that acknowledge one notification | 39 | 0 (F7) |
+| Calls to set up one slice | 5, and a work-context read for each ETag | 1 (C9) |
+| Text of a tool answer | Indented JSON | Compact JSON, the same object: 29.4% fewer bytes over the trial (F12) |
+| What wakes a conductor waiting on its outcome | Every event in the instance | Events of its project, or of issues it is assigned, delegated, created or delegated onward (F8) |
+| Generation, handoff token and verdict of an event | Inside prose `detail` | Fields (F8) |
+| A conductor resolving an account id | No tool on its profile | `list_eligible_accounts` (F9) |
+| Renewing a lease | The generation and a fresh issue ETag | The generation alone (A12) |
+| Registered `next` hints that a test follows from the refusing state | 0 | All 10 that a state can be built for; 1 is recorded as unbuildable (F11) |
+| Timestamp shapes in one desk read | 3 | 1 (A13) |
+| Contract agent, two seats | 56 calls, 109,686 bytes at the head of PR #472 | 55 calls, 110,671 bytes |
+
+Bytes fell by 129,435 with F12, C9 and F7, and rose by 3,952 across F8, A12,
+F11 and A13 for the fields those add to every answer: event facts, the issue
+ETag beside a lease, `events_after`, expiry seconds and the always-present
+review-request lane.
+
+The product gate runs on the Wave 4 code head; its receipt is in PR #473.
+
+Found by reviewing the builds, and fixed before each was committed:
+
+- **W3.** Two regular expressions in the work-order recognition were quadratic:
+  one body line of 100,000 spaces took 60 seconds per work-context read. The
+  recognition is linear string operations, held by a timing test.
+- **F8.** A project the caller cannot see answered in time proportional to its
+  events, which told a non-member that it exists and how busy it is; the read
+  now answers before the trail is touched. A conductor's `mine` wait recorded a
+  lapse it answers for and then hid it; `mine` includes issues the caller
+  delegated to another account.
+- **F9.** The eligible-accounts read listed accounts that cannot see a private
+  issue. Both writes took removed accounts the read withheld. The cockpit
+  onboarding form lacked the profile. Three sentences were not true as written.
+- **A12.** The run-id rule lapsed when the run header was dropped, cut short
+  or reshaped by the request path; a heartbeat now refuses such a header with
+  `run_header_invalid`. Two existing tests compared a claim answer with the
+  bare lease and had not been run by the build.
+- **F11.** `claim_held`'s `next` was a lease read that restated the refusal and
+  cost a call; it is a wait on the issue from a cursor the refusal carries.
+  `fence_overlap`'s `next` restated the fence. Three codes lost a `next` that
+  could not make progress. The approval scenario approved its own request
+  before following `next`, and that hint woke on history. At integration the
+  new test caught `run_id_mismatch`, registered by A12 with no scenario.
+- **A13.** Its paging freeze caught the eligible-accounts read F9 had added in
+  the same release, which paged by offset; it pages in D2's vocabulary. `since`
+  on the admin security reads compared a packet-shaped timestamp as text and
+  answered with nothing; the edge accepts the packet shape. Hosted CI then
+  caught F11's `claim_held` refusal carrying its expiry in the stored shape
+  beside a lease read in the new one; a refusal's fields now keep the packet
+  conventions, stamped where every refusal is built.
+- **The branch coverage floor rose to 85.56.** Hosted CI failed the F9 commit
+  because coverage had risen more than half a point above the 85.31 floor.
+
+Decisions the lead took while building, each reversible by the owner:
+
+- A removed account is refused by every write that takes an account id, as a
+  missing one is. It could be assigned and delegated to before.
+- The eligible-accounts read lists only accounts that can see the issue.
+- An event feed's `mine` includes issues the caller delegated to another
+  account, because those are the lapses it answers for.
+- `claim_held` and `fence_overlap` point at a wait, and `scope_denied`,
+  `blocked_issue_close_policy` and `lease_generation_required` name no `next`.
+
+Found and not fixed:
+
+- **F9.** Assignment still answers with the name of an existing account that
+  cannot see the issue's project, so a member who compares it with the read
+  learns that account exists. Whether assignment should refuse it is the
+  owner's question. The read checks visibility once per account and is not
+  paged in SQL.
+- **F8.** `mine` is the set at the read, not at the event: the event that takes
+  an issue away is not in the loser's `mine` feed. A filtered drain from an old
+  cursor reads every later event of the caller's issues before it returns a
+  page (117 ms at 60,000 events); the documents say to drain unfiltered and
+  keep the filters for waiting. The facts table is append-only by trigger but
+  is not covered by the hash chain; `detail` carries the attested values. An
+  event recorded before migration 0086 has no fields.
+- **A12.** A heartbeat body `run_id` in a reserved namespace is accepted when
+  no header is sent. The server instructions name `begin_run` and `get_page`,
+  which the seat and conductor profiles lack.
+- **F11.** A `claim_held` wait does not wake when the lease simply lapses for a
+  caller who is not accountable for it, because no event is recorded for that
+  caller; the hint says to retry after `expires_at`. An admin refused
+  `lease_generation_required` has no `next`. `fence_overlap` with a hidden
+  holder has nothing to wait on. Codes raised from several states are followed
+  from one. A validation refusal names its bound in prose only.
+- **A13.** Resource reads (the issue, comments, pages, search), the issue
+  write answer and its `held_lease` note, `/fleet/active-work` and admin reads
+  keep the stored timestamp shape, so an agent still meets two shapes in one
+  session. The desk, office, floor and history answers are untyped, so the
+  OpenAPI document cannot declare their fields; a test walks the values
+  instead. Two work-context sections are still omitted when empty. A
+  work-context ETag held across the upgrade no longer matches.
+- **F12.** In-process `FastMCP.call_tool` still returns indented text; only the
+  protocol answer is compact, and budget tests use `results.answer_text`.
+- **The changed profile still does not run the coverage stage**, so the floor
+  ratchet was first seen in hosted CI.
+
 ## Priorities
 
 - **P0.** A written statement is false, or a fleet following the recipe is
@@ -263,10 +389,10 @@ by reading the code or the document.
 | F9 | P1 | A conductor cannot resolve an account id: its tool text names `list_users`, which its profile lacks and a member is refused. The answers of `delegate_issue` let a member enumerate accounts through a write. Onboarding prints the `seat` profile for an account meant to conduct. FLEET-8. *(reviewer)* | A read on the `conductor` profile lists the accounts that may be assigned or delegated on a given issue: id, name and whether it is an agent. `delegate_issue` answers the same for an account that does not exist and one that is not eligible. Onboarding takes the profile to print. Needs D19. |
 | F10 | P1 | Any eligible account can replace an issue's title and body with no precondition. The old text is in no event, history or undo. A seat that has lost its lease can still edit. The recipe keeps the contract and acceptance criteria in issue bodies. FLEET-10. *(lead)* | A change to an issue's title or body stores the prior text, readable through the issue history and restorable by undo. A bearer-token caller must send `If-Match` to change either. `update_issue` stops being marked destructive. Needs D20. |
 | F11 | P1 | Refusals carry their facts in prose: `claim_held` names the holder and expiry only in `detail`, and its `next` answers `nothing_ready` for a seat with one delegation. FLEET-15. *(reviewer)* | A refusal that names a holder, an expiry, a generation or a limit carries each as a field. A test follows every registered `next` from the state that produces its refusal and fails on one that cannot make progress. |
-| F12 | P1 | Tool results are sent as indented JSON; about 30% of each budget is whitespace. *(build agent's measurement in Wave 1, not re-run)* | Tool results are compact JSON. The budget is unchanged, so each answer carries more. |
+| F12 | P1 | Tool results are sent as indented JSON; about 30% of each budget is whitespace. *(build agent's measurement in Wave 1, not re-run; Wave 4 measured 16% on the budget fixture and 25 to 29% on uncut answers)* | Tool results are compact JSON. The budget is unchanged, so each answer carries more. |
 | C8 | P1 | Pause, token revocation and offboarding leave the account's lease and fence active and say nothing about them. An admin's `complete` on a dead agent's expired lease is refused `claim_required`; the admin has to claim it first. FLEET-9. *(reviewer)* | As specified under C8 in the first specification, with D12: the three acts return the account's active leases and may release them as an explicit option, recorded per lease. An admin can settle an expired lease without claiming it. |
 | A12 | P1 | Carried unchanged. Renewing a lease needs a fresh ETag as well as the generation. *(reviewer)* | As in the first specification. |
-| A13 | P1 | Carried, and wider than recorded: an agent packet uses three timestamp shapes and the agent OpenAPI document has six paging styles. *(reviewer)* | As in the first specification, with the count of shapes and styles held at one each by a test over `/openapi-agent.json`. |
+| A13 | P1 | Carried, and wider than recorded: an agent packet uses three timestamp shapes and the agent OpenAPI document has six paging styles. *(reviewer)* | As in the first specification: agent packets emit one timestamp shape, and new endpoints page in D2's vocabulary. A test over `/openapi-agent.json` holds the timestamp format at one and freezes the paging styles that exist, so only D2's can be added. Existing endpoints keep their paging. |
 | C7 | P2 | Renewing and heartbeating without progress is derived as `pinging` and never raised. FLEET-12. *(reviewer)* | As in the first specification, with D6. |
 | F13 | P2 | A budget exhausted mid-task gives the seat no `next`, the accountable conductor is not told, and the operator gets one row per refused request. FLEET-13. *(reviewer)* | The refusal's `next` is a yield with reason `capacity`. The assignee and the delegating account are notified once per window. The operator's attention list has one row per account and window. |
 | F14 | P2 | A restarted MCP session cannot replay its own key: `athena-mcp` mints a run id per session unless `ATHENA_RUN_ID` is set, and the key answers 409 `idempotency_mismatch`. FLEET-14. *(reviewer)* | The run id is not part of what a key is matched on, or the printed configuration sets a stable one. The guide says which. |
@@ -417,8 +543,8 @@ one change with its own commit, in the order given.
 | 8. The cockpit | U2, U3, U4, U6, U7, U9, U14, U5, U8, U10, U11, U12, U13, U15, C10 | D12, D27 |
 | 9. Debts | G1 to G10, B6b, B11 | D9, D10 |
 
-Wave 3 is the six false statements and the three findings that block a fleet
-following the recipe. Wave 4 is where the per-outcome scorecard row moves.
+Waves 3 and 4 are done; their results are above. Wave 3 is the six false
+statements and the three findings that block a fleet following the recipe. Wave 4 is where the per-outcome scorecard row moves.
 Waves 6 to 9 do not depend on each other and can be reordered.
 
 ## Compatibility and deliberate exclusions
@@ -465,11 +591,14 @@ The record is
 | D27 | Should the declared fleet seats move from source to data? | Yes. An existing instance keeps its eight by migration; a new one starts with none. |
 | D28 | Should `blocked` and `capacity` yields hold work back from the account that yielded, and should a direct claim by the settling account count as an answer? | No change to either. The accepted ready-rule record stands until the fleet trial shows a loop. |
 
-Four questions stay with the owner and are not answered here: what the name
+Five questions stay with the owner and are not answered here: what the name
 "Astra" refers to in the lanes; whether the fallback rules in `AGENTS.md`
-match the machine-level handbook; D9's precondition, an operated instance; and
+match the machine-level handbook; D9's precondition, an operated instance;
 whether an agent may read the root catalog's digest and root keys, which
-`ACTIVE_WORK.md` withholds pending operator evidence.
+`ACTIVE_WORK.md` withholds pending operator evidence; and whether assignment
+should refuse an account that cannot see the issue's project (today it
+succeeds and answers with the account's name, which Wave 4's eligible-accounts
+read does not list).
 
 ## Verification and delivery
 

@@ -71,8 +71,9 @@ file's section census.
 - Tag your writes: `athena-mcp` gives the session a run identity automatically;
   `current_run()` shows it. The full profile also offers `begin_run(run_id=...)`
   to switch runs. Heartbeat while working. Heartbeat records an authenticated report, not process liveness
-  or lease renewal. Renew before expiry with the generation and a freshly
-  reviewed issue ETag. Untagged writes are not replayable as a unit.
+  or lease renewal; `heartbeat_agent_run()` reports on the session's run. Renew
+  before expiry with the generation alone (no issue ETag unless the renewal
+  changes `paths` or the root). Untagged writes are not replayable as a unit.
 - Put it down: close with the verify commands a reviewer can re-run, and
   advance the desk cursor to the last event you actually handled. Complete
   or yield every claim before the session ends — one you let lapse lists
@@ -115,10 +116,18 @@ names a smaller set:
 | `full` (the default; unset or empty means the same) | everything the token can use | operators, embedding callers, anything that is not a seat |
 | `seat` | the core loop: `my_desk`, `advance_desk_cursor`, `list_my_delegated_work`, `search_work`, `get_issue`, `get_issue_work_context`, `list_issue_comments`, `get_issue_lease`, `claim_issue`, `yield_claim`, `resume_claim_handoff`, `complete_claim`, `decline_delegation`, `update_issue`, `comment_on_issue`, `create_issue`, `heartbeat_agent_run`, `current_run`, `list_notifications`, `mark_notification_read`, `list_run_controls`, `acknowledge_run_control`, `complete_run_control`, `decline_run_control` | a seat working issues |
 | `seat+knowledge` | the above plus `search`, `get_page`, `list_pages`, `create_page`, `update_page`, `record_run_learning`, `get_issue_runbook`, `list_projects`, `attach_label`, `list_labels`, `link_issues` | a seat that also reads and writes pages |
-| `conductor` | `seat` plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`, `assign_issue`, `delegate_issue`, `request_candidate_review`, `set_issue_parent`, `list_subtasks`, `link_issues` | a member agent coordinating supplied role accounts; see [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md) |
+| `conductor` | `seat` plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`, `assign_issue`, `delegate_issue`, `list_eligible_accounts`, `request_candidate_review`, `set_issue_parent`, `list_subtasks`, `link_issues` | a member agent coordinating role accounts; see [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md) |
 
-Every config Athena prints names `seat`, or `seat+knowledge` when the token
-carries `docs:write`; only a hand-written config falls back to `full`.
+Every config Athena prints names a profile: the one onboarding was asked for in
+`profile` (`seat`, `seat+knowledge` or `conductor`; `POST /users/onboard_agent`,
+the `onboard_agent` tool or the cockpit's onboarding form), else the widest seat
+profile the scopes suggest: `seat+knowledge` when the token carries `docs:write`
+(or `admin`), `seat` otherwise. Only a hand-written config falls back to `full`.
+Only an explicitly requested `profile` is checked against the scopes: one whose
+tools they cannot all use is refused (422 `validation_error` naming the missing
+scope), so a `conductor` config is never printed for a token without
+`issue:write`. The default is not checked, as before: a read-only token is
+printed `seat`.
 A profile intersects the scope filter: it can hide a tool the token could use,
 never show one it could not, and the REST layer stays the boundary either way.
 No seat profile carries `mark_notifications_read`: bulk acknowledgement is never
@@ -126,7 +135,7 @@ a seat's move. An unknown value stops the server with a message naming the
 four profiles; it never falls back to `full` by accident. A seat that needs a hidden
 tool for one task starts that session with `ATHENA_MCP_PROFILE=full`. The seat
 profile also includes `claim_next_ready` and `wait_for_events`: 26 tools for a
-normal seat, 37 with knowledge, or 37 for a conductor, before any narrower token
+normal seat, 37 with knowledge, or 38 for a conductor, before any narrower token
 scope removes more. The conductor profile adds no admin tools or permission.
 `get_project_brief(project_id=..., limit=5)` provides a bounded project snapshot;
 it does not replace desk boot or full issue work context for claims and recovery.

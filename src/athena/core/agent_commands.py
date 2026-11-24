@@ -44,6 +44,7 @@ from athena.core import (
     user_commands,
     users,
 )
+from athena.mcp import config as mcp_config
 
 # Free-form activity verbs. activity.verb is plain TEXT with no enum (see
 # migrations/0017_activity.sql), so a new verb is just a constant — no migration.
@@ -106,6 +107,7 @@ def onboard_agent(
     scopes: Iterable[str] | None,
     email: str | None = None,
     token_name: str | None = None,
+    profile: str | None = None,
 ) -> dict:
     """Provision a working agent in ONE atomic move: create the agent user
     (member role, no password — it acts through tokens only) and mint its first
@@ -128,7 +130,16 @@ def onboard_agent(
     (the same no-fail-open rule as every other mint surface). Raises
     AgentCommandError("unauthorized"/"forbidden") for a missing or non-admin
     actor, "conflict" for a duplicate email, "invalid" for a blank name or
-    missing/invalid scopes."""
+    missing/invalid scopes.
+
+    ``profile`` is the ATHENA_MCP_PROFILE the caller's printed config will
+    name; the result's ``profile`` is the one to print. It is configuration
+    only: it grants no scope and no role. Only an explicitly requested profile
+    is checked, and one the scopes cannot fully use (or one outside the
+    printable set) is refused "invalid" before anything is created; omitted,
+    the widest seat profile the scopes suggest is printed, unchecked
+    (``athena.mcp.config.printed_profile``). Every transport calls this, so
+    REST, MCP and the cockpit form refuse alike."""
     actor = _require_admin_actor(actor)
     name = name.strip()
     if not name:
@@ -136,6 +147,10 @@ def onboard_agent(
     email = (email or "").strip() or agent_email_from_name(name)
     try:
         normalized = tokens.normalize_scopes(scopes)
+    except ValueError as exc:
+        raise AgentCommandError("invalid", str(exc)) from exc
+    try:
+        printed = mcp_config.printed_profile(profile, normalized)
     except ValueError as exc:
         raise AgentCommandError("invalid", str(exc)) from exc
     with db.transaction(conn, immediate=True):
@@ -181,7 +196,7 @@ def onboard_agent(
             detail=f"{agent['email']} with token '{token['name']}' [{scope_list}]",
             commit=False,
         )
-    return {"user": agent, "token": token}
+    return {"user": agent, "token": token, "profile": printed}
 
 
 def revoke_agent_tokens(

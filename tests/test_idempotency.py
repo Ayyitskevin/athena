@@ -580,7 +580,9 @@ def test_keyed_bearer_request_and_replay_each_consume_rate_limit_once(tmp_path):
     assert replay.status_code == 201
     assert replay.headers["idempotent-replay"] == "true"
     assert limited.status_code == 429
-    assert limited.json() == {
+    limited_body = limited.json()
+    assert limited_body.pop("rate_limit")["remaining"] == 0
+    assert limited_body == {
         "detail": "token rate limit exceeded",
         "code": "rate_limited",
     }
@@ -1339,6 +1341,7 @@ def test_streamed_keyed_body_is_bounded_before_claim(tmp_path):
     assert json.loads(response_body) == {
         "detail": "request body too large",
         "code": "payload_too_large",
+        "limit_bytes": 128,
     }
     conn = db.connect(db_path)
     try:

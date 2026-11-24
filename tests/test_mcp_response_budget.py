@@ -203,6 +203,7 @@ def _plan(world: dict[str, Any], admin: TestClient) -> list[Step]:
         ("get_issue_work_context", lambda s: {"issue_id": big}),
         ("list_issue_comments", lambda s: {"issue_id": big}),
         ("get_issue_history", lambda s: {"issue_id": big}),
+        ("list_eligible_accounts", lambda s: {"issue_id": big}),
         ("get_issue_runbook", lambda s: {"issue_id": big}),
         ("list_subtasks", lambda s: {"issue_id": big}),
         ("list_notifications", lambda s: {}),

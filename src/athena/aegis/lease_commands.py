@@ -27,6 +27,7 @@ from athena.aegis import (
     claim_handoffs,
     contributors as contributors_data,
     issue_activity,
+    issue_etags,
     issues,
     leases,
     report_credentials,
@@ -39,7 +40,15 @@ from athena.aegis.issue_commands import (
     _require_issue_writer,
     _visible_issue,
 )
-from athena.core import access, coordination_roots, db, identity, reported_usage
+from athena.core import (
+    access,
+    activity,
+    coordination_roots,
+    db,
+    identity,
+    packet_time,
+    reported_usage,
+)
 
 ClaimYieldReason = Literal["needs_input", "blocked", "capacity"]
 CLAIM_YIELD_REASONS = frozenset({"needs_input", "blocked", "capacity"})
@@ -105,6 +114,10 @@ REPORT_VIOLATIONS_FIELD = "violations"
 CLAIM_PRECONDITION_REQUIRED_DETAIL = (
     "If-Match with exactly one strong issue ETag is required to claim"
 )
+#: What a renewal's hint says about If-Match: the generation alone renews (A12).
+RENEWAL_IF_MATCH_NOTE = (
+    "no If-Match is needed unless the renewal names paths or coordination_root"
+)
 LEASE_GENERATION_REQUIRED_DETAIL = (
     "the exact current lease generation is required for this operation"
 )
@@ -139,6 +152,48 @@ def _claimant_or_reject(conn: sqlite3.Connection, issue: dict, actor: dict) -> N
     )
 
 
+def _claim_held(
+    conn: sqlite3.Connection, actor: dict, existing: dict, detail: str
+) -> IssueCommandError:
+    """``claim_held``, with the holder and the expiry its detail names as fields
+    (F11). They name another account's lease, so they are filled only when the
+    caller could read that lease over REST (``GET /issues/{id}/lease``), the
+    fence refusal's rule; otherwise both are null and the body is otherwise the
+    same. Every caller today has passed ``_visible_issue`` first.
+
+    ``events_after`` is the cursor the registered ``next`` waits from:
+    ``wait_for_events(kind="issue", target=<issue>, after=events_after)`` parks
+    until the holder's next event on the issue, never on its history."""
+    issue_id = int(existing["issue_id"])
+    visible = access.can_see_issue(conn, actor, issue_id)
+    return IssueCommandError(
+        "conflict",
+        detail,
+        code=CLAIM_HELD_CODE,
+        extra={
+            "holder": (
+                {"id": int(existing["holder_id"]), "name": existing["holder_name"]}
+                if visible
+                else None
+            ),
+            "expires_at": existing["expires_at"] if visible else None,
+            "events_after": (
+                newest_issue_event_id(conn, actor, issue_id) if visible else None
+            ),
+        },
+    )
+
+
+def newest_issue_event_id(conn: sqlite3.Connection, actor: dict, issue_id: int) -> int:
+    """The newest event on the issue this actor may read, or 0: the cursor a
+    refusal hands out so that a wait on the issue answers only with what comes
+    next. Read through the gated feed, so it never names a hidden event."""
+    newest = activity.list_activity(
+        conn, target_kind="issue", target_id=issue_id, limit=1, actor=actor
+    )
+    return int(newest[0]["id"]) if newest else 0
+
+
 def _normalize_lease_generation(
     generation: object | None, *, required: bool
 ) -> str | None:
@@ -157,7 +212,21 @@ def _normalize_lease_generation(
     return generation
 
 
-def _matching_lease_generation(existing: dict, generation: object | None) -> str:
+def _matching_lease_generation(
+    existing: dict, generation: object | None, *, actor: dict
+) -> str:
+    """The caller's generation, checked against the lease's current one.
+
+    With none given, ``lease_generation_required``: the holder is told its own
+    generation as the ``generation`` field (F11), since it could read it from
+    its lease anyway; anyone else (an admin releasing another's lease) is not,
+    and reads the lease instead."""
+    if generation is None and existing["holder_id"] == actor["id"]:
+        raise IssueCommandError(
+            "lease_generation_required",
+            LEASE_GENERATION_REQUIRED_DETAIL,
+            extra={"generation": existing["generation"]},
+        )
     normalized = _normalize_lease_generation(generation, required=True)
     assert normalized is not None
     if not secrets.compare_digest(existing["generation"], normalized):
@@ -265,6 +334,13 @@ def _fence_refusal(
             else None
         ),
         "holder_path": holder_path if visible else None,
+        # The cursor the registered `next` waits from, on the other lease's
+        # issue: its holder's next event there, never its history.
+        "events_after": (
+            newest_issue_event_id(conn, actor, int(issue["id"]))
+            if visible and issue is not None
+            else None
+        ),
     }
     return IssueCommandError("conflict", detail, code=code, extra={"fence": fence})
 
@@ -397,26 +473,32 @@ def claim_issue(
         current_generation: str | None = None
         if existing is not None and existing["active"]:
             if existing["holder_id"] != actor["id"]:
-                raise IssueCommandError(
-                    "conflict",
+                raise _claim_held(
+                    conn,
+                    actor,
+                    existing,
                     f"issue is claimed by {existing['holder_name']} until "
-                    f"{existing['expires_at']}",
-                    code=CLAIM_HELD_CODE,
+                    f"{packet_time.rfc3339(existing['expires_at'])}",
                 )
             if generation is None:
                 # The holder repeated the claim without saying so. Say what this
                 # call is and what it needs. Only the holder reaches this branch
                 # (a rival was refused above, with no generation in the message),
-                # so the generation is named to its owner alone. Same code and
-                # status as before: 428 lease_generation_required.
+                # so the generation is named to its owner alone, in the detail
+                # and as the `generation` field (F11). Same code and status as
+                # before: 428 lease_generation_required.
                 raise IssueCommandError(
                     "lease_generation_required",
                     "you already hold this issue's lease; a repeated claim is a "
-                    f"renewal: pass generation={existing['generation']} to extend it",
+                    f"renewal: pass generation={existing['generation']} to extend it "
+                    f"({RENEWAL_IF_MATCH_NOTE})",
+                    extra={"generation": existing["generation"]},
                 )
             # Supplying the current generation explicitly selects renew mode. An
             # omitted token may never turn a delayed acquire into a renewal.
-            current_generation = _matching_lease_generation(existing, generation)
+            current_generation = _matching_lease_generation(
+                existing, generation, actor=actor
+            )
             renewed = True
         elif generation is not None:
             # Supplying a token explicitly selects renew mode. An expired/absent
@@ -426,13 +508,24 @@ def claim_issue(
                 "lease_generation_mismatch",
                 "lease generation is stale; acquire again without a generation",
             )
-        _check_issue_precondition(
-            conn,
-            issue,
-            if_match,
-            required_detail=CLAIM_PRECONDITION_REQUIRED_DETAIL,
-            exact=True,
+        # The issue ETag guards a decision to take work against the revision the
+        # claimant reviewed. A renewal takes nothing new: ``renewed`` holds only
+        # for the active lease's own holder (a rival was refused claim_held above)
+        # with its exact current generation, which is the fence. So a renewal that
+        # keeps its fence (no paths, no root) may omit If-Match (A12); one it sends
+        # is still checked. An acquisition, and a renewal that names paths or a
+        # coordination root, need the reviewed revision as before.
+        generation_only_renewal = (
+            renewed and paths is None and coordination_root is None
         )
+        if not (generation_only_renewal and if_match is None):
+            _check_issue_precondition(
+                conn,
+                issue,
+                if_match,
+                required_detail=CLAIM_PRECONDITION_REQUIRED_DETAIL,
+                exact=True,
+            )
         preserve_paths = renewed and paths is None
         declared_paths: list[str] | None = normalize_declared_paths(paths)
         root = None
@@ -521,6 +614,13 @@ def claim_issue(
             commit=False,
         )
         lease["open_claim_handoff"] = claim_handoffs.get_open_handoff(conn, issue_id)
+        # The issue's current ETag, read in this transaction, so a holder that
+        # only renews (no If-Match, A12) still sees that the issue changed:
+        # closed, archived, re-scoped. Beside the lease, not part of it: GET
+        # /issues/{id}/lease and the lease's generation never carry it.
+        current = issues.get_issue(conn, issue_id)
+        assert current is not None
+        lease["issue_etag"] = issue_etags.current_etag(conn, current)
         return lease
 
 
@@ -999,12 +1099,15 @@ def yield_claim(
                 "conflict", "no active claim to yield", code=CLAIM_REQUIRED_CODE
             )
         if existing["holder_id"] != actor["id"]:
-            raise IssueCommandError(
-                "conflict",
+            raise _claim_held(
+                conn,
+                actor,
+                existing,
                 f"issue is claimed by {existing['holder_name']}, not you",
-                code=CLAIM_HELD_CODE,
             )
-        current_generation = _matching_lease_generation(existing, generation)
+        current_generation = _matching_lease_generation(
+            existing, generation, actor=actor
+        )
         if claim_handoffs.get_open_handoff(conn, issue_id) is not None:
             raise IssueCommandError(
                 "conflict",
@@ -1074,12 +1177,15 @@ def resume_claim_handoff(
                 code=CLAIM_REQUIRED_CODE,
             )
         if existing["holder_id"] != actor["id"]:
-            raise IssueCommandError(
-                "conflict",
+            raise _claim_held(
+                conn,
+                actor,
+                existing,
                 f"issue is claimed by {existing['holder_name']}, not you",
-                code=CLAIM_HELD_CODE,
             )
-        current_generation = _matching_lease_generation(existing, generation)
+        current_generation = _matching_lease_generation(
+            existing, generation, actor=actor
+        )
         handoff = claim_handoffs.get_handoff(
             conn, issue_id=issue_id, handoff_token=normalized_token
         )
@@ -1203,10 +1309,11 @@ def complete_claim(
                 "conflict", "no active claim to complete", code=CLAIM_REQUIRED_CODE
             )
         if not mine and not identity.is_admin(actor):
-            raise IssueCommandError(
-                "conflict",
+            raise _claim_held(
+                conn,
+                actor,
+                existing,
                 f"issue is claimed by {existing['holder_name']}, not you",
-                code=CLAIM_HELD_CODE,
             )
         lapsed = not existing["active"]
         if lapsed and generation is None:
@@ -1215,7 +1322,9 @@ def complete_claim(
             # read and the deletion. Same reasoning as decline's expired branch.
             current_generation = existing["generation"]
         else:
-            current_generation = _matching_lease_generation(existing, generation)
+            current_generation = _matching_lease_generation(
+                existing, generation, actor=actor
+            )
         if (
             mine
             and not lapsed
@@ -1301,13 +1410,17 @@ def decline_delegation(
         released_generation = None
         if held is not None and held["holder_id"] == actor["id"]:
             if held["active"]:
-                released_generation = _matching_lease_generation(held, generation)
+                released_generation = _matching_lease_generation(
+                    held, generation, actor=actor
+                )
             else:
                 # An expired row is not a current possession. A generationless
                 # decline releases our expired row using the server-observed
                 # generation under this immediate writer lock, never unfenced.
                 if generation is not None:
-                    released_generation = _matching_lease_generation(held, generation)
+                    released_generation = _matching_lease_generation(
+                        held, generation, actor=actor
+                    )
                 else:
                     # The immediate writer lock makes the server-observed expired
                     # generation an exact fence; no replacement can appear between

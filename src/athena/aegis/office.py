@@ -219,8 +219,10 @@ def build_floor(
         )
         if not statuses.is_done(conn, issue.get("project_id"), issue["status"])
     ]
+    # The caller's clock read decides which leases are live, so the seconds an
+    # agent packet counts to each expiry come from the same instant (A13).
     lease_by_issue = {
-        int(lease["issue_id"]): lease for lease in leases.list_active_leases(conn)
+        int(lease["issue_id"]): lease for lease in leases.live_leases_at(conn, now=now)
     }
     user_ids = [
         int(issue["assignee_id"])

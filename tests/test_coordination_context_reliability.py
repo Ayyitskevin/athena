@@ -7,7 +7,7 @@ import pytest
 
 from athena.aegis import desk, issue_etags, issues, lease_commands, leases, office
 from athena.aegis import projects, ready_queue
-from athena.core import access, db
+from athena.core import access, db, packet_time
 from athena.main import create_app
 
 
@@ -125,7 +125,8 @@ def test_private_content_disappears_but_own_possession_survives(board, change):
             chair = cubicle["chair"]
             assert chair["issue_id"] == issue["id"]
             assert chair["generation"] == held["generation"]
-            assert chair["expires_at"] == held["expires_at"]
+            # The command's stored stamp, in the packet's shape (A13).
+            assert chair["expires_at"] == packet_time.rfc3339(held["expires_at"])
             assert chair["declared_paths"] == held["declared_paths"]
             assert chair["issue_title"] is None
             assert chair["issue_key"] is None

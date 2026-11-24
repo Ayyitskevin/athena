@@ -43,6 +43,18 @@ class RateLimitDecision:
     retry_after_seconds: int
 
 
+def public(decision: RateLimitDecision) -> dict[str, int]:
+    """The refused decision as the 429 body's ``rate_limit`` field (F11): the
+    same three numbers the ``X-RateLimit-*`` and ``Retry-After`` headers carry,
+    as fields an agent reads without the headers (MCP passes on Retry-After
+    alone)."""
+    return {
+        "limit": decision.limit,
+        "remaining": decision.remaining,
+        "retry_after_seconds": decision.retry_after_seconds,
+    }
+
+
 class FixedWindowRateLimiter:
     """Fixed-window limiter keyed by any hashable identity (a token id or a client IP).
 

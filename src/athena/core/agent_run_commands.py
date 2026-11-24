@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Literal
+from typing import Any, Literal
 
 from athena import config
 from athena.core import (
@@ -15,16 +15,27 @@ from athena.core import (
     tokens,
 )
 
-ErrorKind = Literal["unauthorized", "forbidden", "invalid", "capacity"]
+ErrorKind = Literal[
+    "unauthorized",
+    "forbidden",
+    "invalid",
+    "run_id_mismatch",
+    "run_header_invalid",
+    "capacity",
+]
 
 
 class AgentRunCommandError(Exception):
     """A transport-neutral heartbeat rejection."""
 
-    def __init__(self, kind: ErrorKind, detail: str):
+    def __init__(
+        self, kind: ErrorKind, detail: str, *, extra: dict[str, Any] | None = None
+    ):
         super().__init__(detail)
         self.kind = kind
         self.detail = detail
+        # Structured fields beside the prose: the bound a capacity refusal names.
+        self.extra = extra
 
 
 _WRITE_SCOPES = frozenset(
@@ -32,11 +43,54 @@ _WRITE_SCOPES = frozenset(
 )
 
 
+def _session_run_id() -> str | None:
+    """The run this request is tagged with, in the strict form a check-in keys
+    on, or None when the request carries none.
+
+    The request path is forgiving: it drops a run header in a server-reserved
+    namespace, cuts one over 200 characters short and keeps one the strict form
+    rejects (A12). A heartbeat keys state on the session's run, so a header that
+    was sent but would not be recorded exactly as sent is refused here,
+    ``run_header_invalid``, never read as absent or as some other run."""
+    header = run_context.get_client_run_header()
+    if header is None:
+        # No client header: an in-process caller's run context, if any.
+        raw = run_context.get_run_id()
+        if raw is None:
+            return None
+        try:
+            return run_context.strict_run_id(raw)
+        except ValueError as exc:
+            raise AgentRunCommandError("invalid", str(exc)) from exc
+    if run_context.is_reserved_run_id(header.strip()):
+        raise AgentRunCommandError(
+            "run_header_invalid",
+            "X-Athena-Run names a server-reserved run namespace "
+            f"({', '.join(run_context.RESERVED_RUN_ID_PREFIXES)}), which a client "
+            "may not stamp, so the request carries no run; send a run of your own",
+        )
+    try:
+        strict = run_context.strict_run_id(header)
+    except ValueError as exc:
+        raise AgentRunCommandError(
+            "run_header_invalid",
+            f"X-Athena-Run is not a valid run id ({exc}), so this request's run "
+            "is not the one sent; send a valid run id in the header",
+        ) from exc
+    if strict != run_context.get_run_id():
+        raise AgentRunCommandError(
+            "run_header_invalid",
+            "X-Athena-Run would be recorded differently from how it was sent "
+            "(cut short or reshaped); send it in its canonical form",
+        )
+    return strict
+
+
 def heartbeat(
     conn: sqlite3.Connection,
     *,
     actor: dict | None,
-    run_id: object,
+    run_id: object = None,
     usage: object = None,
 ) -> dict:
     """Create or refresh this bearer-authenticated agent's run check-in.
@@ -45,6 +99,12 @@ def heartbeat(
     ``_token_id`` is a browser/session or trusted-header actor and is refused. The
     command repeats policy checks below the transport, then serializes the upsert with
     SQLite's writer reservation so concurrent first heartbeats converge on one row.
+
+    The run reported is the session's (A12): the run this request is tagged with
+    (``run_context``, set from ``X-Athena-Run``, which athena-mcp sends with its
+    client's run id). An omitted ``run_id`` means that run; a ``run_id`` that is
+    not it is refused ``run_id_mismatch``. With no session run, ``run_id`` is
+    required, as before.
     """
     if actor is None:
         raise AgentRunCommandError("unauthorized", "authentication required")
@@ -59,10 +119,24 @@ def heartbeat(
     if scopes is None or not _WRITE_SCOPES.intersection(scopes):
         raise AgentRunCommandError("forbidden", "token scope required: a write scope")
 
+    session_run_id = _session_run_id()
+    if run_id is None:
+        if session_run_id is None:
+            raise AgentRunCommandError(
+                "invalid",
+                "run_id is required: send run_id, or tag the request with X-Athena-Run",
+            )
+        run_id = session_run_id
     try:
         normalized_run_id = run_context.strict_run_id(run_id)
     except ValueError as exc:
         raise AgentRunCommandError("invalid", str(exc)) from exc
+    if session_run_id is not None and normalized_run_id != session_run_id:
+        raise AgentRunCommandError(
+            "run_id_mismatch",
+            f"run_id {normalized_run_id!r} is not this session's run "
+            f"{session_run_id!r}; omit run_id to report on the session's run",
+        )
 
     reported: dict | None = None
     if usage is not None:
@@ -117,6 +191,7 @@ def heartbeat(
                 raise AgentRunCommandError(
                     "capacity",
                     "agent run check-in capacity reached; refresh an existing run_id",
+                    extra={"limit": config.AGENT_RUN_MAX_CHECKINS_PER_AGENT},
                 )
         agent_run_checkins.upsert_checkin(
             conn, agent_id=agent_id, run_id=normalized_run_id, token_id=token_id

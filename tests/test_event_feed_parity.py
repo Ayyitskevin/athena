@@ -202,7 +202,7 @@ def test_import_provenance_is_stored_value_not_verb_guess(feed):
     client, api, server, conn, baseline, records, _, _ = feed
     result = _mcp(server, after=baseline)
     by_id = {row["id"]: row for row in result["events"]}
-    assert by_id[records["imported"]["id"]]["imported_at"] == "2026-10-01 12:34:56"
+    assert by_id[records["imported"]["id"]]["imported_at"] == "2026-10-01T12:34:56Z"
     assert by_id[records["blank"]["id"]]["imported_at"] == ""
     assert by_id[records["native_forge"]["id"]]["imported_at"] is None
     assert by_id[records["root"]["id"]]["imported_at"] is None

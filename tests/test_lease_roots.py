@@ -55,6 +55,20 @@ CATALOG_JSON = json.dumps(CATALOG, separators=(",", ":"))
 CATALOG_SHA = hashlib.sha256(CATALOG_JSON.encode()).hexdigest()
 
 
+def lease_facts(lease: dict) -> dict:
+    """A lease answer without its countdown or the claim answer's issue ETag.
+
+    `expires_in_seconds` falls every second (A13), so two reads of one
+    unchanged lease differ in it whenever they straddle a second; `issue_etag`
+    is beside the lease on a claim answer only (A12). What a test means by
+    "the same lease" is everything else."""
+    return {
+        key: value
+        for key, value in lease.items()
+        if key not in ("expires_in_seconds", "issue_etag")
+    }
+
+
 def root(key="one", prefix=""):
     return {"catalog_sha256": CATALOG_SHA, "root_key": key, "relative_prefix": prefix}
 
@@ -399,7 +413,9 @@ def test_stale_etag_and_generation_cannot_drop_fence(client):
     )
     assert denied.status_code == 412
     assert claim(client, item, generation="0" * 32, paths=[]).status_code == 409
-    assert client.get(f"/issues/{item}/lease").json() == before
+    assert lease_facts(client.get(f"/issues/{item}/lease").json()) == lease_facts(
+        before
+    )
 
 
 def test_cross_issue_alias_race_has_one_winner(client):
@@ -462,7 +478,10 @@ def test_audit_storage_failure_rolls_back_root_and_empty_transition(client):
         conn.close()
     with pytest.raises(sqlite3.IntegrityError, match="synthetic audit unavailable"):
         claim(client, item, generation=first["generation"], paths=[])
-    assert client.get(f"/issues/{item}/lease").json() == first
+    # The claim answer carries the issue's ETag beside the lease (A12); the
+    # lease read is the lease alone.
+    assert first["issue_etag"]
+    assert lease_facts(client.get(f"/issues/{item}/lease").json()) == lease_facts(first)
     assert (
         client.get(
             "/activity", params={"target_kind": "issue", "target_id": item}
@@ -646,6 +665,7 @@ def test_hidden_issue_still_blocks_but_denial_does_not_disclose(client):
             "issue": None,
             "holder": None,
             "holder_path": None,
+            "events_after": None,
         },
     }
     assert (
@@ -709,7 +729,7 @@ def test_real_mcp_claim_and_idempotency_bind_root(client):
         asyncio.run(
             server.call_tool("claim_issue", {**args, "coordination_root": root("two")})
         )
-    assert client.get(f"/issues/{item}/lease").json() == lease
+    assert lease_facts(client.get(f"/issues/{item}/lease").json()) == lease_facts(lease)
 
 
 def test_qualified_directory_nonoverlap_can_coexist(client):
@@ -1122,7 +1142,9 @@ def test_malformed_fence_replacement_audit_failure_retains_original_bytes(
     conn.commit()
     with pytest.raises(sqlite3.IntegrityError, match="synthetic audit failure"):
         claim(client, item, generation=held["generation"], paths=[])
-    assert client.get(f"/issues/{item}/lease").json() == before
+    assert lease_facts(client.get(f"/issues/{item}/lease").json()) == lease_facts(
+        before
+    )
     assert (
         conn.execute(
             "SELECT declared_paths FROM issue_leases WHERE issue_id = ?", (item,)

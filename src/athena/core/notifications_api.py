@@ -19,6 +19,7 @@ from athena.core.authorship import AuthoredBy
 from athena.core.request_models import RequestBody
 from athena.core import notification_commands, notifications
 from athena.core.ids import MAX_SQLITE_INTEGER, RowIdPath
+from athena.core.packet_time import Timestamp
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, personal_write_actor
 from athena.core.refusals import Refusal
@@ -37,15 +38,15 @@ NOTIFICATION_AUTHOR = (
 class NotificationOut(BaseModel):
     id: int
     event_id: int
-    read_at: str | None = None
-    created_at: str
+    read_at: Timestamp | None = None
+    created_at: Timestamp
     actor_id: int
     actor_name: str
     verb: str
     target_kind: str
     target_id: int
     detail: str
-    event_at: str
+    event_at: Timestamp
     # Read-time state of the target as this row describes it (see
     # athena.aegis.notification_state). Null when none applies. Additive; set only by
     # the inbox list route.

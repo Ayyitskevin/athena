@@ -4,6 +4,8 @@ from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from athena.core.packet_time import Timestamp
+
 
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -33,13 +35,14 @@ class Issue(_StrictModel):
 
 class BlockerIssue(Issue):
     project_id: int | None = None
-    archived_at: str | None
+    archived_at: Timestamp | None
 
 
 class ActiveClaim(_StrictModel):
     issue: Issue
     holder: Person
-    expires_at: str
+    expires_at: Timestamp
+    expires_in_seconds: int
 
 
 class BlockerEdge(_StrictModel):
@@ -52,14 +55,14 @@ class OpenHandoff(_StrictModel):
     reason: Literal["needs_input", "blocked", "capacity"]
     blocking_question: Excerpt
     yield_event_id: int
-    yielded_at: str
+    yielded_at: Timestamp
     yielded_by: Person
 
 
 class LatestCompletion(_StrictModel):
     issue: Issue
     event_id: int
-    reported_at: str
+    reported_at: Timestamp
     reported_by: Person
     report_available: bool
     reported_verdict: Literal["PASS", "PASS-WITH-NOTES", "HOLD", "BLOCKED"] | None
@@ -101,7 +104,7 @@ class Semantics(_StrictModel):
 class ProjectBrief(_StrictModel):
     schema_: Literal["athena.project_brief.v1"] = Field(alias="schema")
     scope: Literal["visible_to_request_actor"]
-    observed_at: str
+    observed_at: Timestamp
     project: Project
     summary: Summary
     active_claims: Group[ActiveClaim]

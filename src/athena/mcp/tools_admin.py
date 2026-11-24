@@ -26,6 +26,7 @@ from athena.mcp.server import (
     DispatchLimit,
     IdempotencyKey,
     ListOffset,
+    OnboardProfile,
     ProjectBriefLimit,
     ProjectId,
     ProjectReviewQueueLimit,
@@ -54,14 +55,22 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         scopes: list[str],
         email: str | None = None,
         token_name: str | None = None,
+        profile: OnboardProfile | None = None,
     ) -> dict:
         """Admin: provision a NEW agent teammate in one audited move — create its
         user account (member role, token-only) and mint its first scoped token.
         Scopes are required (least privilege: e.g. ["read", "issue:write"]).
         Email is optional; omitted becomes {slug}@agents.local. Returns the user,
-        the one-time raw token, and a ready-to-paste MCP config. Requires admin."""
+        the one-time raw token, and a ready-to-paste MCP config. profile is the
+        ATHENA_MCP_PROFILE that config prints (seat, seat+knowledge or
+        conductor; omitted, the seat profile the scopes suggest). It grants
+        nothing, and a profile the scopes cannot use is refused. Requires admin."""
         return client.onboard_agent(
-            name=name, email=email, scopes=scopes, token_name=token_name
+            name=name,
+            email=email,
+            scopes=scopes,
+            token_name=token_name,
+            profile=profile,
         )
 
     @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=SETS)
@@ -197,8 +206,8 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         Covers failed logins, revoked tokens still being presented, scope denials,
         and paused accounts that keep trying. Each names the account whose boundary
         was hit. Narrow with verb ('login_failed', 'revoked_token_used',
-        'scope_denied', 'paused_account_refused') and since ('YYYY-MM-DD
-        HH:MM:SS'). Requires an admin token."""
+        'scope_denied', 'paused_account_refused') and since (a timestamp as
+        any packet gives it, '2026-11-21T18:19:13Z'). Requires an admin token."""
         return window(
             lambda rows: client.list_security_events(
                 verb=verb, since=since, limit=rows

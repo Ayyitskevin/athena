@@ -40,7 +40,9 @@ Call `begin_run(run_id="<something-descriptive>")` — for example
 is what makes your work replayable as a unit and distinguishable from another
 agent's. If you were already given a run id, use that one.
 
-Call `heartbeat_agent_run(run_id=...)` now and again as you work. It is how the
+Call `heartbeat_agent_run()` now and again as you work: it reports on the run
+you just named, so pass no `run_id` (one that is not your session's run is
+refused). It is how the
 operator's Mission Control knows you are alive rather than hung. It is a claim
 about you, made by you — so do not send it if you are not actually working.
 

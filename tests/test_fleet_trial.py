@@ -79,8 +79,8 @@ from athena.mcp import server as mcp_server
 
 CEILINGS = Path(__file__).with_name("fleet_trial_ceilings.json")
 SEAT_SCOPES = ["read", "issue:write"]
-# Role -> (account, MCP profile). The conductor's account is onboarded like any
-# agent; the operator sets ATHENA_MCP_PROFILE=conductor for it, as the recipe says.
+# Role -> (account, MCP profile). Each account is onboarded with its profile, so
+# the config Athena prints names it (F9); the conductor's is `conductor`.
 CAST = {
     "conductor": ("cora", "conductor"),
     "design": ("ada", "seat"),
@@ -229,6 +229,7 @@ class Fleet:
             name=name.title(),
             scopes=SEAT_SCOPES,
             headers={},
+            profile=profile,
         )
 
     def issue(self, title: str, *, assignee: str, delegate: str) -> int:
@@ -288,7 +289,6 @@ async def _play(fleet: Fleet, roles: tuple[str, ...], scene) -> dict[str, FleetA
             fleet.app,
             fleet.accounts[role],
             run_id=f"fleet-{fleet.cast[role][0]}-run",
-            profile=fleet.cast[role][1],
         )
         for role in roles
     ]
@@ -296,6 +296,8 @@ async def _play(fleet: Fleet, roles: tuple[str, ...], scene) -> dict[str, FleetA
         agents = {}
         for role, session in zip(roles, sessions, strict=True):
             name, profile = fleet.cast[role]
+            env = fleet.accounts[role]["mcp_config"]["mcpServers"]["athena"]["env"]
+            assert env[mcp_server.PROFILE_ENV] == profile, role  # as printed
             tools = mcp_server.PROFILES[profile] or frozenset()
             listed = {tool.name for tool in (await session.list_tools()).tools}
             assert listed == tools, role  # the session is the profile's surface
@@ -407,8 +409,8 @@ async def design_asks(fleet: Fleet, design: FleetAgent) -> None:
         f"its slice was not picked up: {picked}",
     )
     await design.call("get_issue_work_context", issue_id=issue_id)
-    run = await design.call("current_run")
-    await design.call("heartbeat_agent_run", run_id=run["run_id"])
+    # The session's run is reported; no current_run read first (A12).
+    await design.call("heartbeat_agent_run")
     await design.call(
         "comment_on_issue",
         issue_id=issue_id,
@@ -542,8 +544,8 @@ async def build_submits(
         paths=BUILD_PATHS,
     )
     if not rework:
-        run = await build.call("current_run")
-        await build.call("heartbeat_agent_run", run_id=run["run_id"])
+        # The session's run is reported; no current_run read first (A12).
+        await build.call("heartbeat_agent_run")
     await build.call(
         "comment_on_issue",
         issue_id=issue_id,

@@ -95,10 +95,14 @@ CODE_BY_KIND: dict[str, str] = {
 class PlaybookCommandError(Exception):
     """A refusal with a transport-neutral kind. The adapter maps it."""
 
-    def __init__(self, kind: str, detail: str) -> None:
+    def __init__(
+        self, kind: str, detail: str, *, extra: dict[str, int] | None = None
+    ) -> None:
         super().__init__(detail)
         self.kind = kind
         self.detail = detail
+        # Structured fields beside the prose: the bound a capacity refusal names.
+        self.extra = extra
 
 
 def _checklist_lines(body: str) -> Iterator[str]:
@@ -238,6 +242,7 @@ def start_playbook(
                 "capacity",
                 f"a playbook may start at most {MAX_ITEMS} steps at once; "
                 f"this page has {len(steps)}",
+                extra={"limit": MAX_ITEMS, "requested": len(steps)},
             )
 
         # The citation every created issue carries. An ordinary wikilink, so the

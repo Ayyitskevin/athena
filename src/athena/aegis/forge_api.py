@@ -181,14 +181,21 @@ async def receive_forge_event(
     # Bound BEFORE reading: content-length is a claim, but an honest sender sets
     # it, and refusing early keeps an oversized body out of memory.
     declared = request.headers.get("content-length")
+    too_large = {"limit_bytes": forge_events.MAX_BODY_BYTES}
     if declared and declared.isdigit() and int(declared) > forge_events.MAX_BODY_BYTES:
         raise Refusal(
-            status_code=413, detail="payload too large", code="payload_too_large"
+            status_code=413,
+            detail="payload too large",
+            code="payload_too_large",
+            extra=too_large,
         )
     body = await request.body()
     if len(body) > forge_events.MAX_BODY_BYTES:
         raise Refusal(
-            status_code=413, detail="payload too large", code="payload_too_large"
+            status_code=413,
+            detail="payload too large",
+            code="payload_too_large",
+            extra=too_large,
         )
 
     # An unknown source and a bad signature are the SAME refusal. Answering "no

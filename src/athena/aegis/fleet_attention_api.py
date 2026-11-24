@@ -13,8 +13,10 @@ from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict
 
 from athena.aegis import fleet_attention, lease_lapse_commands
+from athena.core import packet_time
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
+from athena.core.packet_time import Timestamp
 from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/attention/ranking", tags=["aegis"])
@@ -37,7 +39,7 @@ class AttentionRankItemOut(_StrictModel):
     owner_id: int | None
     owner_name: str | None
     reason: str
-    freshness: str
+    freshness: Timestamp
     examined: int
     total: int
     next_action: fleet_attention.NextAction
@@ -117,12 +119,15 @@ def index(
     # the read above never held the writer lock.
     lease_lapse_commands.observe_lapses(conn, actor)
 
-    return {
-        "items": result["items"],
-        "examined": result["examined"],
-        "total": result["total"],
-        "signals": result["signals"],
-        "returned": result["returned"],
-        "limit": result["limit"],
-        "clipped": result["clipped"],
-    }
+    return packet_time.stamp(
+        {
+            "items": result["items"],
+            "examined": result["examined"],
+            "total": result["total"],
+            "signals": result["signals"],
+            "returned": result["returned"],
+            "limit": result["limit"],
+            "clipped": result["clipped"],
+        },
+        now=packet_time.clock(),
+    )

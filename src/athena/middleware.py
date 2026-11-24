@@ -226,7 +226,11 @@ class SignedInboundRateLimitMiddleware:
             return
         await _send_json_response(
             send,
-            {"detail": "anonymous rate limit exceeded", "code": "rate_limited"},
+            {
+                "detail": "anonymous rate limit exceeded",
+                "code": "rate_limited",
+                "rate_limit": rate_limits.public(decision),
+            },
             status_code=429,
             extra_headers={
                 "Cache-Control": "private, no-store",
@@ -270,7 +274,11 @@ class RequestBodyLimitMiddleware:
             if content_length > self.max_bytes:
                 await _send_json_response(
                     send,
-                    {"detail": "request body too large", "code": "payload_too_large"},
+                    {
+                        "detail": "request body too large",
+                        "code": "payload_too_large",
+                        "limit_bytes": self.max_bytes,
+                    },
                     status_code=413,
                 )
                 return
@@ -289,6 +297,7 @@ class RequestBodyLimitMiddleware:
                         {
                             "detail": "request body too large",
                             "code": "payload_too_large",
+                            "limit_bytes": self.max_bytes,
                         },
                         status_code=413,
                     )
@@ -476,6 +485,9 @@ class RunContextMiddleware:
         # existing runs (forking from an automation run is legitimate), so they
         # are not reserved.
         run_token = run_context.set_client_run_id(run_raw)
+        # The raw value too, so a command that keys state on the session's run
+        # can tell a dropped or reshaped header from an absent one.
+        header_token = run_context.set_client_run_header(run_raw)
         parent_token = run_context.set_parent_run_id(parent_raw)
         forked_from_token = run_context.set_forked_from_event_id(forked_from_raw)
         try:
@@ -483,6 +495,7 @@ class RunContextMiddleware:
         finally:
             run_context.reset_forked_from_event_id(forked_from_token)
             run_context.reset_parent_run_id(parent_token)
+            run_context.reset_client_run_header(header_token)
             run_context.reset_run_id(run_token)
 
 
@@ -937,7 +950,11 @@ class IdempotencyMiddleware:
                 if not decision.allowed:
                     await _send_json_response(
                         send,
-                        {"detail": "token rate limit exceeded", "code": "rate_limited"},
+                        {
+                            "detail": "token rate limit exceeded",
+                            "code": "rate_limited",
+                            "rate_limit": rate_limits.public(decision),
+                        },
                         status_code=429,
                         extra_headers={
                             "Retry-After": str(decision.retry_after_seconds),

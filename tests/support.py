@@ -137,17 +137,19 @@ def onboard_agent(
     name: str = "Sol",
     scopes: Iterable[str] = ("read", "issue:write"),
     headers: Mapping[str, str] = ADMIN,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Onboard an agent account with its first token, as the admin.
 
     Returns the ``POST /users/onboard_agent`` body: ``user``, ``token`` (with the
     raw ``token["token"]``) and ``mcp_config``. ``bearer()`` takes it as is.
+    ``profile`` is the MCP profile the printed config names (omitted: the seat
+    profile the scopes suggest).
     """
-    response = client.post(
-        "/users/onboard_agent",
-        json={"email": email, "name": name, "scopes": list(scopes)},
-        headers=dict(headers),
-    )
+    body: dict[str, Any] = {"email": email, "name": name, "scopes": list(scopes)}
+    if profile is not None:
+        body["profile"] = profile
+    response = client.post("/users/onboard_agent", json=body, headers=dict(headers))
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -268,7 +270,7 @@ def mcp_server_for(
     onboarded agent: its token, its profile, its probed scopes, a fixed run id.
 
     ``profile`` replaces the emitted ``ATHENA_MCP_PROFILE``, as an operator who
-    sets up a conductor does (onboarding prints ``seat``)."""
+    edits a printed config does; onboarding with ``profile`` prints it instead."""
     from athena.mcp import server as mcp_server
     from athena.mcp.client import AthenaClient
 

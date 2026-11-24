@@ -517,16 +517,23 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         run_id: str | None = None,
         parent_run_id: str | None = None,
         verb: str | None = None,
+        project_id: ProjectId | None = None,
+        mine: bool = False,
         limit: EventLimit = 50,
     ) -> dict:
         """Read the audit/event feed in ascending event-id order, with REST filters.
 
         Pass `after` for newer events. Filters may be combined: kind, target
         (requires kind), actor_id, actor_type (agent/human), run_id,
-        parent_run_id (events in child runs), and verb. limit defaults to 50,
+        parent_run_id (events in child runs), verb, project_id (that project's
+        events; one you cannot see reads as empty) and mine=true (issues you
+        are assigned, delegated or created, or delegated to another account).
+        limit defaults to 50,
         from 1 to 200. Returns {events, next_after, has_more}; an empty page
         retains the input after. Each event's stored imported_at is null for a
         native event; any non-null value marks an import, regardless of verb.
+        A lease event carries `generation`, a yield or handoff resume
+        `handoff_token`, a completion its reported `verdict`; absent otherwise.
 
         A filtered read can omit intervening events: its next_after cannot
         justify advancing the desk cursor. Advance only after processing the
@@ -542,6 +549,8 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             run_id=run_id,
             parent_run_id=parent_run_id,
             verb=verb,
+            project_id=project_id,
+            mine=mine,
             limit=limit,
         )
 
@@ -556,11 +565,17 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         run_id: str | None = None,
         parent_run_id: str | None = None,
         verb: str | None = None,
+        project_id: ProjectId | None = None,
+        mine: bool = False,
         limit: EventLimit = 50,
     ) -> dict:
         """The event feed after `after`, in ascending id order, parked instead of
         empty: the server holds the request up to `wait` seconds (0 to 25; 0
         answers at once) and answers as soon as an event you may read lands.
+        With project_id (that project's events; one you cannot see reads as
+        empty) or mine=true (issues you are assigned, delegated or created, or
+        delegated to another account), only a matching event answers or wakes
+        you.
 
         Use it in place of a sleep loop, from your last processed id. Returns
         {events, next_after, has_more, wait = {requested_seconds,
@@ -572,6 +587,8 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         appears nor wakes you. On entry it records any lapsed lease you answer
         for (you are the issue's assignee or delegated it to the holder) as one
         `lease_lapsed` event, so one call learns of it; nothing is released.
+        A lease event carries `generation`, a yield or handoff resume
+        `handoff_token`, a completion its reported `verdict`; absent otherwise.
 
         A filtered read can omit events, so its next_after cannot justify
         advancing the desk cursor.
@@ -586,6 +603,8 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             run_id=run_id,
             parent_run_id=parent_run_id,
             verb=verb,
+            project_id=project_id,
+            mine=mine,
             limit=limit,
         )
 
@@ -755,8 +774,12 @@ def register_read_tools(tool, mutation_tool, client) -> None:
 
     # Liveness: every call refreshes last-seen (and usage counts again).
     @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=SEAT, hints=ADDS)
-    def heartbeat_agent_run(run_id: RunId, usage: dict | None = None) -> dict:
-        """Report that this authenticated agent is still working on `run_id`.
+    def heartbeat_agent_run(
+        run_id: RunId | None = None, usage: dict | None = None
+    ) -> dict:
+        """Report that this authenticated agent is still working on this
+        session's run. Omit run_id: the session's run (current_run) is used; a
+        run_id that is not the session's is refused run_id_mismatch.
         Athena binds the heartbeat to the token's actor and its own server clock;
         call repeatedly because every PUT intentionally refreshes last-seen state.
         usage is optional: model, input_tokens, output_tokens, cached_tokens,

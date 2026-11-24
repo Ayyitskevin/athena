@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi.testclient import TestClient
 
 from athena.aegis import fleet_attention, work_progress
-from athena.core import db, users
+from athena.core import db, packet_time, users
 from athena.main import create_app
 
 H1 = {"X-Athena-Actor": "1"}
@@ -154,7 +154,7 @@ def test_a_heartbeat_after_old_work_does_not_make_claimed_work_fresh(tmp_path):
         # The agent's own desk says the same about the issue it holds.
         held = c.get("/desk", headers=_bearer(agent)).json()["work"]["leases"]["items"]
         assert held[0]["progress"]["work_state"] == "stale"
-        assert held[0]["progress"]["last_work_at"] == old
+        assert held[0]["progress"]["last_work_at"] == packet_time.rfc3339(old)
 
         # Positive control: real work now makes it recent.
         c.post(

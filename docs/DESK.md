@@ -48,6 +48,33 @@ so a wait loop learns of a lapse within one wait
 live in `src/athena/core/event_wait.py` (32 parked requests per process, 25 s each,
 a half-second wake bound).
 
+**Waiting on what you asked about.** `project_id=P` keeps the project's own events
+and those of the issues that were in it when they were recorded; `mine=true` keeps
+the events of the issues you are assigned, delegated or created, and those you
+delegated to another account, as they stand at the read. Either answers, and wakes a wait, only with a matching event: work in an
+unrelated project no longer wakes you. A project you cannot see answers exactly as
+one that does not exist, an empty batch and a wait that runs to its timeout. Both
+are filters, so a filtered read cannot justify advancing the cursor: when one wakes
+you, drain unfiltered from your cursor before you advance it.
+
+`mine` is the set at the read, not at the event. Once an issue is reassigned away
+from you, or you are removed as its delegate, its events leave your `mine` feed,
+the event that took it included; only the unfiltered feed shows that one. A
+subtask someone else files under your issue is not yours. A lapse the feed records
+for you is always in `mine`, because the accounts that answer for a lease are its
+issue's assignee and the account that delegated it. Both filters are cheap from a
+cursor near the newest event, which is where a wait loop reads. A drain from an old
+cursor reads every later event of your issues, or of the project, before it
+returns a page, so drain unfiltered and keep the filters for waiting.
+
+**Facts are fields.** A lease event carries its `generation` (claimed,
+lease_renewed, lease_lapsed, claim_yielded, claim_handoff_resumed, claim_completed,
+and a delegation_declined that released a lease); a yield and a handoff resume carry
+the `handoff_token`; a completion that reported one carries its `verdict`. Each is
+the value the command recorded, and the prose `detail` names the same values for a
+person. An event with none of them has none of the keys, and an event recorded
+before migration 0086 has them only in its `detail`.
+
 ## The lanes
 
 | Lane | Holds | Bound |
@@ -55,7 +82,7 @@ a half-second wake bound).
 | `identity` | id, name, role, agent flag, paused, scopes, budget, action kinds needing approval; `notebook` (see below) | `notebook.excerpt`: the first 12 lines |
 | `asks.run_controls` | controls addressed to you that nobody has answered | 20 |
 | `asks.worker_kill_requests` | your workers the operator asked to stop, still unconfirmed | 50 matching workers, with exact `total`, `limit` and `clipped` |
-| `asks.review_requests` | visible current requests for you and superseded targets on review issues you still hold | 20 |
+| `asks.review_requests` | visible current requests for you and superseded targets on review issues you still hold; present and empty when there are none | 20, `visible_total`, `returned`, `clipped` |
 | `asks.claim_handoffs` | context handed to you on issues you hold, unacknowledged | 20 |
 | `work.delegations` | your delegation inbox | 20, `has_more`/`next_offset` |
 | `work.leases` | `items`: issues you hold NOW, with `active` and the 0057 generation. Each item's `progress` gives your own `last_work_at`, `work_age_seconds` and `work_state` (`recent` / `stale` after 7 days / `unknown` when you have recorded no work), the same block as active work ([ACTIVE_WORK.md](ACTIVE_WORK.md)). Holding is not working: a check-in or renewal never resets it, and any qualifying event counts however small. `lapsed`: your expired rows on open or done issues, labelled `issue_done`; holders settle their own rows deliberately with `complete_claim` and the observed generation. Reading never settles a row; admins cannot settle another actor's expired row | 20 each, `total` / `lapsed_total`; `lapsed_clipped` says whether rows are omitted; `lapsed_oldest_expires_at` is null when empty or clipped (unknown when clipped); total/clipped distinguish these cases, and claim order is not expiry order |
@@ -64,6 +91,7 @@ a half-second wake bound).
 | `work.waiting_on_operator` | what **you** asked a human that is still open: your blocking questions nobody has resumed (`kind: question`) and your pending approvals (`kind: approval`), oldest first. Read it before asking again. Nothing enforces a response time. `not_offered`: issues the ready lane holds back from you until another account answers (see below), each with `reason` `awaiting_answer` or `completed_by_you`, `settled_by_you`, and `settled_at` only when the settlement was yours | 20, `total` across both kinds; `not_offered` 20 with its own `total` |
 | `signals` | unread notifications, `events_since_cursor`, `latest_visible_event_id` | 10 notifications, count capped at 500 |
 | `cursor` | your stored position, or `null` | — |
+| `office` | your chair, fence overlaps and what to sit in next, as `GET /office` answers it ([OFFICE.md](OFFICE.md)) | one chair |
 
 **Over MCP the desk fits its budget.** `my_desk` answers within 16,000
 characters whatever the lanes hold. A desk over it is cut by shape: the largest
@@ -75,6 +103,12 @@ own tool for delegations (`list_my_delegated_work`), notifications
 `my_desk(section=<the cut's key>, offset=<what was kept>)`, which answers that
 one place of a fresh desk read: a list's rows or a text from `offset`. REST
 `GET /desk` is not cut.
+
+**One dialect.** Every lane is present when empty, every timestamp is RFC 3339
+UTC (`2026-11-21T18:19:13Z`), and every `<x>expires_at` (a lease, a chair, a run
+control, `lapsed_oldest_expires_at`) has `<x>expires_in_seconds` beside it, counted
+from the one clock read the whole desk is built at
+([conventions](AGENT_GUIDE.md#conventions-every-agent-packet-keeps)).
 
 **It composes, it does not compute.** Every lane calls the reader that already
 owns that surface with *your* visibility applied — the same run-control inbox

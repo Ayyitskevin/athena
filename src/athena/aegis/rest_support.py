@@ -132,7 +132,9 @@ def issue_command_error_response(
         status_code, code = generation_spec
         return JSONResponse(
             status_code=status_code,
-            content={"detail": exc.detail, "code": code},
+            # A renewal's refusal names the holder's own generation as a field
+            # (F11); the command never puts one in a rival's refusal.
+            content={"detail": exc.detail, "code": code, **(exc.extra or {})},
             headers=PRIVATE_LEASE_HEADERS,
         )
     policy_status = _ISSUE_POLICY_HTTP.get(exc.code or "")
@@ -160,8 +162,15 @@ CLAIM_IF_MATCH_OPENAPI = {
         {
             "name": "If-Match",
             "in": "header",
-            "required": True,
-            "description": "Exactly one strong root issue ETag.",
+            # Not required by every call: the holder's renewal with its current
+            # generation, naming no paths or root, may omit it (A12). Every
+            # acquisition still answers 428 without it.
+            "required": False,
+            "description": (
+                "Exactly one strong root issue ETag. Required to acquire a lease "
+                "and for a renewal that names paths or coordination_root; the "
+                "holder's renewal with its current generation alone may omit it."
+            ),
             "schema": {"type": "string"},
         }
     ]

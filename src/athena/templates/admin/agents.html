@@ -257,6 +257,16 @@
             <p class="field-help">Least privilege. Most agents need read + issue writes. Admin is almost never right.</p>
         </div>
         <div class="form-group">
+            <label for="onboard-profile">MCP profile</label>
+            <select id="onboard-profile" name="profile">
+                <option value="" selected>Default: a seat, with pages if it may write docs</option>
+                {% for p in printable_profiles %}
+                <option value="{{ p }}">{{ p }}</option>
+                {% endfor %}
+            </select>
+            <p class="field-help">The tool set the printed config names. It grants nothing; a profile these scopes cannot fully use is refused. Choose <code>conductor</code> for an agent that assigns and delegates.</p>
+        </div>
+        <div class="form-group">
             <label for="onboard-token-name">Token label <span class="muted">(optional)</span></label>
             <input id="onboard-token-name" type="text" name="token_name" placeholder="defaults to the agent name" autocomplete="off">
         </div>

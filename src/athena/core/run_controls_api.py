@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, WithJsonSchema
 from athena.core import run_control_commands, run_controls
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
+from athena.core.packet_time import Timestamp
 from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/run-controls", tags=["core"])
@@ -133,12 +134,12 @@ class RunControlOut(BaseModel):
     requested_by: int
     requested_by_name: str
     idempotency_key: str
-    created_at: str
-    expires_at: str
+    created_at: Timestamp
+    expires_at: Timestamp
     # The agent's claims, each recorded once. Acknowledgement proves receipt;
     # completion is an identity-bound claim; neither proves a process effect.
-    acknowledged_at: str | None = None
-    settled_at: str | None = None
+    acknowledged_at: Timestamp | None = None
+    settled_at: Timestamp | None = None
     settled_by: int | None = None
     settlement: Literal["completed", "declined"] | None = None
     result_summary: str
