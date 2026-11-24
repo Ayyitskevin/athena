@@ -18,6 +18,7 @@ a project offers.
 from __future__ import annotations
 
 from collections.abc import Mapping
+import sqlite3
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -27,7 +28,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.utils import is_body_allowed_for_status_code
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from athena.core import packet_time
+from athena.core import db, packet_time
 from athena.core.refusal_codes import code_for_status
 
 #: FastAPI's own 422 body for a request that does not match the route's schema.
@@ -109,8 +110,27 @@ def _unhandled(request: Request, exc: Exception) -> JSONResponse:
     )
 
 
+#: A statement gave up waiting for another writer (H7). Nothing it would have
+#: written was applied; the same request can simply be sent again.
+BUSY_CODE = "busy"
+BUSY_DETAIL = "the database is busy with another write; nothing was applied, retry"
+BUSY_RETRY_AFTER_SECONDS = 1
+
+
+def _database_busy(request: Request, exc: Exception) -> JSONResponse:
+    # Any other database error is a fault, not a queue: let it reach the 500.
+    if not db.is_lock_timeout(exc):
+        raise exc
+    return JSONResponse(
+        status_code=503,
+        content={"detail": BUSY_DETAIL, "code": BUSY_CODE},
+        headers={"Retry-After": str(BUSY_RETRY_AFTER_SECONDS)},
+    )
+
+
 def install(app: FastAPI) -> None:
     """Register the handlers that put a ``code`` on every JSON refusal."""
+    app.add_exception_handler(sqlite3.OperationalError, _database_busy)
     app.add_exception_handler(StarletteHTTPException, _http_exception)
     app.add_exception_handler(RequestValidationError, _request_validation)
     app.add_exception_handler(Exception, _unhandled)

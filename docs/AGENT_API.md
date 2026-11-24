@@ -260,6 +260,7 @@ back with `isError` false, `applied: false` and `next`.
 | `rate_limited` | 429 | Too many requests from this token or address; `rate_limit` carries the limit, what remains and retry_after_seconds to wait. |  |
 | `capacity_reached` | 409, 429 | A bounded server-side limit is reached (run check-ins, workers, run controls, playbook steps); the detail says which and how to stay within it, and `limit` names the bound where it is one. |  |
 | `internal_error` | 500 | The server failed while handling the request; whether a write applied is unknown. Read the target's state before retrying. |  |
+| `busy` | 503 | Another write held the database for longer than a request waits; nothing was applied. Send the same request again after Retry-After seconds. |  |
 | `unavailable` | 503 | A dependency (the database, the idempotency store or an execution fleet) cannot answer now; retry later. |  |
 | `deployment_boundary` | 421, 503 | Refused before any Athena work: the Host or socket is not one this deployment serves. Check the base URL you were given. |  |
 | `precondition_required` | 428 | This write needs If-Match with the target's current ETag. | `get_issue`: pass its _etag as if_match (a page's _etag is on get_page) |

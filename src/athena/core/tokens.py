@@ -18,6 +18,8 @@ import secrets
 import sqlite3
 from typing import Literal
 
+from athena.core import db
+
 # Raw tokens carry a short prefix so humans and secret-scanners recognize them.
 # The hash is computed over the whole string, prefix included.
 TOKEN_PREFIX = "ath_"
@@ -204,12 +206,48 @@ def resolve_token(conn: sqlite3.Connection, raw: str) -> dict | None:
         or credential.actor is None
     ):
         return None
-    conn.execute(
-        "UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?",
-        (credential.token_id,),
-    )
-    conn.commit()
+    _stamp_last_use(conn, credential.token_id)
     return credential.actor
+
+
+#: A token's last use is stamped at most this often (H7). The stamp says
+#: whether a credential is still in use (the operator's stale-token warning
+#: counts days), so a minute's resolution loses nothing, and every
+#: bearer-authenticated request in between is spared the writer lock.
+LAST_USED_STAMP_SECONDS = 60
+#: How long the stamp itself may wait for another writer. It is advisory: a
+#: read must not queue behind a long write to record that it happened.
+_STAMP_WAIT_MS = 250
+
+
+def _stamp_last_use(conn: sqlite3.Connection, token_id: int) -> None:
+    """Record that this token was just used, unless it was stamped within the
+    last minute or the database is busy.
+
+    The check is a read and takes no lock. Only a due stamp writes, and it
+    waits briefly: if another writer holds the database the stamp is skipped
+    and the next request tries again, so authenticating never fails, and
+    never stalls, for want of a bookkeeping write."""
+    due = conn.execute(
+        "SELECT last_used_at IS NULL OR last_used_at <= datetime('now', ?) AS due "
+        "FROM api_tokens WHERE id = ?",
+        (f"-{LAST_USED_STAMP_SECONDS} seconds", token_id),
+    ).fetchone()
+    if due is None or not due["due"]:
+        return
+    conn.execute(f"PRAGMA busy_timeout = {_STAMP_WAIT_MS}")
+    try:
+        conn.execute(
+            "UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?",
+            (token_id,),
+        )
+        conn.commit()
+    except sqlite3.OperationalError as exc:
+        if not db.is_lock_timeout(exc):
+            raise
+        conn.rollback()
+    finally:
+        conn.execute(f"PRAGMA busy_timeout = {db.BUSY_TIMEOUT_MS}")
 
 
 def get_revoked_token(conn: sqlite3.Connection, raw: str) -> dict | None:

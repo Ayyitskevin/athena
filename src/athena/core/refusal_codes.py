@@ -194,6 +194,15 @@ _ENTRIES: tuple[RefusalCode, ...] = (
         ),
     ),
     RefusalCode(
+        code="busy",
+        statuses=(503,),
+        meaning=(
+            "Another write held the database for longer than a request waits; "
+            "nothing was applied. Send the same request again after "
+            "Retry-After seconds."
+        ),
+    ),
+    RefusalCode(
         code="unavailable",
         statuses=(503,),
         meaning=(

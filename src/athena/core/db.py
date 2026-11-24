@@ -46,6 +46,11 @@ class _Migration:
     sql: str
 
 
+#: How long a statement waits for another writer before SQLite gives up, in
+#: milliseconds. A wait that runs out is answered 503 ``busy`` (H7), not a 500.
+BUSY_TIMEOUT_MS = 5000
+
+
 def connect(db_path: str | Path) -> sqlite3.Connection:
     """Open a connection with the settings Athena always wants."""
     # FastAPI may enter a synchronous yield dependency and run its endpoint/exit
@@ -60,8 +65,17 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     # write lock — and without a busy timeout SQLite gives up instantly with
     # "database is locked" (a 500) instead of waiting its turn. Wait up to 5s so
     # concurrent actors queue behind each other rather than erroring out.
-    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
     return conn
+
+
+def is_lock_timeout(exc: BaseException) -> bool:
+    """Whether ``exc`` is SQLite giving up on a lock after ``BUSY_TIMEOUT_MS``:
+    another writer held the database for longer than a request waits. The
+    statement that raised it applied nothing."""
+    return isinstance(exc, sqlite3.OperationalError) and (
+        "database is locked" in str(exc) or "database table is locked" in str(exc)
+    )
 
 
 class TransactionEndedEarly(RuntimeError):
