@@ -415,12 +415,9 @@ def claim_or_read(
 
         if record is not None:
             if record["state"] == "indeterminate":
-                kind = (
-                    "authorization_changed"
-                    if record["failure_code"] == "authorization_changed"
-                    else "indeterminate"
+                return ClaimResult(
+                    _UNREPLAYABLE.get(record["failure_code"], "indeterminate"), record
                 )
-                return ClaimResult(kind, record)
             if _fenced(conn, record):
                 if record["state"] == "executing":
                     return ClaimResult("authorization_changed", record)
@@ -597,6 +594,19 @@ def mark_indeterminate(
         return cur.rowcount == 1
 
 
+#: Why an indeterminate row is one: its owner process is gone (H14).
+OWNER_LOST = "owner_lost"
+#: An operator read the target and confirmed the keyed request was applied
+#: (H14). The key keeps refusing, and now says so.
+RESOLVED_APPLIED = "resolved_applied"
+
+# The stored failure codes that are not "outcome unknown", and what a retry is
+# told instead.
+_UNREPLAYABLE = {
+    "authorization_changed": "authorization_changed",
+    RESOLVED_APPLIED: "applied",
+}
+
 #: Keys are 1 to 255 visible ASCII characters, as the header is validated.
 MAX_KEY_BYTES = 255
 
@@ -608,6 +618,7 @@ KEY_STATES = (
     "completed",
     "indeterminate",
     "authorization_changed",
+    "applied",
 )
 
 
@@ -658,11 +669,7 @@ def key_state(
     if legacy:
         state = "indeterminate"
     elif record["state"] == "indeterminate":
-        state = (
-            "authorization_changed"
-            if record["failure_code"] == "authorization_changed"
-            else "indeterminate"
-        )
+        state = _UNREPLAYABLE.get(record["failure_code"], "indeterminate")
     elif _fenced(conn, record):
         state = "authorization_changed"
     elif record["state"] == "executing":
@@ -679,6 +686,81 @@ def key_state(
         "path": record["path"],
         "status_code": record["status_code"] if state == "completed" else None,
     }
+
+
+def sender(conn: sqlite3.Connection, identity: str) -> dict | None:
+    """The account an identity is, and the token when it is one: who sent the
+    keyed request. ``None`` when the token or the account no longer exists."""
+    kind, _, value = identity.partition(":")
+    if kind == "tok":
+        row = conn.execute(
+            "SELECT u.id AS user_id, u.name AS user_name, t.id AS token_id, "
+            "t.name AS token_name FROM api_tokens t JOIN users u ON u.id = t.user_id "
+            "WHERE t.token_hash = ?",
+            (value,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT id AS user_id, name AS user_name, NULL AS token_id, "
+            "NULL AS token_name FROM users WHERE id = ?",
+            (value,),
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
+# A key whose outcome nobody knows: stored so, or still "executing" with no
+# live owner (its lease ran out). Not a key fenced by an authorization change
+# and not one already resolved; each of those says what happened.
+_UNKNOWN_OUTCOME = (
+    "(state = 'indeterminate' AND failure_code NOT IN "
+    f"('authorization_changed', '{RESOLVED_APPLIED}')) "
+    "OR (state = 'executing' AND lease_expires_at <= ?)"
+)
+
+
+#: The bounds of one page of the list of keys whose outcome is unknown.
+INDETERMINATE_DEFAULT_LIMIT = 50
+INDETERMINATE_MAX_LIMIT = 200
+
+
+def list_indeterminate(
+    conn: sqlite3.Connection, *, limit: int, after_id: int = 0, now: int | None = None
+) -> list[dict]:
+    """The keys whose outcome is unknown, oldest first, with the request each
+    belongs to and who sent it (H14): at most ``limit``, after row ``after_id``."""
+    rows = conn.execute(
+        "SELECT rowid AS id, idempotency_key, identity, method, path, state, "
+        "failure_code, scope_issue_id, created_at, updated_at "
+        f"FROM idempotency_keys WHERE ({_UNKNOWN_OUTCOME}) AND rowid > ? "
+        "ORDER BY rowid LIMIT ?",
+        (_now(now), after_id, limit),
+    ).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "key": row["idempotency_key"],
+            "method": row["method"],
+            "path": row["path"],
+            "issue_id": row["scope_issue_id"],
+            "reason": row["failure_code"] or "lease_expired",
+            "claimed_at": row["created_at"],
+            "since": row["updated_at"],
+            "sent_by": sender(conn, row["identity"]),
+        }
+        for row in rows
+    ]
+
+
+def get_indeterminate(
+    conn: sqlite3.Connection, *, row_id: int, now: int | None = None
+) -> dict | None:
+    """The stored row of one key whose outcome is unknown, by its list id."""
+    row = conn.execute(
+        "SELECT rowid AS id, idempotency_key, identity, method, path, "
+        f"scope_issue_id FROM idempotency_keys WHERE rowid = ? AND ({_UNKNOWN_OUTCOME})",
+        (row_id, _now(now)),
+    ).fetchone()
+    return dict(row) if row is not None else None
 
 
 def get_record(conn: sqlite3.Connection, *, key: str, identity: str) -> dict | None:

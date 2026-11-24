@@ -1034,6 +1034,33 @@ class AthenaClient:
         """Read the state of an idempotency key this credential used."""
         return self._result(self._client.get(f"/idempotency/{quote(key, safe='')}"))
 
+    def list_indeterminate_keys(
+        self, *, limit: int = 50, cursor: str | None = None
+    ) -> Any:
+        """Admin: one page of the idempotency keys whose outcome is unknown."""
+        params: dict[str, Any] = {"limit": limit}
+        if cursor is not None:
+            params["cursor"] = cursor
+        return self._result(
+            self._client.get("/idempotency-keys/indeterminate", params=params)
+        )
+
+    def resolve_idempotency_key(
+        self,
+        key_id: int,
+        *,
+        key: str,
+        outcome: str,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Admin: settle one key whose outcome is unknown as applied or not."""
+        return self._mutate(
+            self._client.post,
+            f"/idempotency-keys/{key_id}/resolve",
+            json={"key": key, "outcome": outcome},
+            idempotency_key=idempotency_key,
+        )
+
     def whoami(self) -> Any:
         """Read the authenticated identity: id, email, role, agent flag, and the
         acting token's effective scopes (null when the auth is not scope-limited)."""

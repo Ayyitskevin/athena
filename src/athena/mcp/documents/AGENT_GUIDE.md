@@ -59,6 +59,7 @@ that sent a key can read it; anyone else's reads `unused`.
 | `completed` | The write finished; `status_code` is its answer's status. | Repeat the same call with the same key to get that answer, marked `_replayed`. |
 | `indeterminate` | The first request ended and nothing recorded how: its owner went away, or its answer could not be kept. A retry is refused 409 `idempotency_indeterminate`. | Read the target that `method` and `path` name. If the write is not there and is still needed, send it under a new key. |
 | `authorization_changed` | What you may do changed since the key was used, so its answer is withheld. A retry is refused 409 `idempotency_authorization_changed`. | Read the target, then use a new key if the write is still needed. |
+| `applied` | The outcome was unknown, and an operator has since read the target and confirmed the write landed. A retry is refused 409 `idempotency_applied`. | Do not send the write again, under this key or a new one. Read the target for its state. |
 
 A different request under a key that is on record is refused 409
 `idempotency_mismatch`, whatever its state. The codes are listed in

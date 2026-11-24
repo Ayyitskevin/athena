@@ -220,12 +220,14 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `list_approvals` | `GET /approvals` | read-only | The operator's approval queue — actions an agent asked to take that are … |
 | `list_automation_failures` | `GET /automation/rules` | read-only | Read the admin-only exception list of automation rules whose actions have … |
 | `list_automation_rules` | `GET /automation/rules` | read-only | List every admin-only automation rule with its event or schedule … |
+| `list_indeterminate_keys` | `GET /idempotency-keys/indeterminate` | read-only | Admin: the idempotency keys whose outcome is unknown (the request … |
 | `list_security_events` | `GET /security/events` | read-only | Recent boundary REFUSALS — someone probing where they may not go. |
 | `list_users` | `GET /users` | read-only | List users (id, name, role) — useful for resolving an assignee. |
 | `offboard_agent` | `POST /users/{user_id}/offboard` | destructive, idempotent | Admin one-click offboard: demote user_id to viewer, revoke every session, … |
 | `onboard_agent` | `POST /users/onboard_agent` | idempotent | Admin: provision a NEW agent teammate in one audited move — create its … |
 | `pause_agent` | `PUT /users/{user_id}/paused` | idempotent | Admin: PAUSE user_id — every authenticated action it attempts is … |
 | `request_worker_kill` | `POST /workers/{worker_id}/kill` | idempotent | Admin: ask a worker to stop. |
+| `resolve_idempotency_key` | `POST /idempotency-keys/{key_id}/resolve` | destructive, idempotent | Admin: settle one key from list_indeterminate_keys after reading the … |
 | `resume_agent` | `PUT /users/{user_id}/paused` | idempotent | Admin: RESUME a paused user_id — restores the account exactly as it … |
 | `revoke_agent_tokens` | `DELETE /users/{user_id}/tokens` | destructive, idempotent | Admin kill switch: revoke EVERY live API token held by user_id — the … |
 | `set_agent_budget` | `PUT /users/{user_id}/budget` | idempotent | Admin: cap how many metered writes a user may make per fixed window … |
@@ -287,6 +289,7 @@ back with `isError` false, `applied: false` and `next`.
 | `idempotency_mismatch` | 409 | This Idempotency-Key was already used for a different request; use a new key for a different call. |  |
 | `idempotency_in_progress` | 409 | A request with this Idempotency-Key is still running; retry the same call after Retry-After seconds. `get_idempotency_key` reads the key's state without retrying. |  |
 | `idempotency_indeterminate` | 409 | The earlier request under this key ended with an unknown outcome; read the target's state before choosing a new key. `get_idempotency_key` names the keyed request's method and path. |  |
+| `idempotency_applied` | 409 | The earlier request under this key ended with an unknown outcome, and an operator has since confirmed it was applied. Do not send it again, under this key or a new one; read the target for its state. |  |
 | `idempotency_authorization_changed` | 409 | What you may do changed after this key was claimed (the assignee, creator or a contributor of the issue it named, `issue_id`; or a role, token, membership, visibility, pause, placement, agent flag, close policy, approval gate or budget limit anywhere), so its stored response is not replayed and this answer does not say whether the write was applied. Read the target; repeat under a new key only if it was not. The key stays refused until its receipt would have expired. | `get_issue_work_context`: issue_id: the refusal's issue_id (the issue your keyed write named); its activity and comments show whether your write was applied. Repeat it with a new idempotency_key only if it was not. For a write on no issue, read what it changed instead. |
 | `undo_event_not_found` | 404 | No activity event with that id is visible to you. |  |
 | `undo_not_reversible` | 401, 422 | This event's action has no inverse that undo may apply. |  |
@@ -312,4 +315,4 @@ with `isError` true and `status_code` null.
 
 ---
 
-*144 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*146 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

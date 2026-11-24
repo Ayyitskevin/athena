@@ -156,12 +156,14 @@ def answers() -> dict[str, dict[str, Any]]:
     return {
         "object": _every_tool_answering(ROW),
         "list": _every_tool_answering([ROW]),
-        # H6: the issue, page and comment lists answer one D2 page.
+        # H6: the issue, page and comment lists answer one D2 page; H14: so
+        # does the list of keys whose outcome is unknown.
         "page": _every_tool_answering(
             {
                 "issues": [ROW],
                 "pages": [ROW],
                 "comments": [ROW],
+                "items": [ROW],
                 "next_cursor": None,
                 "has_more": False,
             }

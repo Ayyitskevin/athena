@@ -409,6 +409,14 @@ MUTATION_CASES = [
         lambda c, k: c.clear_agent_budget(9, idempotency_key=k),
     ),
     (
+        "resolve_idempotency_key",
+        "POST",
+        "/idempotency-keys/5/resolve",
+        lambda c, k: c.resolve_idempotency_key(
+            5, key="run-7/step:2", outcome="applied", idempotency_key=k
+        ),
+    ),
+    (
         "label_page",
         "POST",
         "/pages/4/labels",
@@ -559,6 +567,10 @@ MCP_MUTATION_CASES = [
     ("set_approval_policy", {"user_id": 9, "action_kind": "issue.close"}),
     ("set_agent_budget", {"user_id": 9, "window": "day", "action_limit": 50}),
     ("clear_agent_budget", {"user_id": 9}),
+    (
+        "resolve_idempotency_key",
+        {"key_id": 5, "key": "run-7/step:2", "outcome": "applied"},
+    ),
     ("label_page", {"page_id": 4, "label_id": 9}),
     ("unlabel_page", {"page_id": 4, "label_id": 9}),
     (

@@ -1790,6 +1790,33 @@ reconciling that key; blindly deleting the receipt and retrying can duplicate a
 committed mutation. A fresh executing owner that merely needs longer than the
 lease may still finalize its own fenced result.
 
+A key left `executing` by a process that was killed has no owner. A process
+that starts serving a database no other process is serving (it holds
+`<database>.serving.lock`, as every serving process does, and found it free)
+marks every such key indeterminate at once and logs how many, so a retry is
+told `idempotency_indeterminate` straight away and not `idempotency_in_progress`
+until the dead claim's lease runs out. With another process serving, nothing is
+assumed about its keys.
+
+An admin settles a key whose outcome is unknown:
+
+- `GET /idempotency-keys/indeterminate` (tool `list_indeterminate_keys`) lists
+  them, oldest first, each with the request's method and path, the issue it
+  named if one, why it is unknown (`owner_lost`, `lease_expired`, or the
+  failure that prevented recording), and the account and token that sent it.
+- Read the target the method and path name: the issue's activity, the row the
+  request would have made.
+- `POST /idempotency-keys/{id}/resolve` (tool `resolve_idempotency_key`) with
+  the key's text and `"outcome": "applied"` or `"not_applied"`. `not_applied`
+  forgets the key, and the same request under it then runs. `applied` keeps
+  the key refusing, now with `idempotency_applied`, so its sender learns the
+  write landed and does not send it again under a new key. Neither replays an
+  answer: the first request's answer was never stored.
+
+The decision is one `resolved_idempotency_key` event on the trail, on the
+account whose request it was, naming the outcome, the request and the key. A
+key resolved as applied is kept; `athena-maintain` does not remove it.
+
 One-time-secret creation explicitly rejects keys instead of copying secrets into
 the replay table: `POST /tokens`, `POST /webhooks`, and their browser admin
 forms. Browser/session routes are otherwise outside the idempotency contract;
@@ -1822,7 +1849,8 @@ before retrying it under a new credential.
 and raw `Retry-After` value for programmatic callers while preserving its existing
 human-readable message. `idempotency_in_progress` may be retried after the stated
 delay with the same key and exact request. `idempotency_indeterminate` and
-`idempotency_authorization_changed` require reconciliation; `idempotency_mismatch`
+`idempotency_authorization_changed` require reconciliation; `idempotency_applied`
+means an operator reconciled it and the write landed; `idempotency_mismatch`
 means the key was reused with a different request. The client never automatically
 retries or silently substitutes a new key.
 

@@ -25,6 +25,8 @@ from athena.mcp.server import (
     DispatchIssueId,
     DispatchLimit,
     IdempotencyKey,
+    IndeterminateKeyLimit,
+    ListCursor,
     ListOffset,
     OnboardProfile,
     ProjectBriefLimit,
@@ -707,6 +709,40 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
             action_limit=action_limit,
             coordination_limit=coordination_limit,
             idempotency_key=idempotency_key,
+        )
+
+    @tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=READS)
+    def list_indeterminate_keys(
+        limit: IndeterminateKeyLimit = 50, cursor: ListCursor | None = None
+    ) -> ListResult:
+        """Admin: the idempotency keys whose outcome is unknown (the request
+        was cut off by a crash or a kill), oldest first. Each row has the
+        request's `method` and `path`, the `issue_id` it named if one, `reason`,
+        and `sent_by` (the account and token). Read the target each names, then
+        settle it with resolve_idempotency_key. Requires an admin token."""
+
+        def fetch(rows: int) -> results.CursorPage:
+            page = client.list_indeterminate_keys(limit=rows, cursor=cursor)
+            return page["items"], page["next_cursor"], page["has_more"]
+
+        return results.cursor_page(fetch, limit=limit)
+
+    # Not undoable: a forgotten key lets the request run again.
+    @mutation_tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=ERASES)
+    def resolve_idempotency_key(
+        key_id: int,
+        key: str,
+        outcome: Literal["applied", "not_applied"],
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Admin: settle one key from list_indeterminate_keys after reading the
+        target of its request. `key_id` and `key` are the row's `id` and `key`.
+        outcome="applied": the write landed; the key keeps refusing and now
+        says idempotency_applied, so its sender does not send it again.
+        outcome="not_applied": the key is forgotten and the same request under
+        it runs. Recorded on the trail. Requires an admin token."""
+        return client.resolve_idempotency_key(
+            key_id, key=key, outcome=outcome, idempotency_key=idempotency_key
         )
 
     # Destructive: drops the window's usage count.

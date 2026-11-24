@@ -69,10 +69,10 @@ class RouteExposure:
 #: ``GET /issues/{issue_id}/comments/{comment_id}``, open as the comment list is.
 ROUTE_COUNTS: dict[bool, RouteExposure] = {
     True: RouteExposure(
-        rest=54, rest_total=106, browser=57, browser_total=57, documents=2
+        rest=54, rest_total=107, browser=57, browser_total=57, documents=2
     ),
     False: RouteExposure(
-        rest=3, rest_total=106, browser=3, browser_total=57, documents=2
+        rest=3, rest_total=107, browser=3, browser_total=57, documents=2
     ),
 }
 

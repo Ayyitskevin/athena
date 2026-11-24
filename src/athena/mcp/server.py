@@ -53,6 +53,7 @@ from athena.aegis import (
 from athena.core import (
     dispatch,
     event_wait,
+    idempotency,
     list_cursor,
     notifications,
     run_context,
@@ -248,6 +249,9 @@ ListCursor = Annotated[
 ]
 PageListLimit = Annotated[int, Field(strict=True, ge=1, le=pages.LIST_MAX_LIMIT)]
 CommentListLimit = Annotated[int, Field(strict=True, ge=1, le=comments.LIST_MAX_LIMIT)]
+IndeterminateKeyLimit = Annotated[
+    int, Field(strict=True, ge=1, le=idempotency.INDETERMINATE_MAX_LIMIT)
+]
 # A place in a sectioned answer (the desk, a floor), as a `_truncated` key
 # names it: keys and row indexes.
 AnswerSection = Annotated[
