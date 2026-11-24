@@ -145,7 +145,7 @@ def test_an_effect_no_longer_in_force_is_not_offered(tmp_path):
     assert refused.status_code == 409, refused.text
     assert offered == []
     # The older event is not offered here, and the engine still accepts it.
-    assert older.status_code == 200, older.text
+    assert older.status_code == 201, older.text
 
 
 def test_a_vanished_label_is_not_offered(tmp_path):
