@@ -677,6 +677,27 @@ def _count_renewal(
     )
 
 
+#: What every completion's answer says: the lease is gone, the issue is as it was.
+COMPLETION_NEXT = "complete_claim released the lease only; issue status is unchanged"
+#: The verdicts that say the work is not done (W4).
+HELD_VERDICTS = ("HOLD", "BLOCKED")
+
+
+def _completion_next(report: dict | None) -> str:
+    """The completion answer's ``next``. A report of HOLD or BLOCKED says what
+    is wrong with one piece of work; this asks its author, while the finding is
+    in front of it, for the one rule that would have prevented it, and names
+    the call that records it (W4). Nothing is recorded or promoted by
+    reporting: the learning is the reporter's own later act."""
+    verdict = None if report is None else report.get("verdict")
+    if verdict not in HELD_VERDICTS:
+        return COMPLETION_NEXT
+    return (
+        f"{COMPLETION_NEXT}. You reported {verdict}: record the one rule that "
+        "would have prevented it with record_run_learning(issue_id, summary)"
+    )
+
+
 def _normalize_claim_yield(reason: str, note: str | None) -> tuple[str, str | None]:
     if not isinstance(reason, str) or reason not in CLAIM_YIELD_REASONS:
         raise IssueCommandError(
@@ -1456,9 +1477,7 @@ def complete_claim(
             # Always present on both branches: an absent field would make
             # "the clock had already released this" a defaulted meaning.
             "lapsed": lapsed,
-            "next": (
-                "complete_claim released the lease only; issue status is unchanged"
-            ),
+            "next": _completion_next(report),
         }
         if submission is not None:
             result["candidate_submission"] = review_commands.insert_submission(

@@ -24,6 +24,11 @@ finally being written to from the work side.
 
 ## Three deliberate constraints
 
+**A HOLD or BLOCKED report asks for one.** The answer to a completion that
+reports `HOLD` or `BLOCKED` names `record_run_learning` in its `next`, so the
+account holding the finding is asked, then, for the rule that would have
+prevented it. That is a prompt and nothing more: reporting records no learning.
+
 **Promotion is explicit.** Nothing is promoted automatically — not on completion,
 not on yield, not on any event. `ACTIVE_WORK.md` classes handoff and yield text as
 *untrusted advisory input*, and the operator decides what earns a place in the
