@@ -25,6 +25,7 @@ from athena.core import (
     attachments,
     db,
     deployment,
+    maintenance_commands,
     token_commands,
     tokens,
     users,
@@ -2662,6 +2663,72 @@ def token_main(argv: list[str] | None = None) -> int:
         file=sys.stderr,
     )
     print(created["token"])
+    return 0
+
+
+def _days(value: str) -> int:
+    try:
+        days = int(value)
+    except ValueError:
+        days = -1
+    if days < 0:
+        raise argparse.ArgumentTypeError("must be a whole number of days, 0 or more")
+    return days
+
+
+def maintain_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="athena-maintain",
+        description=(
+            "Remove rows that have no further use: notifications read long ago, "
+            "browser sessions past their expiry and idempotency receipts past "
+            "theirs. Safe beside a running Athena. The activity trail is never "
+            "pruned."
+        ),
+    )
+    parser.add_argument("db_path", type=Path, help="Athena SQLite database path")
+    parser.add_argument(
+        "--read-notification-days",
+        type=_days,
+        default=maintenance_commands.READ_NOTIFICATION_DAYS,
+        help=(
+            "keep a read notification this many days after it was read "
+            f"(default {maintenance_commands.READ_NOTIFICATION_DAYS})"
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="count what would be removed and remove nothing",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        _check_database(args.db_path, migrate=False, require_writable=not args.dry_run)
+        conn = db.connect(args.db_path)
+        try:
+            counts = maintenance_commands.prune(
+                conn,
+                read_notification_days=args.read_notification_days,
+                dry_run=args.dry_run,
+            )
+        finally:
+            conn.close()
+    except (FileNotFoundError, OSError, sqlite3.Error, ValueError) as exc:
+        print(f"athena-maintain: {exc}", file=sys.stderr)
+        return 1
+
+    did = "would remove" if args.dry_run else "removed"
+    print(
+        f"{did} {counts['read_notifications']} notifications read more than "
+        f"{args.read_notification_days} days ago"
+    )
+    print(f"{did} {counts['expired_sessions']} browser sessions past their expiry")
+    print(
+        f"{did} {counts['expired_idempotency_keys']} idempotency receipts past "
+        "their expiry"
+    )
+    print("the activity trail is never pruned")
     return 0
 
 

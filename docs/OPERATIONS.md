@@ -626,6 +626,38 @@ from a category count.
 Keep the service stopped, preserve a recovery copy, and reconcile the database
 with the intended attachment snapshot first.
 
+## Growth and Retention
+
+What the database keeps, and what removes it:
+
+| Rows | Kept | Removed by |
+|---|---|---|
+| The activity trail and its hash chain | For ever. Every audit, undo, replay and export reads it, and the chain proves it is whole. | Nothing. No command prunes it. |
+| Unread notifications | Until read. | Nothing. |
+| Read notifications | 90 days after they were read. | `athena-maintain` |
+| Browser sessions | Until they expire (`ATHENA_SESSION_TTL_DAYS`) or the user logs out. | Logging out; `athena-maintain` for one that expired without it. |
+| Idempotency receipts | Until they expire (`ATHENA_IDEMPOTENCY_TTL_SECONDS`). A key whose outcome is unknown has no expiry and is kept. | `athena-maintain`. A keyed write also removes up to 100 expired receipts as it runs. |
+| Run bindings, approval requests, lease generations, webhook state | For ever. They are small and each is evidence of a decision. | Nothing. |
+
+`athena-maintain` is the only thing that removes rows for age, and no request
+does it as a side effect. Run it on a schedule; once a day is plenty:
+
+```bash
+athena-maintain /var/lib/athena/athena.db
+```
+
+It prints what it removed, one line per kind, and is safe beside a running
+Athena: it removes a few hundred rows per transaction, so a write waits behind
+it for one short batch at most. `--dry-run` counts and removes nothing:
+
+```bash
+athena-maintain /var/lib/athena/athena.db --dry-run
+```
+
+`--read-notification-days` changes how long a read notification is kept (`0`
+removes every read one). The database file does not shrink when rows are
+removed: SQLite reuses the freed pages for later writes.
+
 ## Backup and Restore
 
 By default, `athena-backup` snapshots only the SQLite database. It does **not**
