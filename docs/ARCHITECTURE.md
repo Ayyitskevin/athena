@@ -229,12 +229,19 @@ live in [ROADMAP.md](ROADMAP.md) — the two numberings are unrelated; read
   purpose: joining it to the domain write would either hide that claim until
   the handler commits (so two retries both execute) or hold SQLite's writer
   lock for the whole request. A crash between the domain commit and the receipt
-  leaves the key executing and indeterminate, and it is never taken over. A
-  global authorization revision purges and permanently fences stored responses
-  after access-affecting role, membership, visibility, authority, account-pause,
-  or placement changes; this is intentionally broader than per-target
-  invalidation. A paused account's keyed requests skip idempotency processing
-  entirely and receive the same audited 403 refusal as its unkeyed requests.
+  leaves the key executing and indeterminate, and it is never taken over.
+  Trigger-moved counters purge and fence stored responses after access-affecting
+  role, token, membership, visibility, pause, agent-flag, close-policy,
+  approval-gate, budget-limit or placement changes. An issue's assignee or
+  creator changing, or one of its contributors removed, fences only the receipts
+  of writes that named that issue in their path, plus every receipt that cannot
+  be scoped to one issue (F6; the argument, the counters and the acts that move
+  none, such as spending a budget, are in `core/idempotency.py`). The original
+  counter still moves on every act, so a process running older code fails
+  closed. A fenced key is refused until its receipt would have expired, then it
+  is unused again.
+  A paused account's keyed requests skip idempotency processing entirely and
+  receive the same audited 403 refusal as its unkeyed requests.
 - Strong, content-derived issue `ETag` validators cover the exact public singleton
   representation. Core issue edits plus assignee/project/sprint placement accept
   optional `If-Match`; authorization and validation precede an atomic comparison

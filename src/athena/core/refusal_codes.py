@@ -440,8 +440,26 @@ _ENTRIES: tuple[RefusalCode, ...] = (
         code="idempotency_authorization_changed",
         statuses=(409,),
         meaning=(
-            "Your authorization changed after this key was claimed, so its "
-            "stored response cannot be replayed."
+            "What you may do changed after this key was claimed (the assignee, "
+            "creator or a contributor of the issue it named, `issue_id`; or a "
+            "role, token, membership, visibility, pause, placement, agent flag, "
+            "close policy, approval gate or budget limit anywhere), so its stored "
+            "response is not replayed and this answer does not say whether the "
+            "write was applied. Read the target; repeat under a new key only if "
+            "it was not. The key stays refused until its receipt would have "
+            "expired."
+        ),
+        # The read that shows whether the write landed. Honest for a keyed write
+        # on an issue (every per-issue fence, the common case); a write on no
+        # issue reads its own target instead, which the hint says (F6).
+        next=NextCall(
+            tool="get_issue_work_context",
+            hint=(
+                "issue_id: the refusal's issue_id (the issue your keyed write "
+                "named); its activity and comments show whether your write was "
+                "applied. Repeat it with a new idempotency_key only if it was "
+                "not. For a write on no issue, read what it changed instead."
+            ),
         ),
     ),
     # --- undo -------------------------------------------------------------------

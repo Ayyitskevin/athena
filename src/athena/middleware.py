@@ -1019,17 +1019,21 @@ class IdempotencyMiddleware:
                 )
                 return
             if claim.kind == "authorization_changed":
-                await _send_json_response(
-                    send,
-                    {
-                        "detail": (
-                            "Authorization changed after this Idempotency-Key "
-                            "was claimed; its stored response cannot be replayed"
-                        ),
-                        "code": "idempotency_authorization_changed",
-                    },
-                    status_code=409,
-                )
+                refusal: dict = {
+                    "detail": (
+                        "Authorization changed after this Idempotency-Key "
+                        "was claimed; its stored response cannot be replayed"
+                    ),
+                    "code": "idempotency_authorization_changed",
+                }
+                # The issue the keyed write named, when its receipt was scoped to
+                # one (F6): the issue to read to learn whether the write applied.
+                # It comes from the caller's own request path, so it says nothing
+                # the caller did not send.
+                scope_issue_id = (claim.record or {}).get("scope_issue_id")
+                if scope_issue_id is not None:
+                    refusal["issue_id"] = int(scope_issue_id)
+                await _send_json_response(send, refusal, status_code=409)
                 return
             if claim.kind == "indeterminate":
                 await _send_json_response(

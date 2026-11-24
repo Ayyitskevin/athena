@@ -283,7 +283,7 @@ back with `isError` false, `applied: false` and `next`.
 | `idempotency_mismatch` | 409 | This Idempotency-Key was already used for a different request; use a new key for a different call. |  |
 | `idempotency_in_progress` | 409 | A request with this Idempotency-Key is still running; retry the same call after Retry-After seconds. |  |
 | `idempotency_indeterminate` | 409 | The earlier request under this key ended with an unknown outcome; read the target's state before choosing a new key. |  |
-| `idempotency_authorization_changed` | 409 | Your authorization changed after this key was claimed, so its stored response cannot be replayed. |  |
+| `idempotency_authorization_changed` | 409 | What you may do changed after this key was claimed (the assignee, creator or a contributor of the issue it named, `issue_id`; or a role, token, membership, visibility, pause, placement, agent flag, close policy, approval gate or budget limit anywhere), so its stored response is not replayed and this answer does not say whether the write was applied. Read the target; repeat under a new key only if it was not. The key stays refused until its receipt would have expired. | `get_issue_work_context`: issue_id: the refusal's issue_id (the issue your keyed write named); its activity and comments show whether your write was applied. Repeat it with a new idempotency_key only if it was not. For a write on no issue, read what it changed instead. |
 | `undo_event_not_found` | 404 | No activity event with that id is visible to you. |  |
 | `undo_not_reversible` | 401, 422 | This event's action has no inverse that undo may apply. |  |
 | `undo_already_reversed` | 409 | This event was already reversed; the detail names the reversal. |  |

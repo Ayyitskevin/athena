@@ -1452,16 +1452,76 @@ was not applied is never a receipt: a 4xx, and the 202 `approval_required` of an
 approval-gated write, release the key so the same request under the same key runs
 again (see `docs/APPROVALS.md`).
 
-Receipts are also fenced by a conservative, global authorization revision.
-Role/token-principal changes, visibility or membership changes, and ownership or
-container-placement changes can revoke access. If that revision differs from the
-one captured by a key, Athena purges the stored status, headers, and body, retains
-a non-expiring safety marker, and returns `409` with
-`code: idempotency_authorization_changed`. The global fence is deliberately
-broad: even an unrelated authorization change can block an older receipt.
-A keyed access-changing mutation may return its fresh success once and then be
-intentionally non-replayable. Reconcile the known mutation before choosing a new
-key; otherwise a new key can apply it again.
+Receipts are also fenced by authorization counters, which database triggers move
+on the acts listed below. If a counter differs from the one captured by a key,
+Athena purges the stored status, headers, and body, keeps a safety marker, and
+returns `409` with `code: idempotency_authorization_changed`. The aim is that a
+replay does not return a stored response its caller could not obtain by making
+the same request now; it holds for the acts listed here, the fence fails closed
+on them, and the exceptions are listed last.
+
+What is fenced, and why:
+
+- **Every receipt** after a workspace-wide act: a role, `is_agent` or pause
+  change; a token's principal or scopes; a project's or space's visibility or
+  owner, or its blocked-close policy; a membership removed; an approval gate
+  added or removed for an account; an action budget set or its limit or window
+  changed; and placement (an issue's project, a page's space, a sprint's
+  project, a comment's or attachment's target). These decide what any account
+  may read or do, and any response can embed what they hide: a parent, a link
+  target, a blocker, a similar issue. This part is deliberately broad: an
+  unrelated change of this kind blocks older receipts too.
+- **One issue's receipts** after a per-issue act on that issue: its assignee or
+  creator changes, or one of its contributors is removed (`DELETE /contributors`
+  or a decline) (F6, decision D17). No visibility rule reads these, and only
+  that issue's own write gates do, so such a change can refuse a fresh request
+  only on that issue. It fences the receipts of keyed writes whose path names
+  the issue (`/issues/{id}` and its reviewed sub-routes; the refusal carries that
+  `issue_id`) and every receipt that cannot be scoped to one issue:
+  `POST /issues/bulk`, `POST /issues/claim-next`, and every route outside
+  `/issues`. A create (`POST /issues`) reads no existing issue's assignee,
+  creator or contributors and is fenced by none of these acts. The reviewed list
+  is `ISSUE_SCOPED_ROUTES` in `src/athena/core/idempotency.py`, with the argument
+  for each act; a route not on it keeps the workspace-wide fence. A keyed write
+  that is itself a per-issue act fences its own receipt: a keyed
+  `PUT /issues/{id}/assignee` that hands the issue away, and a keyed decline,
+  answer once and then refuse.
+- **Nothing** (the exceptions). An issue's parent, sprint, status, text,
+  blockers or lease, a contributor or member added, or a gate or budget removed,
+  moves no counter. Nor does spending an action budget: every metered write
+  spends, and a replay applies nothing and is not metered, so a receipt still
+  replays after its caller's budget is spent while a fresh request answers 429
+  `agent_budget_exhausted`. A replay also does not re-check the target's state:
+  a fresh request may meet a 409 or 422 about the target as it is now (a lease
+  someone else holds, a close the blocked-close policy refuses because a blocker
+  was added since).
+
+Processes still running the code from before migration 0090 compare only the
+original counter, which still moves on every act above, so they keep failing
+closed whatever order processes restart in.
+
+Migration 0090 rebuilds the receipt table. Measured with ~300-byte responses, at
+200,000 receipts it takes 1.4 s, the database grows from 77 MB to 154 MB and the
+WAL to 154 MB, and it holds the write lock throughout; at 1,000,000 receipts it
+takes 7.4 s. Writers wait at most 5 seconds for the lock, which the rebuild
+passes at roughly 700,000 receipts (about `ATHENA_IDEMPOTENCY_TTL_SECONDS` x
+keyed writes per second). Above that, stop the service, run the migration, and
+start it again; leave the disk headroom for the copy either way.
+
+A fenced marker expires when its receipt would have (`ATHENA_IDEMPOTENCY_TTL_SECONDS`
+after the original success). Until then the key is refused; after it the key is
+a key never seen, and the same request under it runs again. That is the
+retention a completed receipt already had: a retry later than the TTL was never
+protected against a duplicate, fenced or not. Markers fenced before migration
+0090 kept no expiry, because their receipt's expiry was discarded with the
+response; they stay refused.
+
+A keyed access-changing mutation (an assignment, say) may return its fresh
+success once and then be intentionally non-replayable. Reconcile the known
+mutation before choosing a new key: read the target (for a write on an issue,
+`get_issue_work_context` on the refusal's `issue_id` shows its activity), and
+repeat under a new key only if the write was not applied; otherwise a new key
+can apply it again.
 
 There is one deliberate fail-closed boundary. Route mutations and receipt
 finalization currently use separate SQLite transactions. If a worker fails,

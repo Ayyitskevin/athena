@@ -444,6 +444,44 @@ def _run_id_mismatch(world: World) -> Scenario:
     return Scenario(world.ada, refusal, {"current_run": {}}, repeat)
 
 
+def _idempotency_authorization_changed(world: World) -> Scenario:
+    """F6: Ada's keyed write, then the operator reassigns that issue. Ada is still a
+    delegated contributor, but her stored answer is fenced: an assignment on the
+    issue the key named fences its receipts. The write changes the priority, a
+    field a bearer caller may send without If-Match (a title or body needs the
+    tag, F10)."""
+    issue_id = world.issue("Raise me", world.ada)
+    edit = {"issue_id": issue_id, "priority": "high", "idempotency_key": "f6-edit"}
+    ok, first = world.ada.call("update_issue", **edit)
+    assert ok and first["priority"] == "high", first
+    assigned = world.client.put(
+        f"/issues/{issue_id}/assignee",
+        json={"assignee_id": world.bo.user_id},
+        headers=ADMIN,
+    )
+    assert assigned.status_code == 200, assigned.text
+    refusal = world.ada.refused_by("update_issue", **edit)
+
+    def repeat(answer: Any) -> tuple[bool, Any]:
+        # The read says the write was applied (its priority, and Ada's event on
+        # the issue), which the refusal did not; repeating it under a new key is
+        # then harmless, and is the call the hint names.
+        assert answer["issue"]["priority"] == "high", answer
+        events = answer["recent_activity"]["items"]
+        mine = [e for e in events if e["actor_id"] == world.ada.user_id]
+        assert mine, f"the read shows no edit of Ada's: {events}"
+        return world.ada.call(
+            "update_issue", **{**edit, "idempotency_key": "f6-edit-2"}
+        )
+
+    return Scenario(
+        world.ada,
+        refusal,
+        {"get_issue_work_context": {"issue_id": refusal.get("issue_id")}},
+        repeat,
+    )
+
+
 SCENARIOS: dict[str, Callable[[World], Scenario]] = {
     "precondition_required": _precondition_required,
     "precondition_failed": _precondition_failed,
@@ -455,6 +493,7 @@ SCENARIOS: dict[str, Callable[[World], Scenario]] = {
     "cursor_ahead": _cursor_ahead,
     "approval_required": _approval_required,
     "run_id_mismatch": _run_id_mismatch,
+    "idempotency_authorization_changed": _idempotency_authorization_changed,
 }
 
 

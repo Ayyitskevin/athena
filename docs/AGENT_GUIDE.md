@@ -16,9 +16,21 @@ it where one exists. These codes carry their facts as fields beside the prose:
 `claim_held` (`holder`, `expires_at`, `events_after`), `lease_generation_required`
 to the lease's holder (`generation`), `fence_overlap` (`fence`), `rate_limited`
 (`rate_limit`), `payload_too_large` (`limit_bytes`), `capacity_reached` (`limit`),
-`agent_budget_exhausted` (`budget`), `cursor_ahead` (`latest_visible_event_id`) and
-`approval_required` (`approval`, `events_after`). A `validation_error` names a bound
-(a maximum length, a range) in its `detail` only. The codes are listed in
+`agent_budget_exhausted` (`budget`), `cursor_ahead` (`latest_visible_event_id`),
+`approval_required` (`approval`, `events_after`) and
+`idempotency_authorization_changed` (`issue_id`, when the keyed write named an
+issue). A `validation_error` names a bound (a maximum length, a range) in its
+`detail` only.
+
+`idempotency_authorization_changed` means what you may do changed since your key's
+first success (that issue was reassigned, you were removed as a contributor, a
+gate was added, say), so its stored answer is not replayed, and the refusal does
+not say whether the write was applied. A keyed write that hands the issue away
+(an assignment, a decline) answers once and then refuses the same way. Its `next`
+is `get_issue_work_context(issue_id=<the refusal's issue_id>)`: if the issue's
+activity shows your write, it is done; if not, repeat it under a new
+`idempotency_key`. Never reuse the refused key for a different call. It is refused
+until the original answer would have expired. The codes are listed in
 [AGENT_API.md](AGENT_API.md#refusal-codes).
 `GET /openapi-agent.json` is the REST surface your token can call, without the browser
 routes `/openapi.json` also lists, and it declares per operation the bearer scheme,
