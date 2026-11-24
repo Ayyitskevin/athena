@@ -517,13 +517,14 @@ class AthenaClient:
         )
 
     def list_eligible_accounts(
-        self, issue_id: int, *, limit: int | None = None, offset: int | None = None
+        self, issue_id: int, *, limit: int | None = None, cursor: str | None = None
     ) -> Any:
-        """The accounts assignment and delegation take on this issue (D19)."""
+        """One page of the accounts assignment and delegation take on this issue
+        (D19): {accounts, next_cursor, has_more}."""
         return self._result(
             self._client.get(
                 f"/issues/{issue_id}/eligible-accounts",
-                params=self._params(limit=limit, offset=offset or None),
+                params=self._params(limit=limit, cursor=cursor),
             )
         )
 

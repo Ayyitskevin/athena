@@ -197,7 +197,9 @@ def claim_next_ready(
                 "issue": item["issue"],
                 "lease": lease,
                 "issue_etag": context["issue_etag"],
-                "work_context_etag": work_context.context_etag(context),
+                "work_context_etag": work_context.context_etag(
+                    work_context.agent_packet(context)
+                ),
                 "previous_lease": item["previous_lease"],
                 "open_handoff": item["open_handoff"],
             }

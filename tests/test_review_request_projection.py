@@ -39,9 +39,21 @@ def context(conn, check, who=3, *, brief=False):
 
 
 def desk_group(conn, who=3, *, now=None):
-    return desk.build_desk(conn, actor=actor(conn, who), now=now)["asks"].get(
+    """The desk's request lane, or None when it holds nothing visible. The lane
+    is present when empty (A13); empty must also count nothing hidden."""
+    group = desk.build_desk(conn, actor=actor(conn, who), now=now)["asks"][
         "review_requests"
-    )
+    ]
+    if group["items"]:
+        return group
+    assert group == {
+        "items": [],
+        "visible_total": 0,
+        "returned": 0,
+        "limit": review_request_projection.DESK_LIMIT,
+        "clipped": False,
+    }
+    return None
 
 
 def queue_group(conn, project, who=3):

@@ -24,6 +24,7 @@ from athena.aegis import (
 )
 from athena.core import (
     access,
+    packet_time,
     users,
 )
 from athena.core.ids import RowIdPath, RowIdQuery
@@ -255,15 +256,16 @@ def show_project_brief(
         "Cache-Control": "private, no-store",
         "Vary": "Authorization, X-Athena-Actor",
     }
+    now = packet_time.clock()
     packet = project_brief.build_project_brief(
-        conn, project_id=project_id, actor=actor, limit=limit
+        conn, project_id=project_id, actor=actor, limit=limit, now=now
     )
     if packet is None:
         raise Refusal(
             status_code=404, detail="no such project", headers=headers, code="not_found"
         )
     response.headers.update(headers)
-    return packet
+    return packet_time.stamp(packet, now=now)
 
 
 @projects_router.get("/{project_id}/review-queue", response_model=ProjectReviewQueue)
@@ -287,7 +289,8 @@ def show_project_review_queue(
             status_code=404, detail="no such project", headers=headers, code="not_found"
         )
     response.headers.update(headers)
-    return packet
+    # The queue holds no expiry; its own observed_at is its clock read.
+    return packet_time.stamp(packet, now=packet_time.clock())
 
 
 @projects_router.get("/{project_id}/floor")
@@ -300,10 +303,13 @@ def project_floor(
     """One project as a floor of chairs. 404 if missing or hidden."""
     from athena.aegis import office
 
-    floor = office.build_floor(conn, project_id=project_id, actor=actor, room_slug=room)
+    now = packet_time.clock()
+    floor = office.build_floor(
+        conn, project_id=project_id, actor=actor, room_slug=room, now=now
+    )
     if floor is None:
         raise Refusal(status_code=404, detail="no such project", code="not_found")
-    return floor
+    return packet_time.stamp(floor, now=now)
 
 
 @projects_router.put("/{project_id}/policy", response_model=ProjectOut)

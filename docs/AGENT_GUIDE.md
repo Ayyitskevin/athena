@@ -191,8 +191,8 @@ Content-Type: application/json
 
 ```json
 {"issue_id":1,"holder_id":2,"holder_name":"Sol Builder",
- "expires_at":"2026-11-08 07:22:19","generation":"aed16877a7b8ae29be98532509f339ef",
- "active":true,…}
+ "expires_at":"2026-11-08T07:22:19Z","expires_in_seconds":1800,
+ "generation":"aed16877a7b8ae29be98532509f339ef","active":true,…}
 ```
 
 HTTP 201. The generation is unchanged on renewal. The answer also carries the issue's current
@@ -415,6 +415,37 @@ To decline a delegation: MCP `decline_delegation(issue_id, generation?)` · REST
   `mark_notification_read`: `through_id` (every unread row up to and including the
   newest one you read, nothing newer), `ids`, or one `notification_id` /
   `POST /notifications/read_all` with `{"through_id": ...}` or `{"ids": [...]}`.
+
+## Conventions every agent packet keeps
+
+An *agent packet* is any read the `seat`, `seat+knowledge` and `conductor` profiles
+carry, other than a resource's own representation: the desk (`GET /desk`, and its
+lanes alone at `/office`, `/desk/ready`, `/desk/since`), the work context, the lease,
+the event feed, the notification, run-control and delegation inboxes, and the
+conductor's project brief, floor, review queue, issue history and attention ranking.
+A write answer that returns one of their objects (a claim answers the lease) follows
+them. The issue, comment, page, label, project and search reads keep their own
+shapes; the issue's ETag covers its representation exactly.
+
+- **One timestamp shape.** Every timestamp in an agent packet is RFC 3339 UTC to the
+  second: `2026-11-21T18:19:13Z`. `/openapi-agent.json` declares each one
+  `format: date-time`. Storage is unchanged; send nothing back expecting it to match
+  a stored string. The one parameter that takes a timestamp, `since` on the admin
+  security reads, accepts the packet shape and compares it as the instant it names.
+- **Seconds beside every expiry.** Each `<x>expires_at` has `<x>expires_in_seconds`
+  beside it: whole seconds from the packet's own clock read, 0 once passed (and 0 for
+  a settled run control). The same read decides `active`, so a lease is active exactly
+  when its seconds are above 0. Count down from your own clock; do not subtract
+  wall-clock instants.
+- **Every lane, even empty.** The desk shows every lane [DESK.md](DESK.md#the-lanes)
+  documents, empty rather than absent; `asks.review_requests` is
+  `{"items":[],"visible_total":0,…}` when nothing is asked of you.
+- **One paging vocabulary for new endpoints.** A new list pages with an opaque
+  `cursor` in and `next_cursor` and `has_more` out (decision D2);
+  `GET /issues/{id}/eligible-accounts` is the first. The existing lists
+  keep the styles they have (`offset`, `after`, `after_id`, `before_id`, and the
+  review queue's `cursor` with `next_cursor`), and `tests/test_packet_conventions.py`
+  fails on any other style or on a new operation that uses one of them.
 
 ## Read next
 

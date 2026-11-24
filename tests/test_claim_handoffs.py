@@ -824,7 +824,17 @@ def test_rest_handoff_lifecycle_projections_and_escaping(tmp_path):
         active = next(
             item for item in fleet["items"] if item["issue"]["id"] == issue["id"]
         )
-        assert active["open_claim_handoff"] == handoff
+        # The operator's fleet read is not an agent packet and keeps the
+        # stored timestamp shape (A13); the handoff is otherwise identical.
+        yielded_at = handoff["yielded"]["created_at"]
+        stored_shape = {
+            **handoff,
+            "yielded": {
+                **handoff["yielded"],
+                "created_at": yielded_at.replace("T", " ").removesuffix("Z"),
+            },
+        }
+        assert active["open_claim_handoff"] == stored_shape
         assert "open_claim_handoff" in active["attention_reasons"]
 
         for path in (

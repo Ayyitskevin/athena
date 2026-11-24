@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from athena.aegis import issues, lease_commands
 from athena.aegis import desk as desk_projection
-from athena.core import db, run_controls, users
+from athena.core import db, packet_time, run_controls, users
 from athena.main import create_app
 from athena.mcp.client import AthenaClient
 from athena.mcp.server import build_server
@@ -136,8 +136,10 @@ def test_targeted_keyed_retry_preserves_pending_control_and_cursor(desk, monkeyp
             return clock.replace(tzinfo=None) if tz is None else clock.astimezone(tz)
 
     # The desk captures one clock for all lanes; control that public read
-    # boundary as well as the run-control creation clock below.
+    # boundary (the REST desk reads the packet clock, A13) as well as the
+    # run-control creation clock below.
     monkeypatch.setattr(desk_projection, "datetime", DeskClock)
+    monkeypatch.setattr(packet_time, "clock", lambda: clock)
     monkeypatch.setattr(
         run_controls,
         "_utc_now",

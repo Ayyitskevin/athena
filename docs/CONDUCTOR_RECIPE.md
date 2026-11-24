@@ -34,7 +34,8 @@ issue-only loop; page tools remain in `seat+knowledge` or `full`. The default re
 
 This member profile has no admin user directory. To find an account's ID, read
 `list_eligible_accounts(issue_id=slice_id)`: the accounts that can see and work
-that issue, as `{id, name, is_agent}`. `assign_issue` takes every listed account
+that issue, as `accounts` of `{id, name, is_agent}` (pass `next_cursor` back as
+`cursor` while `has_more` is true). `assign_issue` takes every listed account
 and `delegate_issue` every listed one with `is_agent: true`; an account that
 cannot see the issue is not listed, so put it in the project before you hand it
 work. `delegate_issue` answers an ID that is missing, removed or not an agent

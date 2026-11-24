@@ -113,9 +113,10 @@ def test_a_live_lease_names_its_holder_and_expiry_not_the_assignee(tmp_path):
     assert "Sol Holder" in claim
     assert "live lease" in claim
     assert "agent" in claim  # the holder is a machine, so it carries the badge
-    assert served["expires_at"] in claim
+    # The page keeps its own display; the REST lease is RFC 3339 (A13).
+    assert served["expires_at"].replace("T", " ").removesuffix("Z") in claim
     assert "expires" in claim
-    assert lease["claimed_at"] in claim
+    assert lease["claimed_at"].replace("T", " ").removesuffix("Z") in claim
     # The assignee is not the claim; it is shown, labelled, as the assignee.
     assert "Bobby Assignee" not in claim
     assert "unclaimed" not in claim

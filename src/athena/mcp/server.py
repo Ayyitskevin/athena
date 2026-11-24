@@ -137,6 +137,7 @@ EligibleAccountLimit = Annotated[
     int,
     Field(strict=True, ge=1, le=issue_commands.ELIGIBLE_ACCOUNTS_MAX_LIMIT),
 ]
+EligibleAccountCursor = Annotated[str, Field(min_length=1, max_length=32)]
 IssueListOffset = Annotated[int, Field(strict=True, ge=0, le=issues.MAX_OFFSET)]
 IssueFilterId = Annotated[
     int,

@@ -234,11 +234,11 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
             "notebook": agent_notebook.desk_lane(conn, actor),
         },
         "asks": {
-            **(
-                {"review_requests": review_requests}
-                if review_requests is not None
-                else {}
-            ),
+            # Present when empty, like every other lane (A13): an absent lane
+            # reads as "no such thing", not "nothing asked of you".
+            "review_requests": review_requests
+            if review_requests is not None
+            else review_request_projection.empty_lane("desk"),
             "run_controls": {
                 "items": open_controls,
                 "limit": CONTROLS_LIMIT,

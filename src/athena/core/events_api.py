@@ -43,6 +43,7 @@ from athena.core import access, activity, event_wait, feed_observers
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 from athena.core.ids import MAX_SQLITE_INTEGER
+from athena.core.packet_time import Timestamp
 from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/events", tags=["core"])
@@ -56,10 +57,10 @@ class EventOut(BaseModel):
     target_kind: str
     target_id: int
     detail: str
-    created_at: str
+    created_at: Timestamp
     # Stored import provenance, not inferred from the verb. Any non-null value
     # marks an imported event; native events have None.
-    imported_at: str | None = None
+    imported_at: Timestamp | None = None
     # The run this event belongs to (the X-Athena-Run it was recorded under), or None
     # for untagged actions — so a consumer can group a stream into runs by id; and the
     # run that spawned that run (lineage), or None at top level.

@@ -55,6 +55,13 @@ def _ok(response, status: int = 200) -> Any:
     return response.json()
 
 
+def _accounts(response) -> list[dict]:
+    """The accounts of one page of the read: {accounts, next_cursor, has_more}."""
+    page = _ok(response)
+    assert set(page) == {"accounts", "next_cursor", "has_more"}, page
+    return page["accounts"]
+
+
 def _cast(admin: TestClient) -> dict[str, Any]:
     """The operator, a conductor agent, and one account of every kind the
     commands might treat differently."""
@@ -136,7 +143,7 @@ def test_a_member_reads_id_name_and_is_agent_and_nothing_else(tmp_path):
     app, admin, cast, conductor = _world(tmp_path)
     try:
         issue = _conducted_issue(admin, cast)
-        rows = _ok(conductor.get(f"/issues/{issue['id']}/eligible-accounts"))
+        rows = _accounts(conductor.get(f"/issues/{issue['id']}/eligible-accounts"))
         assert rows, "the eligible accounts are listed"
         for row in rows:
             # No email, role, token, pause or removal state: an admin read carries
@@ -201,7 +208,9 @@ def test_every_listed_account_is_one_the_commands_accept(tmp_path):
         probe = _conducted_issue(admin, cast, "probe")
         listed = {
             row["id"]: row
-            for row in _ok(conductor.get(f"/issues/{probe['id']}/eligible-accounts"))
+            for row in _accounts(
+                conductor.get(f"/issues/{probe['id']}/eligible-accounts")
+            )
         }
         everyone = _ok(admin.get("/users?include_removed=true", headers=ADMIN))
         assert len(everyone) == 9  # the admin and the eight in _cast
@@ -268,7 +277,9 @@ def test_on_a_private_issue_only_who_can_see_it_is_listed(tmp_path):
         probe = private_issue()
         listed = {
             row["id"]: row
-            for row in _ok(conductor.get(f"/issues/{probe['id']}/eligible-accounts"))
+            for row in _accounts(
+                conductor.get(f"/issues/{probe['id']}/eligible-accounts")
+            )
         }
         assert set(listed) == {1, _user_id(cast["conductor"]), _user_id(cast["worker"])}
         everyone = _ok(admin.get("/users?include_removed=true", headers=ADMIN))
@@ -299,12 +310,34 @@ def test_the_list_pages(tmp_path):
     try:
         issue = _issue(admin, "paged")
         url = f"/issues/{issue['id']}/eligible-accounts"
-        whole = _ok(conductor.get(url))
+        # Paged as every new read is (D2): `cursor` in, `next_cursor` and
+        # `has_more` out.
+        everything = _ok(conductor.get(url))
+        whole = everything["accounts"]
+        assert len(whole) > 3
+        assert everything["has_more"] is False and everything["next_cursor"] is None
         first = _ok(conductor.get(url, params={"limit": 2}))
-        rest = _ok(conductor.get(url, params={"limit": 100, "offset": 2}))
-        assert first == whole[:2] and first + rest == whole
+        assert first["accounts"] == whole[:2] and first["has_more"] is True
+        assert isinstance(first["next_cursor"], str)
+        walked = list(first["accounts"])
+        page = first
+        while page["has_more"]:
+            page = _ok(
+                conductor.get(url, params={"limit": 2, "cursor": page["next_cursor"]})
+            )
+            assert 1 <= len(page["accounts"]) <= 2
+            walked.extend(page["accounts"])
+        assert walked == whole and page["next_cursor"] is None
+        # A page that ends exactly at the last account says so.
+        exact = _ok(conductor.get(url, params={"limit": len(whole)}))
+        assert exact["accounts"] == whole and exact["has_more"] is False
         assert conductor.get(url, params={"limit": 0}).status_code == 422
         assert conductor.get(url, params={"limit": 101}).status_code == 422
+        # A cursor this read did not hand out is refused, never read as page one.
+        for bad in ("abc", "-1", "1.5", " 2", "9" * 30):
+            refused = conductor.get(url, params={"cursor": bad})
+            assert refused.status_code == 422, (bad, refused.text)
+            assert refused.json()["code"] == "validation_error"
     finally:
         admin.__exit__(None, None, None)
 
@@ -435,14 +468,20 @@ def test_the_tool_answers_what_the_route_answers(tmp_path):
             server, "list_eligible_accounts", {"issue_id": issue["id"]}
         )
         assert not error, answer
-        rest = _ok(conductor.get(f"/issues/{issue['id']}/eligible-accounts"))
-        assert answer["items"] == rest
-        assert answer["truncated"] is False and answer["next"] is None
+        rest = _accounts(conductor.get(f"/issues/{issue['id']}/eligible-accounts"))
+        assert answer["accounts"] == rest
+        assert answer["has_more"] is False and answer["next_cursor"] is None
         error, page = _call(
             server, "list_eligible_accounts", {"issue_id": issue["id"], "limit": 2}
         )
-        assert not error and page["items"] == rest[:2]
-        assert page["truncated"] is True and page["next"] == {"offset": 2}
+        assert not error and page["accounts"] == rest[:2]
+        assert page["has_more"] is True
+        error, following = _call(
+            server,
+            "list_eligible_accounts",
+            {"issue_id": issue["id"], "limit": 2, "cursor": page["next_cursor"]},
+        )
+        assert not error and following["accounts"] == rest[2:4]
         error, hidden = _call(server, "list_eligible_accounts", {"issue_id": 999_999})
         assert error and hidden["code"] == "not_found"
     finally:

@@ -47,6 +47,7 @@ from athena.core import (
     labels,
     links,
     mentions,
+    packet_time,
     work_query,
 )
 from athena.core.ids import RowIdPath
@@ -804,12 +805,13 @@ def issue_history_narrative(
     # surface's visibility rules (admin sees check-ins, agents see their own
     # controls, etc.) and never infers write authority from the evidence it shows.
     issue_for_read(conn, issue_id, actor)
+    now = packet_time.clock()
     narrative = issue_narrative.build_issue_narrative(
-        conn, issue_id, actor=actor, limit=limit
+        conn, issue_id, actor=actor, limit=limit, now=now
     )
     if narrative is None:  # issue_for_read already 404s; this is belt-and-suspenders
         raise Refusal(status_code=404, detail="no such issue", code="not_found")
-    return narrative
+    return packet_time.stamp(narrative, now=now)
 
 
 def _issue_for_write(conn: sqlite3.Connection, issue_id: int, actor: dict) -> dict:

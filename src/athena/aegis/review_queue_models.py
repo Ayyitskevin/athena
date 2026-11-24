@@ -7,6 +7,7 @@ from pydantic import Field
 from athena.aegis.project_brief_models import Excerpt, Person
 from athena.core import authorship
 from athena.core.authorship import AuthoredBy
+from athena.core.packet_time import Timestamp
 from athena.aegis.review_models import (
     CandidateIdentity,
     ReviewCandidateId,
@@ -39,7 +40,7 @@ class SubmittedCandidate(StrictReviewModel):
     candidate_id: int
     identity: CandidateIdentity
     completion_event_id: int
-    reported_at: str
+    reported_at: Timestamp
     submitted_by: Person
 
 
@@ -47,7 +48,7 @@ class LatestCandidateReview(StrictReviewModel):
     review_id: int
     review_issue: ReviewIssue
     completion_event_id: int
-    reported_at: str
+    reported_at: Timestamp
     reported_by: Person
     report_available: bool
     reported_verdict: ReportedVerdict | None
@@ -121,7 +122,7 @@ class ReviewProject(StrictReviewModel):
 class ProjectReviewQueue(StrictReviewModel):
     schema_name: Literal["athena.project_review_queue.v1"] = Field(alias="schema")
     scope: Literal["visible_to_request_actor"]
-    observed_at: str
+    observed_at: Timestamp
     project: ReviewProject
     items: list[ProjectQueueItem]
     visible_total: int

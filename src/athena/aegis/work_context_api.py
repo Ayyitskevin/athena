@@ -17,6 +17,7 @@ from athena.aegis import work_context, work_order
 from athena.aegis.review_queue_models import IssueReviewTracking, ReviewRequest
 from athena.core import authorship
 from athena.core.authorship import AuthoredBy
+from athena.core.packet_time import Timestamp
 from athena.core.deps import get_conn
 from athena.core.identity import optional_actor
 from athena.core.refusals import Refusal
@@ -66,8 +67,8 @@ class IssueSummaryOut(BaseModel):
     assignee_id: int | None
     assignee_name: str | None
     created_by: int
-    created_at: str
-    archived_at: str | None
+    created_at: Timestamp
+    archived_at: Timestamp | None
     labels: list[LabelOut]
     # The status names this issue may be set to, in its project's order, with
     # their categories. A write naming any other is a 422 listing these names.
@@ -84,7 +85,7 @@ class RelatedIssueOut(BaseModel):
     priority: str
     project_id: int | None
     project_name: str | None
-    archived_at: str | None
+    archived_at: Timestamp | None
     authored_by: AuthoredBy | None = authorship.field(authorship.ISSUE_DESCRIPTION)
 
 
@@ -111,7 +112,7 @@ class ContributorOut(BaseModel):
     name: str
     is_agent: bool
     added_by: int | None
-    added_at: str
+    added_at: Timestamp
 
 
 class ContributorGroupOut(BaseModel):
@@ -127,7 +128,7 @@ class AttachmentOut(BaseModel):
     byte_size: int
     sha256: str
     uploaded_by: int
-    created_at: str
+    created_at: Timestamp
 
 
 class AttachmentGroupOut(BaseModel):
@@ -141,7 +142,7 @@ class CommentOut(BaseModel):
     author_id: int
     author_name: str
     body: TextExcerptOut
-    created_at: str
+    created_at: Timestamp
     # Only a comment's author may edit it, so this is always its author.
     authored_by: AuthoredBy | None = authorship.field()
 
@@ -221,11 +222,11 @@ class ActivityOut(BaseModel):
     target_kind: str
     target_id: int
     detail: TextExcerptOut
-    created_at: str
+    created_at: Timestamp
     run_id: str | None
     parent_run_id: str | None
     forked_from_event_id: int | None
-    imported_at: str | None
+    imported_at: Timestamp | None
     reported_completion: dict | None = None
     evidence_checks: list[str] | None = None
     checklist_coverage: dict | None = None
@@ -246,7 +247,7 @@ class ClaimHandoffEventOut(BaseModel):
     event_id: int
     actor_id: int
     actor_name: str
-    created_at: str
+    created_at: Timestamp
     run_id: str | None
 
 
@@ -394,6 +395,7 @@ def show_issue_work_context(
             headers=_PRIVATE_HEADERS,
             code="not_found",
         )
+    packet = work_context.agent_packet(payload)
     response.headers.update(_PRIVATE_HEADERS)
-    response.headers["ETag"] = work_context.context_etag(payload)
-    return payload
+    response.headers["ETag"] = work_context.context_etag(packet)
+    return packet

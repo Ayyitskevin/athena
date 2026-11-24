@@ -3,7 +3,7 @@
 from fastapi.testclient import TestClient
 import pytest
 
-from athena.core import db
+from athena.core import db, packet_time
 from athena.main import create_app
 
 ADMIN = {"X-Athena-Actor": "1"}
@@ -619,7 +619,7 @@ def test_expired_success_replay_is_historical_new_pickup_reacquires(setup):
     renewed = checked(pickup(client, agent), 200)
     assert renewed["lease"]["generation"] != first["lease"]["generation"]
     assert renewed["previous_lease"]["holder_id"] == agent["user"]["id"]
-    assert renewed["previous_lease"]["expired_at"] == "2000-01-01 00:00:00"
+    assert renewed["previous_lease"]["expired_at"] == "2000-01-01T00:00:00Z"
     assert counts(path) == (1, 2)
 
 
@@ -813,7 +813,10 @@ def test_selection_preserves_ready_status_semantics(setup, status):
     assert result["claimed"] is (status != "done")
     assert result["claimed"] is bool(lane["items"])
     if result["claimed"]:
-        assert result["issue"] == lane["items"][0]["issue"]
+        # The pickup answers the lane's issue in the packet shape (A13).
+        assert result["issue"] == packet_time.stamp(
+            lane["items"][0]["issue"], now=packet_time.clock()
+        )
 
 
 def test_hidden_archived_open_blocker_blocks_without_metadata_disclosure(setup):

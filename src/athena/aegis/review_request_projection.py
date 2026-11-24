@@ -21,6 +21,12 @@ _LANES = {
 _REPORT_CHARS = lease_commands.MAX_COMPLETION_REPORT_JSON_CHARS + 128
 
 
+def empty_lane(lane: RequestLane) -> dict:
+    """The shape :func:`visible_requests` gives a lane with nothing visible in
+    it, for a reader that shows every lane even when empty (the desk, A13)."""
+    return _group(0, [], _LANES[lane][1])
+
+
 def _reported_verdict(row: sqlite3.Row) -> str | None:
     """The verdict in the report that fulfilled this request, if it has one.
 

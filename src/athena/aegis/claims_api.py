@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from athena.core import authorship
 from athena.core.authorship import AuthoredBy
+from athena.core.packet_time import Timestamp
 from athena.core.request_models import CoordinationRootSelector, RequestBody
 from athena.aegis import (
     claim_handoffs,
@@ -29,6 +30,7 @@ from athena.aegis import (
 )
 from athena.core import (
     access,
+    packet_time,
 )
 from athena.aegis.review_models import (
     CandidateReviewRequest,
@@ -89,7 +91,7 @@ class ClaimHandoffEventOut(BaseModel):
     event_id: int
     actor_id: int
     actor_name: str
-    created_at: str
+    created_at: Timestamp
     run_id: str | None
 
 
@@ -124,8 +126,10 @@ class LeaseOut(BaseModel):
     issue_id: int
     holder_id: int
     holder_name: str
-    claimed_at: str
-    expires_at: str
+    claimed_at: Timestamp
+    expires_at: Timestamp
+    # Whole seconds from this answer's clock read to expires_at; 0 once passed.
+    expires_in_seconds: int
     generation: str
     active: bool
     declared_paths: list[str] = []
@@ -224,7 +228,7 @@ class ReadyClaimBase(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     schema_: Literal["athena.ready_claim.v1"] = Field(alias="schema")
-    observed_at: str
+    observed_at: Timestamp
     attempts: list[ReadyClaimAttempt]
 
 
@@ -236,7 +240,7 @@ class ReadyClaimIssue(BaseModel):
     title: str
     status: str
     priority: str
-    created_at: str
+    created_at: Timestamp
 
 
 class ReadyClaimPreviousLease(BaseModel):
@@ -244,7 +248,7 @@ class ReadyClaimPreviousLease(BaseModel):
 
     holder_id: int
     holder_name: str
-    expired_at: str
+    expired_at: Timestamp
 
 
 class ReadyClaimHandoff(BaseModel):
@@ -253,7 +257,7 @@ class ReadyClaimHandoff(BaseModel):
     handoff_token: str
     reason: lease_commands.ClaimYieldReason
     yielded_by: str
-    yielded_at: str
+    yielded_at: Timestamp
     next: str
 
 
@@ -352,9 +356,11 @@ def claim_next_ready(
     response.headers.update(PRIVATE_LEASE_HEADERS)
     payload = payload or ReadyClaimIn()
     try:
-        return ready_claim_commands.claim_next_ready(
+        result = ready_claim_commands.claim_next_ready(
             conn, actor=actor, **payload.model_dump()
         )
+        # The lease's seconds count from the pickup's own clock read.
+        return packet_time.stamp(result, now=packet_time.parse(result["observed_at"]))
     except issue_commands.IssueCommandError as exc:
         try:
             error_response = issue_command_error_response(exc)
@@ -436,7 +442,33 @@ class EligibleAccountOut(BaseModel):
     is_agent: bool
 
 
-@router.get("/{issue_id}/eligible-accounts", response_model=list[EligibleAccountOut])
+class EligibleAccountsOut(BaseModel):
+    """One page of eligible accounts, paged as every new read is (D2): send
+    `next_cursor` back as `cursor` while `has_more` is true."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    accounts: list[EligibleAccountOut]
+    # Opaque: pass it back unchanged. Null on the last page.
+    next_cursor: str | None
+    has_more: bool
+
+
+def _eligible_accounts_cursor(cursor: str | None) -> int:
+    """The account id an opaque cursor stands for. A value this read did not
+    hand out is refused, never read as the first page."""
+    if cursor is None:
+        return 0
+    if not cursor.isascii() or not cursor.isdigit() or int(cursor) > MAX_SQLITE_INTEGER:
+        raise Refusal(
+            status_code=422,
+            detail="cursor is not one this read returned; omit it for the first page",
+            code="validation_error",
+        )
+    return int(cursor)
+
+
+@router.get("/{issue_id}/eligible-accounts", response_model=EligibleAccountsOut)
 def list_eligible_accounts(
     issue_id: RowIdPath,
     limit: int = Query(
@@ -444,22 +476,32 @@ def list_eligible_accounts(
         ge=1,
         le=issue_commands.ELIGIBLE_ACCOUNTS_MAX_LIMIT,
     ),
-    offset: int = Query(0, ge=0, le=issues.MAX_OFFSET),
+    cursor: str | None = Query(
+        None,
+        max_length=32,
+        description="the previous page's next_cursor, unchanged; omit for the first page",
+    ),
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> list[dict]:
+) -> dict:
     """The accounts that can see and work this issue, ordered by id: `id`,
     `name` and `is_agent`. Every row is one assignment takes, and every agent
     row one delegation takes; whether the caller may itself assign or delegate
     this issue is the write's own check. The caller must see the issue and hold
     a write role: an issue it cannot see is 404, the same as one that does not
-    exist. Advance `offset` by the number returned; a short page ends the list."""
+    exist. While `has_more` is true, send `next_cursor` back as `cursor`."""
+    after_id = _eligible_accounts_cursor(cursor)
     try:
-        return issue_commands.eligible_accounts(
-            conn, actor=actor, issue_id=issue_id, limit=limit, offset=offset
+        rows, has_more = issue_commands.eligible_accounts(
+            conn, actor=actor, issue_id=issue_id, limit=limit, after_id=after_id
         )
     except issue_commands.IssueCommandError as exc:
         raise issue_command_http_error(exc) from exc
+    return {
+        "accounts": rows,
+        "next_cursor": str(rows[-1]["id"]) if has_more else None,
+        "has_more": has_more,
+    }
 
 
 @router.post(
@@ -540,10 +582,13 @@ def get_issue_lease(
     ):
         raise Refusal(status_code=404, detail="no such issue", code="not_found")
     response.headers.update(PRIVATE_LEASE_HEADERS)
-    lease = leases.get_lease(conn, issue_id)
-    if lease is not None:
-        lease["open_claim_handoff"] = claim_handoffs.get_open_handoff(conn, issue_id)
-    return lease
+    # One clock read: `active` and `expires_in_seconds` are the same verdict.
+    now = packet_time.clock()
+    lease = leases.get_lease(conn, issue_id, now=now)
+    if lease is None:
+        return None
+    lease["open_claim_handoff"] = claim_handoffs.get_open_handoff(conn, issue_id)
+    return packet_time.stamp(lease, now=now)
 
 
 @router.post(
@@ -566,7 +611,7 @@ def claim_issue(
     response.headers.update(PRIVATE_LEASE_HEADERS)
     kwargs = {} if lease_seconds is None else {"lease_seconds": lease_seconds}
     try:
-        return lease_commands.claim_issue(
+        lease = lease_commands.claim_issue(
             conn,
             actor=actor,
             issue_id=issue_id,
@@ -580,6 +625,9 @@ def claim_issue(
             ),
             **kwargs,
         )
+        # The acquisition's clock read is claimed_at, the instant expires_at
+        # was set from: the seconds are the lease's whole length.
+        return packet_time.stamp(lease, now=packet_time.parse(lease["claimed_at"]))
     except issue_commands.IssueCommandError as exc:
         return issue_command_error_response(exc)
 

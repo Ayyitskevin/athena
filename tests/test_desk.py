@@ -130,6 +130,7 @@ def test_a_fresh_agent_desk_is_empty_and_says_so_without_lying(tmp_path):
         "lapsed_total": 0,
         "lapsed_clipped": False,
         "lapsed_oldest_expires_at": None,
+        "lapsed_oldest_expires_in_seconds": None,
         "meaning": board["work"]["leases"]["meaning"],
     }
     assert board["signals"]["unread_notifications"] == 0
@@ -382,7 +383,8 @@ def test_a_lapsed_lease_on_a_done_issue_is_shown_to_its_holder(tmp_path):
         assert leases_lane["lapsed"][0]["issue_done"] is True
         assert leases_lane["lapsed_total"] == 1
         assert leases_lane["lapsed_clipped"] is False
-        assert leases_lane["lapsed_oldest_expires_at"] == "2000-01-01 00:00:00"
+        assert leases_lane["lapsed_oldest_expires_at"] == "2000-01-01T00:00:00Z"
+        assert leases_lane["lapsed_oldest_expires_in_seconds"] == 0
 
         # The owning surface still shows the last holder.
         row = client.get(f"/issues/{issue['id']}/lease", headers=bearer)

@@ -157,11 +157,21 @@ def live_leases_at(
     return [_row_to_lease(row) for row in rows]
 
 
-def get_lease(conn: sqlite3.Connection, issue_id: int) -> dict | None:
+def get_lease(
+    conn: sqlite3.Connection, issue_id: int, *, now: datetime | None = None
+) -> dict | None:
     """The issue's lease row (with the holder's name and a computed ``active`` flag), or
     None if it was never claimed. A row whose ``active`` is False is an EXPIRED lease —
-    still present until the next claim overwrites it, but no longer holding the issue."""
-    row = conn.execute(f"{_SELECT} WHERE l.issue_id = ?", (issue_id,)).fetchone()
+    still present until the next claim overwrites it, but no longer holding the issue.
+
+    ``now`` is the caller's clock read, so a packet that also counts the seconds
+    to expiry derives both from one instant; omitted, SQLite's clock decides."""
+    if now is None:
+        row = conn.execute(f"{_SELECT} WHERE l.issue_id = ?", (issue_id,)).fetchone()
+    else:
+        row = conn.execute(
+            f"{_HELD_SELECT}WHERE l.issue_id = ?", (_clock_stamp(now), issue_id)
+        ).fetchone()
     return _row_to_lease(row) if row is not None else None
 
 

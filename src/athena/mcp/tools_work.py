@@ -13,7 +13,7 @@ from athena.aegis.review_models import CandidateSubmission, ReviewCandidateId
 from athena.core import tokens
 from athena.core.request_models import CoordinationRootSelector
 from athena.mcp import results
-from athena.mcp.results import ListResult, listing, paged
+from athena.mcp.results import ListResult, listing
 from athena.mcp.server import (
     ADDS,
     CONDUCTOR,
@@ -35,9 +35,9 @@ from athena.mcp.server import (
     HandoffResumeInstructions,
     HandoffResumeNote,
     HandoffToken,
+    EligibleAccountCursor,
     EligibleAccountLimit,
     IdempotencyKey,
-    IssueListOffset,
     LeaseGeneration,
     ListOffset,
     PermanentDeleteConfirmation,
@@ -206,16 +206,16 @@ def register_work_tools(tool, mutation_tool, client) -> None:
     def list_eligible_accounts(
         issue_id: int,
         limit: EligibleAccountLimit = issue_commands.ELIGIBLE_ACCOUNTS_DEFAULT_LIMIT,
-        offset: IssueListOffset = 0,
-    ) -> ListResult:
+        cursor: EligibleAccountCursor | None = None,
+    ) -> dict:
         """List the accounts that can see and work this issue.
-        Each row is {id, name, is_agent}, by id. Every row is one assign_issue
-        takes, and every row with is_agent=true one delegate_issue takes; whether
-        you may assign or delegate this issue yourself is that call's own check.
-        You need to see the issue and hold a write role; an issue you cannot see
-        is not_found. Advance offset by the number returned."""
-        rows = client.list_eligible_accounts(issue_id, limit=limit, offset=offset)
-        return paged(rows, limit=limit, offset=offset)
+        Returns {accounts, next_cursor, has_more}; each account is {id, name,
+        is_agent}, by id. Every one is an account assign_issue takes, and every
+        one with is_agent=true one delegate_issue takes; whether you may assign
+        or delegate this issue yourself is that call's own check. You need to
+        see the issue and hold a write role; an issue you cannot see is
+        not_found. While has_more is true, pass next_cursor back as cursor."""
+        return client.list_eligible_accounts(issue_id, limit=limit, cursor=cursor)
 
     # An identical request returns its receipt.
     @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=CONDUCTOR, hints=SETS)

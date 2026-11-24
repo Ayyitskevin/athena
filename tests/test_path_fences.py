@@ -315,6 +315,7 @@ def test_a_claim_without_paths_is_unchanged_beside_a_fence(world):
         "holder_name",
         "claimed_at",
         "expires_at",
+        "expires_in_seconds",
         "generation",
         "active",
         "declared_paths",

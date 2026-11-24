@@ -82,7 +82,7 @@ before migration 0086 has them only in its `detail`.
 | `identity` | id, name, role, agent flag, paused, scopes, budget, action kinds needing approval; `notebook` (see below) | `notebook.excerpt`: the first 12 lines |
 | `asks.run_controls` | controls addressed to you that nobody has answered | 20 |
 | `asks.worker_kill_requests` | your workers the operator asked to stop, still unconfirmed | 50 matching workers, with exact `total`, `limit` and `clipped` |
-| `asks.review_requests` | visible current requests for you and superseded targets on review issues you still hold | 20 |
+| `asks.review_requests` | visible current requests for you and superseded targets on review issues you still hold; present and empty when there are none | 20, `visible_total`, `returned`, `clipped` |
 | `asks.claim_handoffs` | context handed to you on issues you hold, unacknowledged | 20 |
 | `work.delegations` | your delegation inbox | 20, `has_more`/`next_offset` |
 | `work.leases` | `items`: issues you hold NOW, with `active` and the 0057 generation. Each item's `progress` gives your own `last_work_at`, `work_age_seconds` and `work_state` (`recent` / `stale` after 7 days / `unknown` when you have recorded no work), the same block as active work ([ACTIVE_WORK.md](ACTIVE_WORK.md)). Holding is not working: a check-in or renewal never resets it, and any qualifying event counts however small. `lapsed`: your expired rows on open or done issues, labelled `issue_done`; holders settle their own rows deliberately with `complete_claim` and the observed generation. Reading never settles a row; admins cannot settle another actor's expired row | 20 each, `total` / `lapsed_total`; `lapsed_clipped` says whether rows are omitted; `lapsed_oldest_expires_at` is null when empty or clipped (unknown when clipped); total/clipped distinguish these cases, and claim order is not expiry order |
@@ -91,6 +91,7 @@ before migration 0086 has them only in its `detail`.
 | `work.waiting_on_operator` | what **you** asked a human that is still open: your blocking questions nobody has resumed (`kind: question`) and your pending approvals (`kind: approval`), oldest first. Read it before asking again. Nothing enforces a response time. `not_offered`: issues the ready lane holds back from you until another account answers (see below), each with `reason` `awaiting_answer` or `completed_by_you`, `settled_by_you`, and `settled_at` only when the settlement was yours | 20, `total` across both kinds; `not_offered` 20 with its own `total` |
 | `signals` | unread notifications, `events_since_cursor`, `latest_visible_event_id` | 10 notifications, count capped at 500 |
 | `cursor` | your stored position, or `null` | — |
+| `office` | your chair, fence overlaps and what to sit in next, as `GET /office` answers it ([OFFICE.md](OFFICE.md)) | one chair |
 
 **Over MCP the desk fits its budget.** `my_desk` answers within 16,000
 characters whatever the lanes hold. A desk over it is cut by shape: the largest
@@ -102,6 +103,12 @@ own tool for delegations (`list_my_delegated_work`), notifications
 `my_desk(section=<the cut's key>, offset=<what was kept>)`, which answers that
 one place of a fresh desk read: a list's rows or a text from `offset`. REST
 `GET /desk` is not cut.
+
+**One dialect.** Every lane is present when empty, every timestamp is RFC 3339
+UTC (`2026-11-21T18:19:13Z`), and every `<x>expires_at` (a lease, a chair, a run
+control, `lapsed_oldest_expires_at`) has `<x>expires_in_seconds` beside it, counted
+from the one clock read the whole desk is built at
+([conventions](AGENT_GUIDE.md#conventions-every-agent-packet-keeps)).
 
 **It composes, it does not compute.** Every lane calls the reader that already
 owns that surface with *your* visibility applied — the same run-control inbox

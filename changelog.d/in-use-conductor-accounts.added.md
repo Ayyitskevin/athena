@@ -2,7 +2,8 @@
   `GET /issues/{id}/eligible-accounts` (the `list_eligible_accounts` tool, on
   the `conductor` profile) lists, for an issue the caller can see and a caller
   with a write role, the accounts that can see and work that issue: `id`,
-  `name` and `is_agent`, paged. Assignment takes every listed account and
+  `name` and `is_agent`, paged in the vocabulary every new read uses (`cursor`
+  in, `next_cursor` and `has_more` out). Assignment takes every listed account and
   delegation every listed agent. A hidden issue reads as missing.
   `delegate_issue` now answers an id that does not exist, was removed or is not
   an agent alike (`no agent account with that id`). `POST /users/onboard_agent`

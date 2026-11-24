@@ -206,8 +206,8 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         Covers failed logins, revoked tokens still being presented, scope denials,
         and paused accounts that keep trying. Each names the account whose boundary
         was hit. Narrow with verb ('login_failed', 'revoked_token_used',
-        'scope_denied', 'paused_account_refused') and since ('YYYY-MM-DD
-        HH:MM:SS'). Requires an admin token."""
+        'scope_denied', 'paused_account_refused') and since (a timestamp as
+        any packet gives it, '2026-11-21T18:19:13Z'). Requires an admin token."""
         return window(
             lambda rows: client.list_security_events(
                 verb=verb, since=since, limit=rows

@@ -155,8 +155,12 @@ def test_own_row_note_crosses_real_chain_without_releasing(subject, surface, exp
     note = body["held_lease"]
     assert set(note) == {"generation", "expires_at", "active", "message"}
     assert note["generation"] == claim["generation"]
+    # The note rides the issue's own write answer, which keeps the stored
+    # shape; the claim answers the lease packet in RFC 3339 (A13). One instant.
     assert note["expires_at"] == (
-        "2000-01-01 00:00:00" if expired else claim["expires_at"]
+        "2000-01-01 00:00:00"
+        if expired
+        else claim["expires_at"].replace("T", " ").removesuffix("Z")
     )
     assert note["active"] is (not expired)
     assert "separate deliberate action" in note["message"]

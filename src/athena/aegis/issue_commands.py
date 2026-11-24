@@ -148,10 +148,11 @@ def eligible_accounts(
     actor: dict | None,
     issue_id: int,
     limit: int = ELIGIBLE_ACCOUNTS_DEFAULT_LIMIT,
-    offset: int = 0,
-) -> list[dict]:
-    """The accounts that can see one issue and that the assignment command
-    takes (D19): ``{id, name, is_agent}`` each, ordered by id. Who can see and
+    after_id: int = 0,
+) -> tuple[list[dict], bool]:
+    """One page of the accounts that can see one issue and that the assignment
+    command takes (D19): ``{id, name, is_agent}`` each, ordered by id, starting
+    after ``after_id``, and whether more follow. Who can see and
     work the issue, for a caller who can see it and holds a write role; whether
     the caller may itself assign or delegate this issue is the write's own
     check. A read, not a write: it changes nothing.
@@ -173,9 +174,11 @@ def eligible_accounts(
         {"id": user["id"], "name": user["name"], "is_agent": bool(user["is_agent"])}
         for user in users.list_users(conn)
         if account_is_eligible(user, delegation=False)
+        and int(user["id"]) > after_id
         and access.can_see_project_or_backlog(conn, user, issue["project_id"])
     ]
-    return rows[offset : offset + limit]
+    rows.sort(key=lambda row: row["id"])
+    return rows[:limit], len(rows) > limit
 
 
 def _unknown_status(
