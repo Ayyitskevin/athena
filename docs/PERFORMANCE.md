@@ -35,7 +35,7 @@ commented on, completed and closed. One open issue carries 300 comments.
 
 It seeds no live leases, review requests, project or space members, desk
 cursors or custom statuses: the ready rule's clauses for those read no rows in
-this workspace.
+this workspace, and `tests/test_ready_open_candidates.py` builds them instead.
 
 ```
 .venv/bin/python scripts/seed_benchmark.py /tmp/fleet1k.db --shape fleet --issues 1000
@@ -96,6 +96,8 @@ makes a hot statement stop reading history adds its row here, with the test.
 | The lapsed leases the event feed's observers record | `GET /events` | `tests/test_lease_lapsed.py` |
 | The newest event the caller can see (`desk.latest_visible_event_id`), one visibility arm at a time | `GET /desk`, `POST /desk/cursor` | `tests/test_desk_trail_reads.py` |
 | The oldest events after the desk cursor (`operator_since._events_after`), one arm at a time | `GET /desk/since` | `tests/test_desk_trail_reads.py` |
+| The ready rule (`ready_queue._evaluate`), over open candidates, once per desk read | `GET /desk`, `GET /desk/ready`, `POST /issues/claim-next` | `tests/test_ready_open_candidates.py` |
+| The `is:ready` query atom (`ready_queue.ready_clause`), over the same open candidates | `GET /issues?q=is:ready`, saved filters | `tests/test_ready_open_candidates.py` (its work; its plan is the calling query's) |
 
 ## Where the bounds do not hold
 
@@ -107,3 +109,18 @@ Each is a condition, with what it costs; none changes an answer.
   first: a seat whose projects went private, or quiet, while the rest of the
   workspace kept working pays what the OR-joined read paid. Not bounded; no
   worse than before.
+- **An issue closed under a project's own closed status** (`shipped`). The
+  same name on an issue in the backlog, or in a project that does not list it,
+  is open (it falls to the neutral `doing`), and no existing index tells those
+  apart from the closed ones. So the ready rule reads each issue carrying that
+  name once, by its index entry and its project, and drops it before the rule
+  runs on it. That is linear in such issues, at about a tenth of what the rule
+  cost per issue before; an index over (status, project) would remove it and
+  needs a migration.
+- **A project that makes a closed name open** (`done` as a to-do status). Its
+  issues under that name are open by definition, so the rule reads that
+  project's issues; every other project's closed issues stay unread.
+- **The `is:ready` atom on a database with statistics.** The atom's clause
+  offers the open candidates as a key lookup, but the plan is the calling
+  query's: after ANALYZE SQLite may scan a small issues table instead. Its
+  work test passes with and without statistics.

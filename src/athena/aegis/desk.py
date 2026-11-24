@@ -229,6 +229,16 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
     review_requests = review_request_projection.visible_requests(
         conn, actor=actor, lane="desk", scope_id=user_id, now=lease_now
     )
+    # The ready lane and what the rule holds back from it, from one evaluation
+    # of the ready rule (H3): the same rows the two lanes' own reads give at
+    # this instant, without asking the rule once per lane and per total.
+    ready, not_offered = ready_queue.build_lanes(
+        conn,
+        actor=actor,
+        now=lease_now,
+        limit=ready_queue.READY_LIMIT,
+        not_offered_limit=run_state.LANE_LIMIT,
+    )
 
     # --- signals: what changed while I was away ------------------------------
     cursor = desk_cursors.get_cursor(conn, user_id=user_id, name=DESK_CURSOR)
@@ -321,13 +331,11 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
             },
             # What I could claim next, in claim order, with its own total. The
             # same rule as the is:ready atom and claim_next_ready.
-            "ready": ready_queue.build_ready(
-                conn, actor=actor, now=lease_now, limit=ready_queue.READY_LIMIT
-            ),
+            "ready": ready,
             # My own open asks: blocking questions nobody resumed and pending
             # approvals. So an agent sees what it already asked, not re-asks.
             "waiting_on_operator": run_state.waiting_on_operator(
-                conn, actor=actor, now=lease_now
+                conn, actor=actor, now=lease_now, not_offered=not_offered
             ),
             "waiting_on": {
                 "items": waiting_on["items"],
