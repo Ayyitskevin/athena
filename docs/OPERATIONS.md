@@ -23,10 +23,49 @@ socket and Host guards remain useful defense in depth, but are not public
 reachability detection. Athena does not currently claim public-internet, hostile
 multi-tenant, multi-process, or high-availability safety.
 
-Exactly one process may own the webhook-delivery and automation runners. There is
-no leader election between processes, and request/login/token rate limiters are
-in-process. A multi-worker experiment must nominate one runner and disable both
-loops everywhere else, but that remains outside the supported deployment shape.
+Exactly one process runs the webhook-delivery and automation loops: the one
+holding the lock beside the database (see
+[Background Loops](#background-loops-webhooks-and-automation)). A second process
+on the same database serves requests without them. The request, login and token
+rate limiters are in-process, so each process counts on its own; more than one
+process remains outside the supported deployment shape.
+
+## Running the Commands
+
+This runbook writes its commands bare: `athena-serve`, `athena-doctor`,
+`athena-backup`. They are console scripts installed into the Python environment
+Athena runs from, so a shell finds them only when that environment's `bin`
+directory is on its `PATH`. The systemd unit under `deploy/systemd/` starts
+`.venv/bin/athena-serve` inside the checkout. With a checkout at `/opt/athena`
+(an example path), either call a command by its full path,
+`/opt/athena/.venv/bin/athena-doctor`, or put the directory first for the shell
+session:
+
+```bash
+export PATH="/opt/athena/.venv/bin:$PATH"
+athena-doctor /var/lib/athena/athena.db
+```
+
+Run a command that writes (backup, restore, migrate, token, maintain) as the
+account the service runs as, with the service's environment file loaded when the
+command reads settings, so the files it creates belong to that account and it
+sees the same `ATHENA_*` values. In the container the commands are on the
+image's `PATH`; run them through `docker compose exec athena`, as
+[DOCKER.md](DOCKER.md) shows.
+
+| Command | What it does | Where |
+|---|---|---|
+| `athena-serve` | Starts Athena after its deployment preflight. | [Deploy Preflight](#deploy-preflight), [Startup Refusals](#startup-refusals) |
+| `athena-doctor` | Checks a database, a deployment or a recovery bundle; `--migrate` applies pending migrations. | [Deploy Preflight](#deploy-preflight), [Upgrade](#upgrade) |
+| `athena-seat-doctor` | Checks one agent's wiring against a running Athena. | [Deploy Preflight](#deploy-preflight) |
+| `athena-backup`, `athena-restore` | Take and restore a database snapshot or a matched recovery bundle. | [Backup and Restore](#backup-and-restore) |
+| `athena-token` | Mints a token for an account, on the host. | [Admin Token Bootstrap](#admin-token-bootstrap) |
+| `athena-maintain` | Removes rows that have no further use. | [Growth and Retention](#growth-and-retention) |
+| `athena-export`, `athena-export-run` | Export a project or space, or one run's replay artifact. | [Selective Portability Export](#selective-portability-export), [Run Replay Artifact Export](#run-replay-artifact-export) |
+| `athena-map-source`, `athena-import-dry-run`, `athena-import-manifest`, `athena-import` | Map, validate and replay an import bundle. | [Selective Portability Export](#selective-portability-export) |
+| `athena-field-guide` | Seeds the agent Field Guide as pages. | [QUICKSTART.md](QUICKSTART.md) |
+| `athena-mcp` | The MCP server an agent's client starts. | [AI Agent Access (MCP)](#ai-agent-access-mcp) |
+| `athena-demo` | A disposable seeded instance for a reviewer. | [QUICKSTART.md](QUICKSTART.md) |
 
 ## Runtime Configuration
 
@@ -890,6 +929,45 @@ wait for startup, and then check readiness before restoring traffic:
 curl -fsS http://127.0.0.1:8000/readyz
 ```
 
+### Restore onto a new host or path
+
+The steps above replace a database in place. To bring an instance up somewhere
+it has never run (a new host, or a new directory on this one), there is nothing
+to stop and nothing to keep aside, and the commands are the same ones in a
+shorter order. Install the same Athena release the bundle was taken with, copy
+the bundle directory to the new host, and run these as the account the service
+will run as:
+
+```bash
+: "${BACKUP_DIR:?set BACKUP_DIR to the selected matched snapshot directory}"
+RESTORE_DRILL="/var/tmp/athena-restore-candidate-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -m 0700 /var/lib/athena
+athena-doctor "$BACKUP_DIR" --recovery-bundle --drill-dir "$RESTORE_DRILL"
+athena-restore "$RESTORE_DRILL/athena.db" /var/lib/athena/athena.db
+mkdir -m 0700 /var/lib/athena/attachments
+cp --archive --no-dereference -- "$RESTORE_DRILL/attachments/." /var/lib/athena/attachments/
+athena-doctor /var/lib/athena/athena.db --attach-dir /var/lib/athena/attachments
+```
+
+`athena-restore` needs no `--force` here because the target does not exist, and
+it creates the database private to its owner (mode 600). The bundle holds the
+database and its attachments and nothing else. What does not travel with it,
+and must be set on the new host before the first start:
+
+- The settings: every `ATHENA_*` variable in the service's environment file,
+  with `ATHENA_DB` and `ATHENA_ATTACH_DIR` naming the new paths.
+- The address: the listener's `--host` and `--port`, and for a tailnet instance
+  the Host authorities it answers to. Run the preflight in
+  [Deploy Preflight](#deploy-preflight) with the new values.
+- Anything that points at the old address from outside: an agent's
+  `ATHENA_BASE_URL`, an OIDC redirect URL, a forge's webhook target.
+
+Accounts, tokens and webhook registrations are rows in the database and arrive
+with it: a token minted on the old host works on the new one, and a registered
+webhook is delivered to from the new one as soon as it starts. Do not start both
+hosts on copies of the same database and leave both running: each would deliver
+the same events.
+
 ### Recover from an interrupted restore
 
 Do not start Athena while the database/attachment pair is uncertain. Preserve all
@@ -915,6 +993,44 @@ mtime and do not merge attachment trees.
 The recovery gate remains: stopped service, one known matched pair, doctor against
 the final paths, normal startup, then `/readyz`. A successful check supports this
 local/tailnet recovery procedure; it is not a claim of public deployment readiness.
+
+## Upgrade
+
+A release may carry migrations. Normal start never applies one: `athena-serve`
+refuses a database that is behind (`database is missing migrations`, in
+[Startup Refusals](#startup-refusals)) until an operator applies them. So an
+upgrade is five steps, and the database changes in exactly one of them.
+
+1. Read the release's entries in `CHANGELOG.md` for anything that changes a
+   setting, a default or a command.
+2. Take and verify a matched recovery bundle
+   ([Create and verify a matched recovery bundle](#create-and-verify-a-matched-recovery-bundle)).
+   It is the only way back.
+3. Drain traffic, stop Athena and wait for the process to exit.
+4. Install the new release the way this instance was installed: update the
+   checkout and its `.venv`, or rebuild the image ([DOCKER.md](DOCKER.md)).
+5. Apply the migrations, then run the deployment preflight and start:
+
+```bash
+athena-doctor /var/lib/athena/athena.db --migrate
+```
+
+`--migrate` first rehearses every pending migration on a private in-memory copy
+and applies nothing if one fails; it then applies them to the real file and
+requires the result to equal the schema this release packages. A database that
+is already current is left as it is. After the start, check readiness and that
+the process is the build you installed:
+
+```bash
+curl -fsS http://127.0.0.1:8000/readyz
+curl -fsS http://127.0.0.1:8000/version
+```
+
+Migrations are forward-only. There is no downgrade command, and the older
+release refuses a database the newer one migrated (`database has future
+migration`). To go back, stop Athena, reinstall the older release and restore
+the bundle from step 2 ([Restore a matched pair](#restore-a-matched-pair));
+everything written after the upgrade is lost.
 
 ## First User Bootstrap
 
