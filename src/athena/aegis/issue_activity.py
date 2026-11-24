@@ -19,7 +19,15 @@ import sqlite3
 from typing import TypedDict
 
 from athena.aegis import issues, projects, sprints
-from athena.core import activity, authorship, db, labels, notifications, users
+from athena.core import (
+    access,
+    activity,
+    authorship,
+    db,
+    labels,
+    notifications,
+    users,
+)
 
 _INFER_PROJECT = object()
 COMPLETION_REPORT_MARKER = "; reported_completion_v1 "
@@ -836,6 +844,50 @@ def record_lease_lapsed(
         facts={"generation": generation},
         commit=commit,
     )
+
+
+def record_lease_released(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    generation: str,
+    holder_id: int,
+    holder_name: str,
+    commit: bool,
+) -> dict:
+    """Record that an admin ended another account's live lease (U3).
+
+    A release, not a completion: the holder finished nothing, so this is its own
+    verb and no reader of ``claim_completed`` (settlement, work progress, the
+    project brief, review requests, "you completed this") counts it. The actor is
+    the admin; the holder is the subject, named in the detail the way
+    ``lease_lapsed`` names it: ``generation <g>; holder_id <n>; holder <name>``,
+    the name last because a name may hold any character. The holder is told even
+    when it does not watch the issue, so it learns who ended its possession.
+    ``commit=False`` folds it into the complete command's transaction."""
+    event = activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="lease_released",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=(
+            f"generation {generation}; holder_id {holder_id}; holder {holder_name}"
+        ),
+        facts={"generation": generation},
+        commit=commit,
+    )
+    holder = users.get_user(conn, holder_id)
+    issue = issues.get_issue(conn, issue_id)
+    if (
+        holder is not None
+        and holder.get("removed_at") is None
+        and issue is not None
+        and access.can_see_project_or_backlog(conn, holder, issue["project_id"])
+    ):
+        notifications.notify_users(conn, event_id=event["id"], user_ids=[holder_id])
+    return event
 
 
 def record_claim_completed(

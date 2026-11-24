@@ -295,3 +295,8 @@ def register() -> None:
         action_class=undo.ONE_WAY,
         reason="priority changes are recorded as prose, with no fact table to restore",
     )
+    undo.register(
+        "lease_released",
+        action_class=undo.ONE_WAY,
+        reason="the holder's possession ended; it claims again for a new one",
+    )

@@ -9,7 +9,10 @@
     {% for e in events %}
     <li class="activity-item">
         <span class="activity-actor">{{ e.actor_name }}</span>
-        {% if e.verb == "created" %}
+        {% if e.verb == "lease_released" %}
+            {# U3: an admin ended another account's lease. A release, not work done. #}
+            released another account's lease <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "created" %}
             created
         {% elif e.verb == "issue_edited" %}
             edited issue <span class="activity-detail">{{ e.detail }}</span>

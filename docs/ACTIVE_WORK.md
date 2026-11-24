@@ -193,6 +193,28 @@ For an account without admin authority, the attention ranking's
 the claims it answers for; the count and the rows use the same filter. The record
 is [the lapse decision](decisions/2026-11-22-lease-lapse-events.md).
 
+### An admin's release is a release, not a completion
+
+An admin may end another account's live lease: `complete_claim` with the lease's
+current generation over REST, or "Release lease" on the issue page's Claim card,
+which posts the generation the page showed (U3). Either way the command records
+`lease_released`, not `claim_completed`. The admin is the actor and the holder
+the subject; the detail reads `generation <g>; holder_id <n>; holder <name>`,
+and the feed carries the generation as the event's `generation` field. The
+holder gets a notification. A release carries no completion report.
+
+- **Not finished work.** Nothing that reads completions counts a release: the
+  last-work clock, the project brief's latest completion, the operator's "since
+  you looked" completions, the issue narrative's outcomes, the ready rule's
+  settlement, review requests and an inbox row's "you completed this". The
+  narrative tells it as a claim signal; undo classifies it one-way.
+- **One possession.** The generation fence refuses a lease settled, lapsed or
+  reclaimed since the generation was read, even by the same holder within the
+  same second; a renewal keeps the generation and is released.
+- **Not reassignment.** Status, assignee and contributors stay as they are, so a
+  released holder that is still the assignee or a contributor may claim the issue
+  again at once. Reassign or remove the contributor to move the work.
+
 Summary counts carry `scope=returned_items`: active, expired, and attention totals
 describe only the bounded `items` window, never undisplayed claims when `clipped=true`.
 

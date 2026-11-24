@@ -90,6 +90,16 @@ def issue_visible_or_404(conn, issue_id, user):
     return issue, None
 
 
+#: The most of a ``notice``/``error`` query value the issue page shows. The
+#: messages its own forms return are a sentence or two; a crafted link gets no
+#: more than this, escaped, in a banner that wraps.
+REFLECTED_MESSAGE_MAX_CHARS = 300
+
+
+def _reflected(request: Request, name: str) -> str:
+    return (request.query_params.get(name) or "").strip()[:REFLECTED_MESSAGE_MAX_CHARS]
+
+
 def render_issue_detail(
     request: Request,
     conn: sqlite3.Connection,
@@ -200,6 +210,10 @@ def render_issue_detail(
         # URL only when its host is one of these — otherwise anyone holding a
         # source secret could plant an arbitrary outbound link on an issue.
         "forge_hosts": event_sources.registered_hosts(conn),
+        # The outcome of a form that returned here (a lease release, an undo):
+        # plain text from the URL, capped and rendered through autoescape.
+        "notice": _reflected(request, "notice"),
+        "error": _reflected(request, "error"),
     }
     if extra:
         context.update(extra)

@@ -1234,7 +1234,8 @@ def complete_claim(
     the next claimant. The actor must hold the lease: an ACTIVE one, or its OWN row the
     clock has already expired (clearing a lapsed row is the holder's to do — nothing else
     removes it, so it would otherwise sit on their desk forever). An admin may release
-    anyone's ACTIVE lease, a moderation lever; an expired row belonging to someone else is
+    anyone's ACTIVE lease, a moderation lever recorded as ``lease_released`` (not as a
+    completion, and with no report); an expired row belonging to someone else is
     nobody's to complete. Rejects with IssueCommandError('conflict') if there is no lease
     row, or it belongs to someone else; 404 for an unseeable issue. Completion releases the
     coordination lease only — it does not change the issue's status; the agent transitions
@@ -1351,14 +1352,33 @@ def complete_claim(
                 "lease_generation_mismatch",
                 "lease generation changed before release",
             )
-        event = issue_activity.record_claim_completed(
-            conn,
-            actor_id=actor["id"],
-            issue_id=issue_id,
-            generation=current_generation,
-            reported=report,
-            commit=False,
-        )
+        if mine:
+            event = issue_activity.record_claim_completed(
+                conn,
+                actor_id=actor["id"],
+                issue_id=issue_id,
+                generation=current_generation,
+                reported=report,
+                commit=False,
+            )
+        elif report:
+            raise IssueCommandError(
+                "invalid",
+                "releasing another account's lease carries no completion report",
+            )
+        else:
+            # An admin ending another account's live lease is a release, not a
+            # completion of that account's work (U3): its own verb, naming the
+            # holder, told to the holder, and read by nothing as finished work.
+            event = issue_activity.record_lease_released(
+                conn,
+                actor_id=actor["id"],
+                issue_id=issue_id,
+                generation=current_generation,
+                holder_id=int(existing["holder_id"]),
+                holder_name=str(existing["holder_name"]),
+                commit=False,
+            )
         still_open = (
             statuses.category_of(conn, issue.get("project_id"), issue["status"])
             != "done"

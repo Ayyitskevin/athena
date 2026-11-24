@@ -26,6 +26,9 @@
     </div>
 </div>
 
+{% if error %}<div class="alert" data-tone="danger" role="alert">{{ error }}</div>{% endif %}
+{% if notice %}<div class="alert" data-tone="success" role="status">{{ notice }}</div>{% endif %}
+
 {% if blocked_policy_warning or blocked_warning %}
 <div class="warning blocked-warning">
     {% if blocked_policy_warning %}
@@ -203,6 +206,19 @@
                 <div class="sub">claimed or renewed {{ lease.claimed_at }} UTC</div>
                 {% if open_claim_handoff %}
                 <div class="sub">handoff open · {{ open_claim_handoff.reason }} · not resumed</div>
+                {% endif %}
+                {% if is_admin %}
+                {# U3: an admin ends this one live lease through complete_claim, the
+                   command REST uses. The form carries the generation of the
+                   possession shown here (GET /issues/{id}/lease serves it to any
+                   reader); the command's fence refuses any other possession.
+                   Recorded as lease_released, not a completion. Nothing is swept (K1). #}
+                <form method="post" action="/aegis/issues/{{ issue.id }}/lease/release" class="lease-release"
+                      data-confirm="Release {{ lease.holder_name }}'s live lease on {{ issue.key or '#' ~ issue.id }}? Their claim ends now; it is recorded as a release by you, not as completed work, and they are told. Status and assignee stay as they are, so they may claim it again if they are still its assignee or a contributor.">
+                    {% include "partials/csrf.html" %}
+                    <input type="hidden" name="generation" value="{{ lease.generation }}">
+                    <button type="submit" class="button danger small">Release lease</button>
+                </form>
                 {% endif %}
                 {% elif open_claim_handoff %}
                 <span class="v">yielded</span>

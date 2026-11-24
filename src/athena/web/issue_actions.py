@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import sqlite3
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -17,10 +18,14 @@ from athena.aegis import (
     dependencies,
     issue_commands,
     issues,
+    lease_commands,
+    leases,
     projects,
+    rest_support,
     statuses,
 )
 from athena.core import (
+    identity,
     notifications,
 )
 from athena.core.deps import get_conn
@@ -602,6 +607,85 @@ def unarchive_issue_web(
     except issue_commands.IssueCommandError as exc:
         return issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+_LEASE_MOVED = (
+    "The lease changed since this page was loaded; nothing was released. "
+    "Check who holds it now and confirm again."
+)
+
+
+@router.post(
+    "/aegis/issues/{issue_id}/lease/release", dependencies=[Depends(verify_csrf)]
+)
+def release_issue_lease(
+    request: Request,
+    issue_id: int,
+    generation: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """An admin releases another holder's live lease from the issue page (U3).
+
+    The browser twin of ``POST /issues/{id}/complete`` with the lease's
+    generation, through the SAME command, ``lease_commands.complete_claim``,
+    which records an admin's release of another account's lease as
+    ``lease_released`` (not a completion) and tells the holder. One explicit act
+    on one lease (D12; K1: nothing is swept).
+
+    The form carries the generation of the possession the page showed — a value
+    anyone who can read the issue already reads from ``GET /issues/{id}/lease``.
+    The command's generation fence decides under the writer lock: a lease that
+    was settled, lapsed, reclaimed or replaced since the page was drawn is
+    refused and nothing is recorded, while a renewal (same generation) still
+    releases. A hidden issue reads as missing before anything else is said."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to release a'
+            " lease.</div>",
+            status_code=401,
+        )
+    issue, err = issue_visible_or_404(conn, issue_id, user)
+    if err is not None:
+        return err
+    if not identity.is_admin(user):
+        return HTMLResponse(
+            '<div class="blocked">Only an admin may release another holder\'s'
+            " lease.</div>",
+            status_code=403,
+        )
+    # Names the holder in the notice only; the command's fence decides.
+    shown = leases.get_lease(conn, issue_id)
+    try:
+        lease_commands.complete_claim(
+            conn, actor=user, issue_id=issue_id, generation=generation.strip() or None
+        )
+    except issue_commands.IssueCommandError as exc:
+        # A fence refusal, or a lease the clock let go, is one answer: the
+        # possession the admin confirmed is gone.
+        moved = (
+            exc.kind.startswith("lease_generation")
+            or exc.code == lease_commands.CLAIM_REQUIRED_CODE
+        )
+        return render_issue_detail(
+            request,
+            conn,
+            issues.get_issue(conn, issue_id) or issue,
+            extra={"error": _LEASE_MOVED if moved else exc.detail},
+            status_code=rest_support.issue_command_status(exc),
+        )
+    whose = (
+        f"{shown['holder_name']}'s"
+        if shown is not None and shown["generation"] == generation.strip()
+        else "the"
+    )
+    notice = (
+        f"Released {whose} lease. Status and assignee are unchanged, so the "
+        "released holder, if still assignee or contributor, may claim it again."
+    )
+    return RedirectResponse(
+        f"/aegis/issues/{issue_id}?{urlencode({'notice': notice})}", status_code=303
+    )
 
 
 @router.post("/aegis/issues/{issue_id}/watch", dependencies=[Depends(verify_csrf)])

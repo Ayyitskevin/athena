@@ -1205,6 +1205,8 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 }
 .supervision dd, .supervision .v { margin: 0; font-family: var(--font-mono); font-size: var(--fs-xl); font-weight: 600; letter-spacing: -.02em; }
 .supervision .sub { margin-top: var(--sp-1); font-size: var(--fs-xs); color: var(--text-3); }
+/* The admin's release control sits under the lease it ends (U3). */
+.supervision .lease-release { margin-top: var(--sp-2); }
 
 .meta-rail { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
 .meta-grid { display: grid; grid-template-columns: 78px 1fr; gap: 9px var(--sp-3); align-items: center; font-size: var(--fs-md); }
@@ -1428,6 +1430,8 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
   font-size: var(--fs-md);
   line-height: 1.6;
   color: var(--text-2);
+  /* A message can carry a long unbroken value; it wraps, never widens the page. */
+  overflow-wrap: anywhere;
 }
 .alert strong { display: block; margin-bottom: 3px; color: var(--text); }
 .alert[data-tone="danger"]  { --tone: var(--danger);  --tone-soft: var(--danger-soft);  --tone-line: var(--danger-line); }

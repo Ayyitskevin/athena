@@ -88,6 +88,9 @@ _SIGNAL_RANK = {
 #: yield recorded WITH a handoff is told by the handoff lane instead (it owns
 #: the richer record), as is its resume; both still count as classified here.
 _CLAIM_VERBS = {"claimed", "lease_renewed"}
+#: An admin ending another account's lease (U3) is told as a claim signal: the
+#: possession ended, and nothing was completed, so it is never an outcome.
+_RELEASE_VERB = "lease_released"
 _YIELD_VERB = "claim_yielded"
 _RESUME_VERB = "claim_handoff_resumed"
 _COMPLETE_VERB = "claim_completed"
@@ -213,6 +216,16 @@ def _build(
                     "state": None,
                     "summary": f"{event['actor_name']} {verb.replace('_', ' ')} "
                     f"({event['detail']})",
+                }
+            )
+        elif verb == _RELEASE_VERB:
+            items.append(
+                {
+                    **base,
+                    "signal": SIGNAL_CLAIM,
+                    "state": None,
+                    "summary": f"{event['actor_name']} released another account's "
+                    f"lease ({event['detail']})",
                 }
             )
         elif verb == _COMPLETE_VERB:
