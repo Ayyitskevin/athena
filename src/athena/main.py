@@ -163,9 +163,37 @@ def _configure_logging() -> None:
         _logger.addHandler(handler)
 
 
-# Emit the "cookies are not Secure" warning at most once per process, no matter how
-# many apps a test suite builds. Flipped true the first time create_app() warns.
+# Emit the startup line about cookies at most once per process, no matter how many
+# apps a test suite serves. Flipped true the first time a lifespan logs it.
 _cookie_secure_warned = False
+
+
+def _log_cookie_notice(*, launched: bool) -> None:
+    """Say, once per process and at the start of serving, what is true of cookies.
+
+    Not at app construction: every process that imports this module builds an
+    app (the launcher before its own, the doctor, a test), and none of those is
+    a start. A cookie set on a request that arrives over HTTPS carries the
+    Secure flag whatever ATHENA_COOKIE_SECURE says (web/auth.py), so the setting
+    only matters behind a TLS-terminating proxy, and athena-serve, which serves
+    direct HTTP and has no HTTPS mode, refuses it."""
+    global _cookie_secure_warned
+    if _cookie_secure_warned:
+        return
+    _cookie_secure_warned = True
+    if launched:
+        _logger.info(
+            "cookies: athena-serve serves direct HTTP, so session and CSRF cookies "
+            "carry no Secure flag; it refuses ATHENA_COOKIE_SECURE and has no "
+            "HTTPS mode"
+        )
+    elif not config.COOKIE_SECURE:
+        _logger.warning(
+            "Session/CSRF cookies are marked Secure only on requests that arrive "
+            "over HTTPS (ATHENA_COOKIE_SECURE is off); a raw-factory deployment "
+            "behind a TLS-terminating proxy must set ATHENA_COOKIE_SECURE=1, and "
+            "athena-serve refuses it (it serves direct HTTP only)"
+        )
 
 
 _CACHEABLE_REQUEST_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -370,19 +398,6 @@ def create_app(
         else idempotency_max_response_bytes
     )
 
-    # Cookies without the Secure flag ride over plain HTTP too, so a network attacker
-    # on an HTTPS deploy could capture the session/CSRF cookie. We keep the default OFF
-    # (http dev + the test suite need it), but warn loudly once so a real HTTPS deploy
-    # doesn't ship insecure by accident. There is no dev/prod signal to key off, so this
-    # is a warning, not a hard flip.
-    global _cookie_secure_warned
-    if not config.COOKIE_SECURE and not _cookie_secure_warned:
-        _cookie_secure_warned = True
-        _logger.warning(
-            "Session/CSRF cookies are NOT marked Secure (ATHENA_COOKIE_SECURE is off); "
-            "set ATHENA_COOKIE_SECURE=1 for any deployment served over HTTPS."
-        )
-
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # Startup: bring the schema up to date before serving any request,
@@ -401,6 +416,10 @@ def create_app(
         else:
             _logger.info("schema already current; no migrations to apply")
         app.state.db_path = resolved_db
+        # Only athena-serve marks its own start; athena-demo pins a listener too.
+        _log_cookie_notice(
+            launched=config.SERVED_BY_ATHENA_SERVE and expected_server is not None
+        )
         # Start the single in-process webhook delivery loop (unless disabled — e.g.
         # in tests, or in extra worker processes that must not double-deliver).
         delivery_task = (

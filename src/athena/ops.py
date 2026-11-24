@@ -992,6 +992,34 @@ def _deployment_checks(
     ]
 
 
+def _warn_undeclared_variables(program: str) -> None:
+    """Name, in one warning, every ``ATHENA_`` variable in the environment that
+    no Athena setting declares: names only, since a value can be a credential."""
+    try:
+        from athena import config
+    except ValueError:
+        return  # a declared setting's value is invalid; that refusal comes first
+
+    undeclared = config.undeclared_variables(os.environ)
+    if not undeclared:
+        return
+    shown = ", ".join(
+        name if name.isascii() and name.isprintable() else ascii(name)
+        for name in undeclared
+    )
+    verb = (
+        "is set but is not an Athena setting, so it has"
+        if len(undeclared) == 1
+        else "are set but are not Athena settings, so they have"
+    )
+    print(
+        f"{program}: warning: {shown} {verb} no effect; check the spelling "
+        "against the settings tables in docs/OPERATIONS.md",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def _anonymous_reads_report(db_path: Path) -> str:
     """The doctor's line: the setting, the route count, the public containers."""
     from athena import config, exposure
@@ -1198,6 +1226,11 @@ def serve_main(argv: list[str] | None = None) -> int:
     try:
         from athena import config
 
+        # Named before any refusal of the start itself: a misspelling is often
+        # why it is refused. (An invalid value of a declared setting is refused
+        # while the settings load, before this can run.)
+        _warn_undeclared_variables("athena-serve")
+
         if args.fd is None:
             bind_host, bind_port = deployment.validate_bind(
                 args.host or "127.0.0.1",
@@ -1260,6 +1293,7 @@ def serve_main(argv: list[str] | None = None) -> int:
     # exact preflighted listener before handing the object to Uvicorn.
     config.ALLOWED_AUTHORITIES = tuple(authority.render() for authority in authorities)
     config.BOOTSTRAP_PASSWORD_REQUIRED = args.bootstrap
+    config.SERVED_BY_ATHENA_SERVE = True
     for check in checks:
         print(_printable(check), flush=True)
     print(
@@ -1876,6 +1910,7 @@ def doctor_main(argv: list[str] | None = None) -> int:
     report = _DoctorReceipt(args)
     global _START_ARGUMENTS
     _START_ARGUMENTS = None  # the doctor knows no listener to start again
+    _warn_undeclared_variables("athena-doctor")
     if not args.recovery_bundle:
         attach_dir = args.attach_dir
         if attach_dir is None:

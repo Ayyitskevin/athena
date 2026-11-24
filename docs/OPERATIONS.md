@@ -33,7 +33,19 @@ loops everywhere else, but that remains outside the supported deployment shape.
 Athena reads configuration from environment variables at process start.
 Every table of variables in this document is generated from the one registry
 in `src/athena/config.py` (`SETTINGS`); `tests/test_settings_registry.py` fails
-when the code reads a variable the registry does not declare.
+when the code reads a variable the registry does not declare. No Athena process
+reads any other `ATHENA_` variable. `athena-serve` and `athena-doctor` name, in
+a single warning on standard error and without printing its value, every one in
+their environment except the client-side names these documents and the examples
+tell you to set in your own shell (`ATHENA_URL`, `ATHENA_ADMIN_TOKEN`,
+`ATHENA_AGENT_TOKEN`, `ATHENA_ADMIN_PASSWORD`, `ATHENA_ISSUE_ETAG`). It comes
+once the settings have loaded, before any other refusal of the start; an invalid
+value of a declared setting is refused while they load, so that refusal comes
+first and the warning does not:
+
+```text
+athena-serve: warning: ATHENA_ANONYMOUS_READ is set but is not an Athena setting, so it has no effect; check the spelling against the settings tables in docs/OPERATIONS.md
+```
 
 <!-- BEGIN GENERATED settings:server (scripts/generate_settings_doc.py; do not edit by hand) -->
 | Variable | Default | Secret | Use |
