@@ -347,6 +347,10 @@ code, kbd, pre, samp { font-family: var(--font-mono); }
 .nav-menu a .route { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-3); }
 
 /* The exception count lives in the nav, not only on the dashboard. */
+/* The Intervene summary's counts: one swappable box (the card's live refresh
+   replaces it out of band), laid out like the summary around it. */
+.nav-counts { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.nav-counts:empty { display: none; }
 .nav-count {
   display: inline-grid;
   place-items: center;
@@ -1783,6 +1787,9 @@ pre.prose { white-space: pre-wrap; overflow-wrap: anywhere; }
 }
 
 @media (max-width: 560px) {
+  /* The unread count is also in the Intervene menu's Inbox link; on a phone it
+     stays there rather than widening a nav that already overflows. */
+  .nav-unread { display: none; }
   .stat-row { grid-template-columns: 1fr; }
   .stat { padding-left: 0; border-left: 0; border-top: 1px solid var(--border); }
   .stat:first-child { border-top: 0; }

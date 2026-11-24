@@ -30,6 +30,14 @@ and each links there, so the rollup can never disagree with the page it sends yo
 to. That is the whole design constraint: an aggregate that re-derives state is an
 aggregate that eventually lies.
 
+**One number, wherever it is shown.** The rows above sum to the "needs you" total
+(`fleet_attention.needs_you`). The Intervene badge in the nav shows that total and
+nothing else; a page renders the badge and the card from one read, and the card's
+live refresh carries the badge with it, so the two never show different numbers.
+The unread inbox is not in it: an inbox row says something happened, not that a
+decision waits. It is shown beside the badge as its own labelled count. Sign-in
+lands on the dashboard, where this card is the first panel.
+
 **Every count says what it counts.** Standing state — an approval nobody answered,
 a worker that never confirmed — is *not* window-bounded, because a month-old
 unanswered request is still unanswered. Event-counted signals *are*, because

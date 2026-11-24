@@ -74,6 +74,7 @@ def build_attention(
     actor: dict | None = None,
     ranking_signals: set[str] | None = None,
     ranking_limit: int = 20,
+    counts: dict | None = None,
 ) -> dict:
     """Count what needs a human, and say where each number lives.
 
@@ -81,6 +82,59 @@ def build_attention(
     admin-scoped read (active work, automation rules, webhook health, the approval
     queue, the worker registry, refusal events), and aggregating them does not
     widen any of them.
+
+    The counts and their ``total`` are :func:`needs_you`'s (U6). ``counts`` is a
+    ``needs_you`` result this request already computed for the same actor and
+    window (the nav badge's), reused so the card and the badge in one response
+    are the same read, made once.
+    """
+    current = _normalized_now(now)
+    projection = (
+        dict(counts)
+        if counts is not None
+        else needs_you(conn, window_hours=window_hours, now=current, actor=actor)
+    )
+    # The ranked queue is an extension of this projection, not a second source
+    # of truth. Callers that have an actor get both the count card and its
+    # actor-filtered "what next" rows from one request clock.
+    if actor is not None:
+        # Alive is not progress: expired leases, in-progress work with no recorded
+        # work, and the oldest request waiting on the operator. Kept out of the
+        # signal total on purpose — each lane carries its own count and meaning.
+        projection["progress"] = work_progress.build_progress(
+            conn, actor=actor, now=current
+        )
+        ranking = build_attention_ranking(
+            conn,
+            signals=ranking_signals,
+            actor=actor,
+            window_hours=window_hours,
+            now=current,
+            limit=ranking_limit,
+        )
+        projection["now"] = public_attention_ranking(conn, ranking, actor=actor)
+    return projection
+
+
+def needs_you(
+    conn: sqlite3.Connection,
+    *,
+    window_hours: int = DEFAULT_WINDOW_HOURS,
+    now: datetime | None = None,
+    actor: dict | None = None,
+) -> dict:
+    """The one "needs you" number, with the signals it sums.
+
+    ``total`` is everything asking for a human (``docs/EXCEPTION_SURFACES.md``):
+    the sum of the signal counts below. It is the only number the Intervene badge
+    and the dashboard's fleet-attention card show as "needs you"; both read it
+    from here, for the same actor, and a page renders both from one call. The
+    card's live refresh carries the badge with it (an out-of-band swap), so a
+    refreshed card never sits beside a stale badge. The unread inbox is not in
+    it: an inbox row says something happened, not that a decision waits, and the
+    surfaces show it beside this number, never added to it.
+
+    Admin-only by the caller's contract, like :func:`build_attention`.
     """
     if isinstance(window_hours, bool) or not isinstance(window_hours, int):
         raise ValueError("window_hours must be an integer")
@@ -214,7 +268,7 @@ def build_attention(
             "scope": f"in the last {window_hours}h",
         },
     ]
-    projection = {
+    return {
         "schema": SCHEMA,
         "window_hours": window_hours,
         "since": since,
@@ -224,26 +278,6 @@ def build_attention(
         # down without a second query.
         "refusals_by_verb": refusals,
     }
-    # The ranked queue is an extension of this projection, not a second source
-    # of truth. Callers that have an actor get both the count card and its
-    # actor-filtered "what next" rows from one request clock.
-    if actor is not None:
-        # Alive is not progress: expired leases, in-progress work with no recorded
-        # work, and the oldest request waiting on the operator. Kept out of the
-        # signal total on purpose — each lane carries its own count and meaning.
-        projection["progress"] = work_progress.build_progress(
-            conn, actor=actor, now=current
-        )
-        ranking = build_attention_ranking(
-            conn,
-            signals=ranking_signals,
-            actor=actor,
-            window_hours=window_hours,
-            now=current,
-            limit=ranking_limit,
-        )
-        projection["now"] = public_attention_ranking(conn, ranking, actor=actor)
-    return projection
 
 
 # ---------------------------------------------------------------------------

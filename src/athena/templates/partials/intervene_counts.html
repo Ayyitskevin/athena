@@ -1,0 +1,16 @@
+{# The Intervene summary's counts, defined once for the nav and for the attention
+   card's live refresh. The refresh response carries this with oob=True, and
+   htmx swaps it in by its id, so a refreshed card never sits beside a stale
+   badge (U6). The badge is the "needs you" number alone (needs_you); the unread
+   inbox is its own labelled count beside it, never added to it, and is hidden
+   on a narrow screen rather than widening the nav. #}
+{% macro intervene_counts(nav, oob=False) -%}
+<span id="intervene-counts" class="nav-counts"{% if oob %} hx-swap-oob="true"{% endif %}>
+    {%- if nav.attention_total %}
+    <span class="nav-count" aria-label="{{ nav.attention_total }} need you: recorded attention signals, not unique tasks or fleet health">{{ nav.attention_total }}</span>
+    {%- endif %}
+    {%- if nav.unread_count %}
+    <span class="chip chip--sm nav-unread" data-tone="neutral">{{ nav.unread_count }} unread</span>
+    {%- endif -%}
+</span>
+{%- endmacro %}

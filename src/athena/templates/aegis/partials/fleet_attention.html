@@ -6,11 +6,12 @@
    human is the one number on the dashboard that is worthless when stale: it exists
    to be noticed within the minute something goes wrong, not on the next reload. #}
 {% import "partials/live.html" as live_ui %}
+{% from "partials/intervene_counts.html" import intervene_counts %}
 <section class="panel" aria-labelledby="fleet-attention-heading"{{ live_ui.live_attrs(live) }}>
     <div class="panel-head">
         <h3 id="fleet-attention-heading">
             Fleet attention
-            {% if fleet_attention.total %}<span class="chip" data-tone="accent">{{ fleet_attention.total }}</span>{% endif %}
+            {% if fleet_attention.total %}<span class="chip" data-tone="accent" aria-label="{{ fleet_attention.total }} need you">{{ fleet_attention.total }}</span>{% endif %}
         </h3>
     </div>
     <div class="panel-body">
@@ -142,3 +143,6 @@
         {{ live_ui.live_stamp(live) }}
     </div>
 </section>
+{# On a live refresh only, the nav's counts ride along out of band, so the badge
+   moves with the card it must match (U6). The full page renders the nav itself. #}
+{% if oob_nav %}{{ intervene_counts(request.state.nav, oob=True) }}{% endif %}

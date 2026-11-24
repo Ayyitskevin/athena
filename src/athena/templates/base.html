@@ -85,24 +85,24 @@
             </details>
 
             {# ── INTERVENE ── asking for a human right now. The badge is the
-                 fleet-attention total plus inbox unread — the number that
-                 decides whether you need to look does not live only on the
-                 dashboard. Attention is computed per-request for admins in
-                 the session middleware (counts only, ~0.1 ms measured) and is
-                 zero with no signals list for everyone else: the aggregate is
-                 admin-scoped and must not leak through a badge. #}
+                 "needs you" number, fleet_attention.needs_you: the same read the
+                 dashboard's fleet-attention card shows in the same response, and
+                 the card's live refresh swaps this badge too (U6). Read lazily
+                 per request for admins (web/nav.py) and empty for everyone else:
+                 the aggregate is admin-scoped and must not leak through a badge.
+                 The unread inbox is a different fact (something happened, not a
+                 decision waiting), so it is shown beside the badge with its own
+                 label and never added to it. #}
+            {% from "partials/intervene_counts.html" import intervene_counts %}
             <details class="nav-group" name="athena-nav">
                 <summary>
                     Intervene
-                    {% set intervene_total = request.state.unread_count + request.state.attention_total %}
-                    {% if intervene_total %}
-                    <span class="nav-count" aria-label="{{ intervene_total }} recorded inbox and attention signals; not unique tasks or fleet health">{{ intervene_total }}</span>
-                    {% endif %}
+                    {{ intervene_counts(request.state.nav) }}
                 </summary>
                 <div class="nav-menu">
-                    <p>Recorded inbox and attention signals. Counts only — each links to the surface that owns it.</p>
-                    <a href="/inbox">Inbox{% if request.state.unread_count %} <span class="chip" data-tone="accent">{{ request.state.unread_count }}</span>{% endif %} <span class="route">/inbox</span></a>
-                    {% for signal in request.state.attention_signals %}{% if signal.count or signal.key in ('pending_approvals', 'unanswered_kills') %}
+                    <p>Recorded inbox and attention signals, shown apart. Counts only — each links to the surface that owns it.</p>
+                    <a href="/inbox">Inbox{% if request.state.nav.unread_count %} <span class="chip" data-tone="neutral">{{ request.state.nav.unread_count }} unread</span>{% endif %} <span class="route">/inbox</span></a>
+                    {% for signal in request.state.nav.attention_signals %}{% if signal.count or signal.key in ('pending_approvals', 'unanswered_kills') %}
                     <a href="{{ signal.href }}">{{ signal.label }} <span class="chip" data-tone="accent">{{ signal.count }}</span> <span class="muted">{{ signal.scope }}</span></a>
                     {% endif %}{% endfor %}
                     {% if request.state.user.role == "admin" %}

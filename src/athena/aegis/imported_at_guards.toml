@@ -90,7 +90,7 @@ why = """\
 [[mechanism]]
 label = "Attention rollup, security refusal counters"
 module = "fleet_attention.py"
-function = "build_attention"
+function = "needs_you"
 pattern = 'imported_at IS NULL'
 
 [[guarded]]

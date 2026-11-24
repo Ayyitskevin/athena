@@ -10,6 +10,12 @@
     </div>
 </div>
 
+{# What needs the operator is the first thing on the page (U6): sign-in lands
+   here, and the attention card leads, above the work totals. #}
+{% if fleet_attention %}
+{% include "aegis/partials/fleet_attention.html" %}
+{% endif %}
+
 <div class="stat-row">
     <div class="stat">
         <span class="stat-number">{{ totals.active_issues }}</span>
@@ -24,10 +30,6 @@
         <span class="stat-label">Active sprints</span>
     </div>
 </div>
-
-{% if fleet_attention %}
-{% include "aegis/partials/fleet_attention.html" %}
-{% endif %}
 
 {% if since %}
 {% include "aegis/partials/since.html" %}

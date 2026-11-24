@@ -32,6 +32,7 @@ from athena.core import (
     users,
 )
 from athena.core.deps import get_conn
+from athena.web import redirects
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
 
@@ -164,9 +165,9 @@ def _is_cross_site_post(request: Request) -> bool:
 @router.get("/login", response_class=HTMLResponse)
 def login_form(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     templates = get_templates()
-    # Already signed in? Skip the form.
+    # Already signed in? Skip the form, to where the attention queue is (U6).
     if getattr(request.state, "user", None) is not None:
-        return RedirectResponse("/aegis", status_code=303)
+        return RedirectResponse(redirects.LANDING, status_code=303)
     # A fresh install's login page is a dead end: no account exists and the
     # page gives no clue how the first one comes to be. One existence check
     # (not a count) decides whether to point at the bootstrap runbook. On any
@@ -288,8 +289,10 @@ def login(
     # overwritten in the response.
     sessions.destroy_session(conn, request.cookies.get(config.SESSION_COOKIE))
     raw = sessions.create_session(conn, user["id"])
-    # 303 so the browser re-requests /aegis with GET, carrying the new cookie.
-    login_response = RedirectResponse("/aegis", status_code=303)
+    # 303 so the browser re-requests the landing page with GET, carrying the new
+    # cookie. Always the dashboard, where the attention queue is (U6): the sign-in
+    # takes no redirect target, so nothing a request carries can move it.
+    login_response = RedirectResponse(redirects.LANDING, status_code=303)
     _set_session_cookie(login_response, raw, request=request)
     _set_csrf_cookie(login_response, _session_csrf_token(conn, raw), request=request)
     return login_response
@@ -343,7 +346,7 @@ def login_sso(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         return HTMLResponse("Not found", status_code=404)
     issuer, client_id, _client_secret, redirect_url = settings
     if getattr(request.state, "user", None) is not None:
-        return RedirectResponse("/aegis", status_code=303)
+        return RedirectResponse(redirects.LANDING, status_code=303)
 
     try:
         discovery = oidc_flow.discover(issuer)
@@ -436,7 +439,7 @@ def auth_callback(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     # Mint the session exactly as a password login does (rotate, then issue).
     sessions.destroy_session(conn, request.cookies.get(config.SESSION_COOKIE))
     raw = sessions.create_session(conn, user["id"])
-    login_response = RedirectResponse("/aegis", status_code=303)
+    login_response = RedirectResponse(redirects.LANDING, status_code=303)
     _set_session_cookie(login_response, raw, request=request)
     _set_csrf_cookie(login_response, _session_csrf_token(conn, raw), request=request)
     login_response.delete_cookie(_OIDC_STATE_COOKIE, path="/")

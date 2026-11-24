@@ -84,8 +84,14 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
     # The steer-by-exception rollup, admin-only because every input is already an
     # admin-scoped read. It is counts and links only — it computes no state of its
     # own, so it can never disagree with the surfaces it points at.
+    #
+    # The card's counts are the nav badge's read (request.state.nav, web/nav.py),
+    # reused rather than made again, so the badge and the card in this response
+    # are one number from one read (U6).
     attention = (
-        fleet_attention.build_attention(conn, actor=user)
+        fleet_attention.build_attention(
+            conn, actor=user, counts=request.state.nav.needs_you
+        )
         if user is not None and identity.is_admin(user)
         else None
     )
@@ -99,10 +105,17 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
     if live.wants_panel(request, live.FLEET_ATTENTION):
         if attention is None:
             return HTMLResponse("")
+        # The badge rides along as an out-of-band swap: the poll replaces the
+        # card, and without this the nav would keep the page load's number
+        # beside a newer card until a reload (U6).
         return get_templates().TemplateResponse(
             request=request,
             name="aegis/partials/fleet_attention.html",
-            context={"fleet_attention": attention, "live": live_refresh},
+            context={
+                "fleet_attention": attention,
+                "live": live_refresh,
+                "oob_nav": True,
+            },
         )
     # Every number is counted only over the projects this viewer may see (admins all;
     # the backlog is always in). recent_activity is gated the same way: actor=user
