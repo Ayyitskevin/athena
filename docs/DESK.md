@@ -69,7 +69,7 @@ returns a page, so drain unfiltered and keep the filters for waiting.
 
 **Facts are fields.** A lease event carries its `generation` (claimed,
 lease_renewed, lease_lapsed, claim_yielded, claim_handoff_resumed, claim_completed,
-lease_released, and a delegation_declined that released a lease); a yield and a handoff resume carry
+lease_released, holder_budget_exhausted, and a delegation_declined that released a lease); a yield and a handoff resume carry
 the `handoff_token`; a completion that reported one carries its `verdict`. Each is
 the value the command recorded, and the prose `detail` names the same values for a
 person. An event with none of them has none of the keys, and an event recorded

@@ -518,3 +518,8 @@ def register() -> None:
         action_class=undo.ONE_WAY,
         reason="the holder's possession ended; it claims again for a new one",
     )
+    undo.register(
+        "holder_budget_exhausted",
+        action_class=undo.ONE_WAY,
+        reason="it records a refusal; nothing was applied, so nothing is undone",
+    )

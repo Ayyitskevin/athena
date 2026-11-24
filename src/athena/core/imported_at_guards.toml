@@ -127,6 +127,18 @@ module = "agents.py"
 function = "_child_run_count"
 why = "run-scoped; imported rows carry NULL run coordinates"
 
+# --- budget_commands.py ------------------------------------------------------
+
+[[guarded]]
+module = "budget_commands.py"
+function = "record_exhaustion"
+pattern = 'imported_at IS NULL'
+why = """\
+    the once-per-window check asks whether THIS instance already recorded \
+    the account's exhaustion in the stored window; an imported \
+    agent_budget_exhausted row is another instance's ceiling and must not \
+    silence this one's first refusal"""
+
 # --- dispatch.py -------------------------------------------------------------
 
 [[exempt]]

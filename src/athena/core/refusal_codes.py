@@ -398,7 +398,22 @@ _ENTRIES: tuple[RefusalCode, ...] = (
         statuses=(429,),
         meaning=(
             "Your account's write budget for this window is spent; nothing was "
-            "applied. Wait Retry-After seconds."
+            "applied. `held_leases` names each lease you hold and "
+            "`retry_after_seconds` when the window ends. The accounts that "
+            "answer for that work are told once per window."
+        ),
+        # Not a wait: the window may be a day, and a lease held through it
+        # keeps the work from every other seat until it lapses. A yield is not
+        # metered, so it is the one write the refused seat can still make, and
+        # it puts the work back in the ready lane with a handoff
+        # (tests/test_refusal_next.py).
+        next=NextCall(
+            tool="yield_claim",
+            hint=(
+                "for each of held_leases: issue_id, generation, reason=capacity "
+                "and what you attempted; the work returns to the ready lane. "
+                "Holding none: stop writing until retry_after_seconds"
+            ),
         ),
     ),
     # --- idempotency ----------------------------------------------------------

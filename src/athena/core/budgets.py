@@ -126,6 +126,11 @@ def get_budget(conn: sqlite3.Connection, user_id: int) -> Budget | None:
     return _row_to_budget(row) if row else None
 
 
+def parse_window_start(budget: Budget):
+    """When ``budget``'s stored window began, as an aware datetime."""
+    return _parse(budget.window_started_at)
+
+
 def _rolled(budget: Budget, now) -> Budget:
     """The budget as of ``now``: unchanged, or reset into a fresh window.
 

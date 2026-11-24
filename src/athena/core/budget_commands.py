@@ -13,6 +13,7 @@ import sqlite3
 from athena.core import activity, db
 from athena.core._util import utc_now
 from athena.core.budgets import (
+    parse_window_start,
     VERB_BUDGET_CLEARED,
     VERB_BUDGET_EXHAUSTED,
     VERB_BUDGET_SET,
@@ -131,21 +132,62 @@ def clear_budget(
         return True
 
 
-def record_exhaustion(conn: sqlite3.Connection, *, actor_id: int, detail: str) -> None:
-    """Put a refused write on the trail, AFTER its transaction rolled back.
+def _trail_stamp(window_stamp: str) -> str:
+    """A budget window stamp (``2026-11-24T10:00:00Z``) in the trail's shape
+    (``2026-11-24 10:00:00``), so the two compare as text."""
+    return window_stamp.replace("T", " ", 1).removesuffix("Z")
+
+
+def record_exhaustion(
+    conn: sqlite3.Connection, *, actor_id: int, detail: str
+) -> dict | None:
+    """Put a refused write on the trail, AFTER its transaction rolled back: once
+    per budget window (F13). Returns the event when this refusal is the first of
+    its window, and None for a later one, which records nothing.
 
     The refusal is exactly the "steer by exception" signal the operator wants — an
-    agent hitting its ceiling is a decision to make, not noise. It cannot be
-    recorded inside the command, because that transaction is unwinding; this runs
-    on the now-free connection in its own transaction. Best-effort by construction:
-    the write was already refused, so a failure to log must not mask that.
+    agent hitting its ceiling is a decision to make, not noise. One refused
+    request is that signal; the twentieth in the same window is the same fact,
+    and a row for each buried it. It cannot be recorded inside the command,
+    because that transaction is unwinding; this runs on the now-free connection
+    in its own transaction, which makes the check and the write one serialized
+    step. Best-effort by construction: the write was already refused, so a
+    failure to log must not mask that.
+
+    The window is the stored one. A charge stores a rolled window with the
+    charge, but a refused charge stores nothing, so an account whose limit
+    refuses its first write of a new window (a limit of zero) would never have
+    that window stored and every refusal would open its own. The recorder
+    stores the rolled window in that case; it changes nothing else.
     """
-    activity.record(
-        conn,
-        actor_id=actor_id,
-        verb=VERB_BUDGET_EXHAUSTED,
-        target_kind="user",
-        target_id=actor_id,
-        detail=detail,
-        commit=True,
-    )
+    with db.transaction(conn, immediate=True):
+        budget = get_budget(conn, actor_id)
+        if budget is None:
+            return None
+        now = utc_now()
+        if now - parse_window_start(budget) >= WINDOWS[budget.window]:
+            started = stamp_window(now)
+            conn.execute(
+                "UPDATE agent_budgets SET action_used = 0, window_started_at = ?, "
+                "updated_at = datetime('now') WHERE user_id = ?",
+                (started, actor_id),
+            )
+        else:
+            started = budget.window_started_at
+        seen = conn.execute(
+            "SELECT 1 FROM activity WHERE verb = ? AND actor_id = ? "
+            "AND target_kind = 'user' AND target_id = ? AND imported_at IS NULL "
+            "AND created_at >= ? LIMIT 1",
+            (VERB_BUDGET_EXHAUSTED, actor_id, actor_id, _trail_stamp(started)),
+        ).fetchone()
+        if seen is not None:
+            return None
+        return activity.record(
+            conn,
+            actor_id=actor_id,
+            verb=VERB_BUDGET_EXHAUSTED,
+            target_kind="user",
+            target_id=actor_id,
+            detail=detail,
+            commit=False,
+        )

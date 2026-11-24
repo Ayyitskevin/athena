@@ -14,7 +14,9 @@ seat profile, and requires one of exactly two outcomes:
 
 * **progress**: after following `next`, the refused call, repeated (with what the
   `next` answered), succeeds, or the caller now holds something it did not (a
-  lease, an acknowledged position).
+  lease, an acknowledged position). One refusal no call of the caller's can lift:
+  a spent budget (F13). There progress is the work the caller holds reaching
+  another seat, which then holds its lease.
 * **wait**: the `next` is a call that parks until the blocking state changes. It is
   made twice. With nobody changing anything it must park and come back empty at its
   timeout, not answer at once from history, and the refused call must still be
@@ -444,6 +446,55 @@ def _run_id_mismatch(world: World) -> Scenario:
     return Scenario(world.ada, refusal, {"current_run": {}}, repeat)
 
 
+def _agent_budget_exhausted(world: World) -> Scenario:
+    """F13: Ada holds the slice and spends her budget on it. No call of hers
+    lifts the refusal before the window ends, so `next` hands the work back: a
+    yield is not metered, and Bo, delegated the same slice, then claims it."""
+    issue_id = world.issue("Out of budget", world.ada, world.bo)
+    lease = world.ada.claim(issue_id)
+    limited = world.client.put(
+        f"/users/{world.ada.user_id}/budget",
+        json={"window": "day", "action_limit": 1},
+        headers=ADMIN,
+    )
+    assert limited.status_code == 200, limited.text
+    ok, first = world.ada.call("update_issue", issue_id=issue_id, priority="high")
+    assert ok, first
+    refusal = world.ada.refused_by("update_issue", issue_id=issue_id, priority="low")
+    assert refusal["held_leases"] == [
+        {"issue_id": issue_id, "generation": lease["generation"]}
+    ], refusal
+
+    def repeat(answer: Any) -> tuple[bool, Any]:
+        # The yield recorded a handoff; Ada's own write is still refused, and
+        # the work is where the next seat can take it.
+        assert answer["reason"] == "capacity", answer
+        still = world.ada.refused_by("update_issue", issue_id=issue_id, priority="low")
+        assert still["code"] == "agent_budget_exhausted" and not still["held_leases"]
+        ok, taken = world.bo.call(
+            "claim_issue", issue_id=issue_id, if_match=world.bo.etag(issue_id)
+        )
+        return ok and taken.get("holder_id") == world.bo.user_id, taken
+
+    held = refusal["held_leases"][0]
+    return Scenario(
+        world.ada,
+        refusal,
+        {
+            "yield_claim": {
+                "issue_id": held["issue_id"],
+                "generation": held["generation"],
+                "reason": "capacity",
+                "attempted_work": "One priority change; the next was refused.",
+                "evidence": ["the refusal named this lease"],
+                "blocking_question": "Who continues while my budget is spent?",
+                "resume_instructions": "Continue from the issue's last event.",
+            }
+        },
+        repeat,
+    )
+
+
 def _idempotency_authorization_changed(world: World) -> Scenario:
     """F6: Ada's keyed write, then the operator reassigns that issue. Ada is still a
     delegated contributor, but her stored answer is fenced: an assignment on the
@@ -494,6 +545,7 @@ SCENARIOS: dict[str, Callable[[World], Scenario]] = {
     "approval_required": _approval_required,
     "run_id_mismatch": _run_id_mismatch,
     "idempotency_authorization_changed": _idempotency_authorization_changed,
+    "agent_budget_exhausted": _agent_budget_exhausted,
 }
 
 

@@ -79,7 +79,10 @@ rather than spent. The reset is *persisted* by the next charge, not by looking.
 - **Audited.** Setting and clearing a budget each record an event
   (`agent_budget_set` / `agent_budget_cleared`) atomically with the change.
   Exhaustion records `agent_budget_exhausted` — an agent hitting its ceiling is a
-  decision the operator should see, not silence.
+  decision the operator should see, not silence. It is recorded once per budget
+  window, on the first refused request: a later refusal in the same window
+  records nothing, so the trail and the operator's attention list have one row
+  per account and window, not one per request.
 - **Preserves consumption across a limit change.** Raising a limit mid-window
   releases the agent immediately *without* gifting a fresh window; lowering it can
   leave an agent already over, in which case `remaining` clamps to 0.
@@ -99,12 +102,36 @@ Retry-After: 3421
     "user_id": 42, "window": "day", "action_limit": 50,
     "action_used": 50, "remaining": 0,
     "window_started_at": "2026-07-25T00:00:00Z"
-  }
+  },
+  "held_leases": [
+    {"issue_id": 7, "generation": "6403f3965f78a1aa9339a041f474a4f4"}
+  ],
+  "retry_after_seconds": 3421
 }
 ```
 
 `code` is the stable contract — branch on it rather than parsing prose.
-`Retry-After` is the server's own seconds-until-window-reset.
+`Retry-After` is the server's own seconds-until-window-reset, and
+`retry_after_seconds` is the same number in the body.
+
+### Out of budget while holding work
+
+`held_leases` names each lease the refused account holds, at most 20. A lease
+held through the rest of the window keeps its issue from every other seat until
+it lapses, so the refusal's `next` is `yield_claim` with reason `capacity` for
+each of them: a yield is a coordination write and is not metered, it records
+what was attempted, and the issue returns to the ready lane. An account that
+holds nothing stops writing until the window ends.
+
+The first refusal of a window also tells the accounts that answer for that
+work. For each held lease it records one `holder_budget_exhausted` event on the
+issue, by the holder, whose `detail` is `generation <g>; holder_id <n>;
+retry_after_seconds <n>; holder <name>`, and puts it in the inbox of the
+issue's assignee and of the account that delegated the issue to the holder,
+when they can still see the issue. The holder is not told again. A conductor
+waiting on its outcome's events (`wait_for_events`, `mine=true`) is woken by
+it. Nothing is released and nothing changes on the issue: the holder yields, or
+the lease lapses and says so.
 
 ## Surfaces
 

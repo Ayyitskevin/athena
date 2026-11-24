@@ -277,7 +277,7 @@ back with `isError` false, `applied: false` and `next`.
 | `invalid_query` | 422 | The work query does not parse; detail.error says where. |  |
 | `approval_required` | 202 | The action is gated for you: it was NOT applied, and an operator decision is pending (the body carries the approval, and `events_after`, the newest event on its target you can see). | `wait_for_events`: kind=approval.target_kind, target=approval.target_id, after=events_after: answers when the operator decides; then repeat the call with the same idempotency_key |
 | `approval_rejected` | 409 | The operator rejected this gated action (the note is in the body); do not retry it. |  |
-| `agent_budget_exhausted` | 429 | Your account's write budget for this window is spent; nothing was applied. Wait Retry-After seconds. |  |
+| `agent_budget_exhausted` | 429 | Your account's write budget for this window is spent; nothing was applied. `held_leases` names each lease you hold and `retry_after_seconds` when the window ends. The accounts that answer for that work are told once per window. | `yield_claim`: for each of held_leases: issue_id, generation, reason=capacity and what you attempted; the work returns to the ready lane. Holding none: stop writing until retry_after_seconds |
 | `idempotency_key_invalid` | 400 | Send exactly one Idempotency-Key of 1-255 visible ASCII characters. |  |
 | `idempotency_key_unsupported` | 400 | This endpoint does not take an Idempotency-Key; resend without one. |  |
 | `idempotency_mismatch` | 409 | This Idempotency-Key was already used for a different request; use a new key for a different call. |  |
