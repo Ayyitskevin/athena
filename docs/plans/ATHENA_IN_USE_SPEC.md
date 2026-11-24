@@ -2,7 +2,7 @@
 
 Date: 2026-11-22. Review baseline: `0b42d40` (`main` after Waves 0, 0b, 1 and 2
 of [the agentic-use specification](AGENTIC_USE_SPEC_ATHENA.md)).
-Status: **decisions accepted by standing instruction; Waves 3 and 4 built; Waves 6, 7 and 8 begun.**
+Status: **decisions accepted by standing instruction; Waves 3 and 4 built; Waves 5, 6, 7 and 8 begun.**
 Evidence: [reports/repo-review-2026-11-22-round2.md](reports/repo-review-2026-11-22-round2.md).
 Finding IDs such as `FLEET-4`, `OPS-5`, `PERF-1` and `COCKPIT-2` refer to that
 report. Requirement IDs that begin A, B or C are carried from the first
@@ -35,9 +35,10 @@ database is private to the service user, and a refused start names what is
 wrong and what to do. The first four requirements of Wave 8 are built in PR
 #476: an admin releases a held lease from the issue page, the navigation and
 the dashboard show one "needs you" number, a fresh claim is not attention, and
-an approval row says what is being approved. F10 and F6 of Wave 5 are built
-and not merged; F6 has been independently reviewed and F10 has not. Nothing
-has been re-graded since.
+an approval row says what is being approved. The first two requirements of
+Wave 5 are built in PR #477: an edit keeps the text it replaced and can be
+undone, and one unrelated assignment no longer voids every stored idempotency
+receipt. Nothing has been re-graded since.
 
 **Decisions in force.**
 
@@ -55,9 +56,11 @@ has been re-graded since.
 
 **Known issues, most serious first.**
 
-1. Any eligible account can replace an issue's text with no precondition, and
-   the old text is unrecoverable (F10).
-2. One unrelated assignment voids every stored idempotency receipt (F6).
+1. A fleet has no recovery path for a seat that dies holding work, a review
+   that never comes or a conductor that stops: the rest of Wave 5 (C8, C7,
+   F13, F14, F15).
+2. `IssueOut.parent_id` gives the id of a parent issue the caller cannot see
+   (found by F6's property test; older than this specification).
 3. The project brief and `/desk/since` without a cursor still grow with
    history (357 and 165 ms at 50,000 issues), three REST lists return
    everything, and every bearer read takes the writer lock (H5, H6, H7, H9:
@@ -96,15 +99,17 @@ start-up notices that are true. "Wave 7 results" says the same for each. From
 Wave 8: the lease release on the issue page and its `lease_released` event,
 one "needs you" number, the heartbeat grace and the attention ranking, the
 approval row, the one report partial and undo on the issue page. "Wave 8
-results" says the same for each.
+results" says the same for each. From Wave 5: the prior text of an edit, its
+read and its undo, `If-Match` for a bearer edit of a title or body, and the
+idempotency fence scoped to the issue a key names. "Wave 5 results" says the
+same for each.
 
-**Next step.** Integrate the lanes already built and reviewed, each wave as its
-own pull request: Wave 5 in the order its row gives, starting with F10 and
-F6, which are built. F10 has not been reviewed; it needs an undo precheck for
-edits so that the issue page's offer survives one. The rest of Wave 6 (H6, H5,
-H7, H9), of Wave 7 (H13 to H17, H19, H20) and of Wave 8 (U2, U4, U5, U8, U10
-to U15, C10) is not built. Each requirement that removes calls lowers the
-fleet trial's ceilings in the same commit.
+**Next step.** Nothing built is waiting. Build the rest of Wave 5 in the order
+its row gives (C8, C7, F13, F14, F15, A11, A14, W4, W5): it is where a fleet
+gets its recovery paths. Then the rest of Wave 6 (H6, H5, H7, H9), of Wave 7
+(H13 to H17, H19, H20) and of Wave 8 (U2, U4, U5, U8, U10 to U15, C10), and
+Wave 9. Each requirement that removes calls lowers the fleet trial's ceilings
+in the same commit.
 
 **How work is done here.** One requirement, one commit, with the test that
 fails without it. Delegated build work is briefed with
@@ -178,7 +183,7 @@ loosened without a line in the wave's results.
 | An unrequested PASS can replace what the requested reviewer said | Yes | No: the request row carries the requested reviewer's own verdict | 3 |
 | Largest `my_desk` answer on a seat profile | 23,546 characters | 16,000 | 3 |
 | Agent write bodies that accept unknown fields | 25 of 67 | 0 | 3 |
-| A keyed retry after an unrelated assignment | 409 `idempotency_authorization_changed`; the marker is kept forever | Replays; a marker expires with its receipt | 3 |
+| A keyed retry after an unrelated assignment | 409 `idempotency_authorization_changed`; the marker is kept forever | Replays; a marker expires with its receipt. After Wave 5: both hold (F6); the fenced share of a scripted fleet run fell from 80% to 40%. | 3 |
 | Tool calls and bytes for one outcome with three slices, full variant | 142 calls and 359,252 bytes, as F1's test measures them in process. The review's run against a live server counted the same 142 calls and 382,369 bytes: its ids were longer and its drains re-read each feed from the first cursor. | 90 calls (arithmetic: 142 less 35 acknowledgements, 15 setup calls and 4 ETag reads) and 250,000 bytes (arithmetic: 30% less). Measured after Wave 4: 88 calls and 233,740 bytes. | 4 |
 | Calls that acknowledge one notification each | 39 of 142 | At most 4. Measured after Wave 4: 0. | 4 |
 | `GET /desk` as a seat, median at 10,000 and 50,000 issues | 259 ms and 1,285 ms | 80 ms and 200 ms (arithmetic: less the trail scan and three of four ready passes). Measured after Wave 6: 34 ms and 93 ms. | 6 |
@@ -618,6 +623,103 @@ Found and not fixed:
   text is not undoable until F10.
 - **Screenshots at 1,280 and 390 px were taken and read by the lead**; the
   tools at hand cannot attach an image to a pull request.
+- **Code scanning left five medium notes on PR #476**, "URL redirection from
+  remote source": four on the undo form's return target and one on the
+  release redirect. The lead traced each. The return target is followed only
+  when it fully matches an issue page's path, and the release redirect is a
+  fixed prefix and an integer. They are answered on the pull request and left
+  open for the owner to dismiss.
+
+### Wave 5 results (first lanes)
+
+This is F10 and F6 (PR #477), one commit each. C8, C7, F13, F14, F15, A11,
+A14, W4 and W5 are not built. Each was built by a build agent from a six-part
+brief. F6 was reviewed by an agent that had not built it, corrected, and its
+reviewer's scripts re-run. F10 had no independent review: the lead read it
+and probed it against a throwaway instance instead.
+
+| Measure | Before | After Wave 5's first lanes |
+|---|---|---|
+| The text an edit replaced | Gone | Kept beside the edit's event, read by one call, by a caller who can see that event (F10) |
+| Undoing an edit | Refused: one-way | Restores the old text exactly; refused once a later edit replaced it (F10) |
+| A bearer edit of a title or body with no `If-Match` | Applied | 428 `precondition_required`; `*` or a list is 400; a stale tag is 412 (F10, D20) |
+| A keyed retry after an unrelated assignment | 409 for every stored receipt | Replays (F6) |
+| A fenced marker | Kept forever | Expires with its receipt (F6) |
+| Narrowings that moved no counter | A contributor removed, a decline, `is_agent`, an approval gate, a budget, a close policy | Each fences (F6) |
+| Fenced share of a scripted fleet run | 80% | 40% (F6) |
+| One outcome with three slices | 88 calls and 233,740 bytes | 88 calls and 233,740 bytes: unchanged |
+| Contract agent, two seats | 55 calls and 110,671 bytes | 55 calls and 110,671 bytes: unchanged |
+
+The product gate's receipt is in PR #477.
+
+Found by reviewing and probing the builds, and fixed before each was
+committed:
+
+- **F6.** Six narrowings moved no counter, so a replay returned what its
+  caller could no longer obtain: a contributor removed, a decline, an
+  account's `is_agent` flag, an approval gate added, a budget set, and a
+  project's blocked-close policy. Each fences now. A process still running
+  the old code after the migration replayed a fenced receipt; the original
+  counter keeps moving on every act, so the old code fails closed. The
+  documents claimed "never" without the exceptions; they list them. The
+  property test could not see the workspace half; it runs 3,000 generated
+  histories and fails on fourteen deliberately too-narrow fences.
+- **F10.** Found at integration, each by a test of an earlier wave: its read
+  was not classified as an agent packet (A13); its timestamp used a second
+  copy of the shape helper; its history test compared a packet timestamp with
+  a stored one. The lead added an undo precheck for edits, so the issue
+  page's offer (U9) includes them, and an edit that never had an inverse is
+  no candidate for that offer.
+- **F6 against F10.** Five of F6's tests and its refusal scenario edited a
+  title by bearer token with no tag, which F10 refuses. They change a
+  priority.
+- **Three counts and one tool text, each caught by a test of an earlier
+  wave.** F10's route moved the anonymous-read counts stored with the release
+  (C11) to 112 of 163 GET routes; its tool moved the full surface to 142; and
+  `update_issue`, a seat tool, told a seat to call the conductor's read.
+
+What the lead ran against F10 on a live instance: an edit with no tag, with
+`*`, with a stale tag and with the current one (428, 400, 412, 200); the
+prior text read by a project member (200), by a non-member and with no
+credential (404), through another issue (404) and for a non-edit event (404);
+the old text searched for in the feed, the event stream, search, the
+work-context, notifications and the history (in none); undo by the seat
+(restored), undo of an edit a later edit replaced (409 `undo_no_effect`) and
+undo by a non-member (404). After the issue left its private project, an
+account that could now see the issue still saw none of the edits recorded
+while it was private, and could read none of their text.
+
+Decisions the lead took while building, each reversible by the owner:
+
+- An edit that never had an inverse (recorded before prior texts were kept)
+  does not end the issue page's Undo offer; the next event is asked.
+- F6's tests keep testing the fence by changing a field that needs no tag,
+  not by sending tags.
+
+Found and not fixed:
+
+- **F10.** Editing a secret out of an issue no longer removes it: the
+  replaced text stays readable, for good, by everyone who could see that
+  edit. Nothing redacts or purges a prior text, and the table only grows.
+  Whether an admin needs a way to remove one is the owner's question below.
+  An edit recorded before the migration, and imported history, carry no
+  prior text. An export carries only an issue's current text. The row is
+  append-only by trigger and is not covered by the hash chain.
+- **F10 is a wire change that can refuse a caller that works today**: a
+  bearer `PATCH /issues/<built-in function id>` or `link-mention` that sends a title or body
+  with no `If-Match`. The refusal's `next` names `get_issue`.
+- **F6.** A replay can still be refused where a fresh request would succeed:
+  the fence fails closed. `is_agent` set to false fences too. Revoking a
+  token moves no counter, and a revoked token cannot reach a replay. Spending
+  a budget moves none, and a replay is not metered. A replay does not
+  re-check the target's state. Review requests are not in the property test.
+  A future narrowing that needs a longer history than the generator draws
+  could pass the property; the named HTTP tests are the backstop.
+- **F6's migration rebuilds the receipt table**: about 1.4 s at 200,000
+  receipts and past the five-second busy timeout above about 700,000, so
+  migrate with the service stopped.
+- **`IssueOut.parent_id` gives the id of a parent the caller cannot see.**
+  F6's property test met it; it is older than this specification.
 
 ## Priorities
 
@@ -803,7 +905,7 @@ one change with its own commit, in the order given.
 | 8. The cockpit | U2, U3, U4, U6, U7, U9, U14, U5, U8, U10, U11, U12, U13, U15, C10 | D12, D27 |
 | 9. Debts | G1 to G10, B6b, B11 | D9, D10 |
 
-Waves 3 and 4 are done, and Waves 6, 7 and 8 are begun; their results are above. Wave 3 is the six false
+Waves 3 and 4 are done, and Waves 5, 6, 7 and 8 are begun; their results are above. Wave 3 is the six false
 statements and the three findings that block a fleet following the recipe. Wave 4 is where the per-outcome scorecard row moves.
 Waves 6 to 9 do not depend on each other and can be reordered.
 
@@ -851,14 +953,16 @@ The record is
 | D27 | Should the declared fleet seats move from source to data? | Yes. An existing instance keeps its eight by migration; a new one starts with none. |
 | D28 | Should `blocked` and `capacity` yields hold work back from the account that yielded, and should a direct claim by the settling account count as an answer? | No change to either. The accepted ready-rule record stands until the fleet trial shows a loop. |
 
-Five questions stay with the owner and are not answered here: what the name
+Six questions stay with the owner and are not answered here: what the name
 "Astra" refers to in the lanes; whether the fallback rules in `AGENTS.md`
 match the machine-level handbook; D9's precondition, an operated instance;
 whether an agent may read the root catalog's digest and root keys, which
-`ACTIVE_WORK.md` withholds pending operator evidence; and whether assignment
+`ACTIVE_WORK.md` withholds pending operator evidence; whether assignment
 should refuse an account that cannot see the issue's project (today it
 succeeds and answers with the account's name, which Wave 4's eligible-accounts
-read does not list).
+read does not list); and whether an admin needs a way to remove a kept prior
+text (F10 keeps what an edit replaced, so editing a secret out of an issue no
+longer removes it for those who could see that edit).
 
 ## Verification and delivery
 
