@@ -18,6 +18,7 @@ import time
 from typing import Any, Callable, Iterator, TextIO
 from datetime import datetime, timezone
 
+from athena import background
 from athena.core import (
     activity_chain,
     attachments,
@@ -634,10 +635,12 @@ def _shared_directory(directory: Path) -> str | None:
 
 def _athena_entries(database: Path, attach_dir: Path | None) -> set[str]:
     """The exact names Athena keeps beside its database: the database, its
-    ``-wal``, ``-shm`` and ``-journal`` files, the copy a remedy keeps, and the
-    configured attachment directory when it lives there."""
+    ``-wal``, ``-shm`` and ``-journal`` files, the copy a remedy keeps, the
+    lock of the background loops, and the configured attachment directory when
+    it lives there."""
     names = {database.name + suffix for suffix in ("", "-wal", "-shm", "-journal")}
     names.add(database.name + ".kept")
+    names.add(database.name + background.LOCK_SUFFIX)
     if attach_dir is not None and attach_dir.absolute().parent == database.parent:
         names.add(attach_dir.name)
     return names
@@ -1155,9 +1158,35 @@ def _answer_without_delay(fd: int) -> None:
         listener.close()
 
 
-def _run_server(*, host: str, port: int, fd: int | None) -> None:
-    import uvicorn
+def _serve_bound(application, **options) -> None:
+    """Run ``application`` under uvicorn, starting its background loops only
+    once the listener is bound (H13).
 
+    uvicorn runs an app's startup before it binds. Loops started there also
+    ran in a second ``athena-serve`` that was about to fail on the port, and
+    delivered webhooks the first process delivered too."""
+    import uvicorn
+    from uvicorn.main import STARTUP_FAILURE
+
+    class Server(uvicorn.Server):
+        async def startup(self, sockets=None) -> None:
+            # Returns only with the listener bound: a bind that fails exits
+            # the process from inside, after the app's shutdown has run.
+            await super().startup(sockets=sockets)
+            await application.state.background.start()
+
+    server = Server(uvicorn.Config(application, **options))
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        # Ctrl+C: the server has already stopped cleanly and raises the
+        # signal again for its caller.
+        pass
+    if not server.started:
+        sys.exit(STARTUP_FAILURE)
+
+
+def _run_server(*, host: str, port: int, fd: int | None) -> None:
     from athena import config
     from athena.main import create_app
 
@@ -1165,33 +1194,22 @@ def _run_server(*, host: str, port: int, fd: int | None) -> None:
         network_mode=config.NETWORK_MODE,
         allowed_authorities=config.ALLOWED_AUTHORITIES,
         expected_server=(host, port),
+        loops_after_bind=True,
     )
+    options = {
+        "workers": 1,
+        "reload": False,
+        "lifespan": "on",
+        "proxy_headers": False,
+        "server_header": False,
+        "limit_concurrency": 100,
+        "timeout_graceful_shutdown": 30,
+    }
     if fd is not None:
         _answer_without_delay(fd)
-        uvicorn.run(
-            application,
-            fd=fd,
-            workers=1,
-            reload=False,
-            lifespan="on",
-            proxy_headers=False,
-            server_header=False,
-            limit_concurrency=100,
-            timeout_graceful_shutdown=30,
-        )
+        _serve_bound(application, fd=fd, **options)
         return
-    uvicorn.run(
-        application,
-        host=host,
-        port=port,
-        workers=1,
-        reload=False,
-        lifespan="on",
-        proxy_headers=False,
-        server_header=False,
-        limit_concurrency=100,
-        timeout_graceful_shutdown=30,
-    )
+    _serve_bound(application, host=host, port=port, **options)
 
 
 def serve_main(argv: list[str] | None = None) -> int:

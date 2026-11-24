@@ -262,12 +262,27 @@ activity events, claims bounded UTC schedule slots, and fires matching rules'
 actions). Both default on. Scheduled-rule configuration and recovery semantics are
 documented in [AUTOMATION_SCHEDULES.md](AUTOMATION_SCHEDULES.md).
 
-Each loop must run in exactly one process per deployment. Athena's supported shape
-is one process and one worker. If an operator deliberately starts multiple
-independent processes, exactly one may retain the default loop settings and every
-other process must start with `ATHENA_WEBHOOK_DELIVERY=0` and
-`ATHENA_AUTOMATION=0`; otherwise webhooks double-deliver and rules fire twice.
-That arrangement remains an operator-managed experiment, not a supported HA mode.
+Each loop runs in exactly one process per deployment, and Athena holds itself
+to that. `athena-serve` starts the loops only after its listener is bound, so a
+second start that fails on a port already in use runs nothing. The process that
+runs them is the one holding an exclusive lock on `<database>.loops.lock`, an
+empty file it creates beside the database (mode 600). A second process on the
+same database, on another port, serves requests without the loops and logs one
+line saying so:
+
+```text
+background loops: not started, another process holds /var/lib/athena/athena.db.loops.lock; this process serves requests only
+```
+
+`GET /readyz` reports which a process is, as `background_loops`: `running` (it
+holds the lock and runs each enabled loop), `standby` (it does not run them) or
+`disabled` (`ATHENA_WEBHOOK_DELIVERY=0` and `ATHENA_AUTOMATION=0` turn both off,
+and no lock is taken). The lock is taken once, at start. A standby process does
+not take over when the holder exits: restart it to make it the one that runs
+the loops. The lock is advisory and local, so it does not hold across hosts or
+on a network filesystem that does not support `flock`; Athena's supported shape
+remains one process and one worker on one host, and a second process is an
+operator-managed arrangement, not a supported HA mode.
 
 For maintenance, first remove or drain inbound traffic, then ask the process
 manager for a normal graceful stop and wait for the Athena process to exit. The

@@ -303,7 +303,11 @@ def test_readyz_checks_database(tmp_path):
     with TestClient(app) as client:
         response = client.get("/readyz")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "database": "ok"}
+    assert response.json() == {
+        "status": "ok",
+        "database": "ok",
+        "background_loops": "disabled",
+    }
 
 
 def test_readyz_fails_when_schema_is_missing(tmp_path):
