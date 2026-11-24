@@ -255,6 +255,25 @@ why = """\
     the not-offered lane reads back the same native settlement the ready \
     rule chose; foreign history must not supply its reason"""
 
+# --- related_learnings.py ----------------------------------------------------
+
+[[guarded]]
+module = "related_learnings.py"
+function = "related_learnings"
+pattern = 'a\.imported_at IS NULL'
+why = """\
+    the work-context packet lists learnings recorded in this instance; an \
+    imported page_learning_recorded event is another instance's history and \
+    must not be listed as a learning here or attributed to a local account"""
+
+[[guarded]]
+module = "related_learnings.py"
+function = "_paired_texts"
+pattern = 'imported_at IS NULL'
+why = """\
+    a learning's text is paired with its native event by position; an \
+    imported event has no block in the runbook and would unpair every one"""
+
 # --- review_commands.py ------------------------------------------------------
 
 [[guarded]]

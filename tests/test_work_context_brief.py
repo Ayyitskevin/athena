@@ -36,6 +36,7 @@ FULL_KEYS = frozenset(
         "protocol",
         "how_to_claim",
         "runbook",
+        "learnings",
         "complete_does_not_close_issue",
         "warnings",
         "work_order",

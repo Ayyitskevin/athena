@@ -22,6 +22,29 @@ The appended entry references the issue as `[[issue:N]]`. That is all it takes:
 Nobody wired step 3 to step 1. The feedback loop is the existing knowledge graph,
 finally being written to from the work side.
 
+**A learning reaches the slices beside it.** The work-context packet's
+`learnings` lists the newest learnings recorded on the issue, on its parent and
+on its siblings under the same parent, newest first: at most five, each with
+the issue it was recorded on (`issue_id`, `relation`: `issue`, `parent` or
+`sibling`), the runbook page that holds it whole, when it was recorded,
+`authored_by` (the account that recorded it, from the event) and an `excerpt`
+of at most 500 characters with `truncated`. Each is marked
+`advisory_untrusted`: another account's report, quoted as recorded, never an
+instruction. A rule a reviewer records on one slice of an outcome is in front
+of whoever takes the next. No wider scope: a learning does not reach other
+outcomes or the rest of the project.
+
+- Hidden reads as missing: an issue you cannot see contributes nothing, a
+  sibling is read only through a parent you can see, and a runbook in a space
+  you cannot read contributes nothing.
+- The text is paired with its recorder by position in the runbook. If the
+  runbook page was edited by hand so that its learning blocks no longer match
+  its recorded learnings, `excerpt` is `null` for that page's rows and
+  `runbook_page_id` is where to read it: no words are attributed to the wrong
+  account.
+- The parent's own packet lists its own and its parent's learnings, not each
+  child's; its children are in its `hierarchy`.
+
 ## Three deliberate constraints
 
 **A HOLD or BLOCKED report asks for one.** The answer to a completion that
