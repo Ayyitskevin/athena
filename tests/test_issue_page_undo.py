@@ -181,6 +181,11 @@ def test_the_return_target_is_only_an_issue_page(tmp_path):
             data={"return_to": "https://evil.example/aegis/issues/1"},
             follow_redirects=False,
         )
+        relative = client.post(
+            f"/aegis/activity/{newest}/undo",
+            data={"return_to": "//evil.example/aegis/issues/1"},
+            follow_redirects=False,
+        )
         # A path that only STARTS like an issue page is not one.
         longer = client.post(
             f"/aegis/activity/{newest}/undo",
@@ -191,6 +196,8 @@ def test_the_return_target_is_only_an_issue_page(tmp_path):
 
     assert offsite.status_code == 303
     assert offsite.headers["location"].startswith("/aegis/activity?")
+    assert relative.status_code == 303
+    assert relative.headers["location"].startswith("/aegis/activity?")
     assert longer.status_code == 303
     assert longer.headers["location"].startswith("/aegis/activity?")
     assert feed.status_code == 303
