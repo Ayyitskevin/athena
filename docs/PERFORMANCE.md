@@ -94,3 +94,16 @@ makes a hot statement stop reading history adds its row here, with the test.
 | Statement | Route | Test |
 |---|---|---|
 | The lapsed leases the event feed's observers record | `GET /events` | `tests/test_lease_lapsed.py` |
+| The newest event the caller can see (`desk.latest_visible_event_id`), one visibility arm at a time | `GET /desk`, `POST /desk/cursor` | `tests/test_desk_trail_reads.py` |
+| The oldest events after the desk cursor (`operator_since._events_after`), one arm at a time | `GET /desk/since` | `tests/test_desk_trail_reads.py` |
+
+## Where the bounds do not hold
+
+Each is a condition, with what it costs; none changes an answer.
+
+- **A caller whose newest events of a kind are all hidden** (`GET /desk`,
+  `GET /desk/since`). Each visibility arm walks newest first and stops at the
+  caller's first visible event of its kind, so it walks past every hidden one
+  first: a seat whose projects went private, or quiet, while the rest of the
+  workspace kept working pays what the OR-joined read paid. Not bounded; no
+  worse than before.
