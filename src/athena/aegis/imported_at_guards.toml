@@ -152,6 +152,17 @@ why = """\
     instance's record, and must not suppress the native event or its \
     notifications"""
 
+# --- approval_rows.py --------------------------------------------------------
+
+[[guarded]]
+module = "approval_rows.py"
+function = "_ask_event_id"
+pattern = 'AND imported_at IS NULL'
+why = """\
+    the approval queue ties a pending ask to the native approval_requested \
+    event Athena recorded for it; an imported row with the same words is \
+    foreign history and must not move the instant the ask was made (U9)"""
+
 # --- notification_state.py ---------------------------------------------------
 
 [[guarded]]

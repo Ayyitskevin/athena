@@ -10,6 +10,7 @@ integer query parse lives in web.browsing.
 
 from __future__ import annotations
 
+import re
 import secrets
 import sqlite3
 from urllib.parse import quote, urlencode
@@ -17,7 +18,16 @@ from urllib.parse import quote, urlencode
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from athena.core import access, activity, identity, run_control_commands, undo
+from athena.core import (
+    access,
+    activity,
+    approval_commands,
+    approvals,
+    identity,
+    run_context,
+    run_control_commands,
+    undo,
+)
 from athena.core.deps import get_conn
 from athena.mentor import run_learning_commands, run_learnings, spaces
 from athena.web.csrf import verify_csrf
@@ -29,6 +39,8 @@ router = APIRouter()
 
 _FEED_PAGE = 50
 _EXPORT_LIMIT = 1000
+#: The one return target the undo form may name besides the feed: an issue page.
+_ISSUE_PAGE = re.compile(r"/aegis/issues/[1-9][0-9]{0,17}")
 
 
 def _actor_type_or_none(raw: str | None) -> str | None:
@@ -149,6 +161,7 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
 def undo_event_web(
     request: Request,
     event_id: int,
+    return_to: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Undo one event from the feed — the browser twin of POST /activity/{id}/undo.
@@ -156,23 +169,52 @@ def undo_event_web(
     Calls the SAME engine the API does, as the signed-in user, so the browser
     cannot reverse anything the API would refuse. A refusal comes back as a notice
     on the feed rather than an error page: "already undone" and "nothing left to
-    undo" are ordinary answers an operator should simply read."""
+    undo" are ordinary answers an operator should simply read.
+
+    The issue page posts the same form (U9) with ``return_to`` naming itself, so
+    the answer lands where the undo was made. Only an issue page path is
+    followed; anything else returns to the feed, so this is never an open
+    redirect."""
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
             '<div class="blocked">Please <a href="/login">sign in</a> to undo.</div>',
             status_code=401,
         )
+    back = return_to if _ISSUE_PAGE.fullmatch(return_to) else "/aegis/activity"
     try:
         reversal = undo.undo(conn, user, event_id=event_id)
     except undo.UndoRefused as exc:
         return RedirectResponse(
-            f"/aegis/activity?{urlencode({'error': str(exc)})}", status_code=303
+            f"{back}?{urlencode({'error': str(exc)})}", status_code=303
+        )
+    except approvals.ApprovalRequired as exc:
+        # The inverse is a gated act (undoing a reopen closes the issue). As the
+        # REST boundary does, record the ask on the freed connection — the
+        # refused undo's transaction has already rolled back — and say so in the
+        # page instead of answering with the API's JSON.
+        asked = approval_commands.open_request(
+            conn,
+            actor_id=exc.actor_id,
+            action_kind=exc.action_kind,
+            target_kind=exc.target_kind,
+            target_id=exc.target_id,
+            run_id=run_context.get_run_id(),
+        )
+        notice = (
+            f"Nothing was undone yet: undoing event #{event_id} is "
+            f"{exc.action_kind}, which needs approval. Requested approval "
+            f"#{asked.id}; undo again once an admin approves it."
+        )
+        return RedirectResponse(
+            f"{back}?{urlencode({'notice': notice})}", status_code=303
+        )
+    except approvals.ApprovalRejected as exc:
+        return RedirectResponse(
+            f"{back}?{urlencode({'error': str(exc)})}", status_code=303
         )
     notice = f"Undid event #{event_id} — recorded as #{reversal['id']}."
-    return RedirectResponse(
-        f"/aegis/activity?{urlencode({'notice': notice})}", status_code=303
-    )
+    return RedirectResponse(f"{back}?{urlencode({'notice': notice})}", status_code=303)
 
 
 @router.get("/aegis/activity.csv")

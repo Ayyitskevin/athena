@@ -366,7 +366,11 @@ def inbox(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             '<div class="blocked">Please <a href="/login">sign in</a> to see your inbox.</div>',
             status_code=401,
         )
-    items = notifications.list_notifications(conn, user["id"], limit=100, actor=user)
+    # Keep each row's import stamp: the report partial (U9) renders a native
+    # completion's report and must never render an imported one as native.
+    items = notifications.list_notifications(
+        conn, user["id"], limit=100, actor=user, keep_import_stamp=True
+    )
     items = notification_state.annotate_inbox(conn, user["id"], items)
     for it in items:
         it["href"] = (

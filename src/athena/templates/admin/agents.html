@@ -36,6 +36,10 @@
         {% if unanswered_kills_total > unanswered_kills|length %}
         <p>Showing {{ unanswered_kills|length }} of {{ unanswered_kills_total }} workers with unconfirmed stop requests.</p>
         {% endif %}
+        <div class="agent-checkin-table-region"
+             role="region"
+             aria-label="Unanswered run controls table"
+             tabindex="0">
         <table class="issues-table">
             <thead>
                 <tr><th>Worker</th><th>Agent</th><th>Asked</th><th>State</th><th></th></tr>
@@ -71,6 +75,7 @@
             {% endfor %}
             </tbody>
         </table>
+        </div>
     </div>
 </section>
 {% endif %}
@@ -89,6 +94,10 @@
             target — it does not perform the action, and the retry re-checks
             everything. Rejecting tells the agent to stop rather than wait.
         </p>
+        <div class="agent-checkin-table-region"
+             role="region"
+             aria-label="Pending approvals table"
+             tabindex="0">
         <table class="issues-table">
             <thead>
                 <tr><th>Requested</th><th>Action</th><th>Target</th><th>Run</th><th>Decision</th></tr>
@@ -102,7 +111,26 @@
                     </td>
                     <td><code>{{ approval.action_kind }}</code></td>
                     <td>
-                        {% if approval.target_kind == "issue" %}
+                        {% if approval.issue %}
+                        {# U9: what is being approved — the issue's key and title and, for a
+                           close, the completion the ask rests on: who reported it, when, and
+                           its verdict (asserted, not verified). A completion recorded after
+                           the ask is shown beside it, never in its place. #}
+                        <a href="/aegis/issues/{{ approval.issue.id }}" class="xref mono">{{ approval.issue.key or "#" ~ approval.issue.id }}</a>
+                        <div class="approval-target-title">{{ approval.issue.title }}</div>
+                        {% if approval.action_kind == "issue.close" %}
+                        {% set c = approval.completion %}
+                        <div class="muted approval-verdict">
+                            {% if c is none %}no completion recorded before this request
+                            {% else %}{% if c.verdict %}reported verdict <span class="chip" data-tone="neutral">{{ c.verdict }}</span>{% else %}completion with no verdict{% endif %}
+                            by {{ c.by }}{% if not c.by_requester %} (not the requester){% endif %} · {{ c.at }} UTC{% endif %}
+                        </div>
+                        {% if approval.newer %}
+                        {% set n = approval.newer %}
+                        <div class="muted approval-verdict">newer, after this request: {% if n.verdict %}<span class="chip" data-tone="neutral">{{ n.verdict }}</span>{% else %}no verdict{% endif %} by {{ n.by }} · {{ n.at }} UTC</div>
+                        {% endif %}
+                        {% endif %}
+                        {% elif approval.target_kind == "issue" %}
                         <a href="/aegis/issues/{{ approval.target_id }}">issue #{{ approval.target_id }}</a>
                         {% else %}
                         {{ approval.target_kind }} #{{ approval.target_id }}
@@ -125,6 +153,7 @@
             {% endfor %}
             </tbody>
         </table>
+        </div>
     </div>
 </section>
 {% endif %}
@@ -178,6 +207,10 @@
             "reversed" counts events an undo compensated. Athena records asks and
             answers; only you can judge why a number is what it is.
         </p>
+        <div class="agent-checkin-table-region"
+             role="region"
+             aria-label="Answerability table"
+             tabindex="0">
         <table class="issues-table">
             <thead>
                 <tr>
@@ -215,6 +248,7 @@
             {% endfor %}
             </tbody>
         </table>
+        </div>
     </div>
 </section>
 {% endif %}

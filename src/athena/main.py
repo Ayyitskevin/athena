@@ -844,6 +844,10 @@ def create_app(
     # passes no hosts renders inert text, so a surface that has not opted in
     # degrades to today's behavior rather than breaking.
     templates.env.filters["forge_detail"] = render.render_forge_detail
+    # A completion report is agent-written data (U9): these split a claim_completed
+    # row into its header and the parsed report the shared partial renders.
+    templates.env.filters["completion_parts"] = render.completion_parts
+    templates.env.filters["completion_header"] = render.completion_header
     # Chip tone mapping (design system: docs/DESIGN_SYSTEM.md). Presentation-only,
     # no database access — see chips.py for which domains are exact vs. best-effort.
     templates.env.filters["status_tone"] = chips.status_tone

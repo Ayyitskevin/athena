@@ -17,8 +17,8 @@ from __future__ import annotations
 import sqlite3
 
 from athena.aegis import rest_support
-from athena.aegis import issue_activity, issue_commands, issue_etags, issues
-from athena.core import labels, undo
+from athena.aegis import issue_activity, issue_commands, issue_etags, issues, statuses
+from athena.core import approvals, labels, undo
 
 
 def _refusal(exc: issue_commands.IssueCommandError) -> undo.UndoRefused:
@@ -53,6 +53,99 @@ def _label_id(conn: sqlite3.Connection, event: dict) -> int:
             status_code=409,
         )
     return int(label["id"])
+
+
+# --- Prechecks (U9): what each compensator would refuse, asked without writing.
+#
+# ``undo.offer`` runs these so the issue page offers undo only where the engine
+# would accept it. Each is the compensating command's own write gate
+# (``get_writable_issue``: visible, writer role and scope, creator/assignee/
+# contributor/admin) plus the still-in-force condition the compensator or the
+# command's idempotency enforces. The status and assignee compensators call the
+# same in-force helpers, so the offer and the act cannot drift. Not covered: a
+# durable budget or an approval gate on the inverse write (see undo.offer).
+
+
+def _writable(conn: sqlite3.Connection, actor: dict | None, event: dict) -> dict:
+    try:
+        return issue_commands.get_writable_issue(
+            conn, actor=actor, issue_id=event["target_id"]
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _refusal(exc) from exc
+
+
+def _no_longer_in_force() -> undo.UndoRefused:
+    return undo.UndoRefused(
+        undo.NO_EFFECT_DETAIL, code=undo.NO_EFFECT_CODE, status_code=409
+    )
+
+
+def _archived_in_force(
+    conn: sqlite3.Connection, actor: dict | None, event: dict
+) -> None:
+    if _writable(conn, actor, event)["archived_at"] is None:
+        raise _no_longer_in_force()
+
+
+def _unarchived_in_force(
+    conn: sqlite3.Connection, actor: dict | None, event: dict
+) -> None:
+    if _writable(conn, actor, event)["archived_at"] is not None:
+        raise _no_longer_in_force()
+
+
+def _attached(conn: sqlite3.Connection, issue_id: int, label_id: int) -> bool:
+    return any(
+        int(label["id"]) == label_id
+        for label in labels.labels_for_issue(conn, issue_id)
+    )
+
+
+def _labeled_in_force(
+    conn: sqlite3.Connection, actor: dict | None, event: dict
+) -> None:
+    issue = _writable(conn, actor, event)
+    if not _attached(conn, issue["id"], _label_id(conn, event)):
+        raise _no_longer_in_force()
+
+
+def _unlabeled_in_force(
+    conn: sqlite3.Connection, actor: dict | None, event: dict
+) -> None:
+    issue = _writable(conn, actor, event)
+    if _attached(conn, issue["id"], _label_id(conn, event)):
+        raise _no_longer_in_force()
+
+
+def _status_in_force(conn: sqlite3.Connection, actor: dict | None, event: dict) -> None:
+    fact = _status_fact_in_force(conn, event)
+    issue = _writable(conn, actor, event)
+    # Undoing a reopen closes the issue, and a close is the approval-gated act
+    # (``update_issue`` calls ``approvals.require`` when closing). A gated actor
+    # without an approved request would only raise an ask, so it is not offered.
+    closing = not statuses.is_done(
+        conn, issue["project_id"], issue["status"]
+    ) and statuses.is_done(conn, issue["project_id"], fact["before_status"])
+    if closing and not approvals.would_pass(
+        conn,
+        actor,
+        action_kind=approvals.ACTION_ISSUE_CLOSE,
+        target_kind="issue",
+        target_id=issue["id"],
+    ):
+        raise undo.UndoRefused(
+            "undoing this closes the issue, which needs an approved request first",
+            code=undo.COMMAND_REFUSED_CODE,
+            status_code=202,
+        )
+
+
+def _assignee_in_force(
+    conn: sqlite3.Connection, actor: dict | None, event: dict
+) -> None:
+    _assignee_fact_in_force(conn, event)
+    _writable(conn, actor, event)
 
 
 def _set_archived(
@@ -104,6 +197,21 @@ def _restore_status(conn: sqlite3.Connection, actor: dict | None, event: dict) -
     the undoing actor is what makes those apply to undo too. Re-opening a closed
     issue is an ordinary status write and is metered and gated like one.
     """
+    fact = _status_fact_in_force(conn, event)
+    try:
+        issue_commands.update_issue(
+            conn,
+            actor=actor,
+            issue_id=event["target_id"],
+            status=fact["before_status"],
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _refusal(exc) from exc
+
+
+def _status_fact_in_force(conn: sqlite3.Connection, event: dict) -> dict:
+    """The structured prior status of a ``changed_status`` event whose effect is
+    still in force, or the refusal :func:`_restore_status` documents."""
     fact = issue_activity.lifecycle_fact_for_event(conn, event["id"])
     if fact is None or fact["event_kind"] != "status_transition":
         raise undo.UndoRefused(
@@ -135,15 +243,7 @@ def _restore_status(conn: sqlite3.Connection, actor: dict | None, event: dict) -
             code=undo.NO_EFFECT_CODE,
             status_code=409,
         )
-    try:
-        issue_commands.update_issue(
-            conn,
-            actor=actor,
-            issue_id=event["target_id"],
-            status=fact["before_status"],
-        )
-    except issue_commands.IssueCommandError as exc:
-        raise _refusal(exc) from exc
+    return fact
 
 
 def _restore_assignee(
@@ -168,6 +268,22 @@ def _restore_assignee(
     as the undoing actor. Passing ``assignee_id=None`` is an explicit unassign
     (the command distinguishes None from "not provided").
     """
+    fact = _assignee_fact_in_force(conn, event)
+    try:
+        issue_commands.update_issue(
+            conn,
+            actor=actor,
+            issue_id=event["target_id"],
+            assignee_id=fact["before_assignee_id"],
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _refusal(exc) from exc
+
+
+def _assignee_fact_in_force(conn: sqlite3.Connection, event: dict) -> dict:
+    """The structured prior assignee of an ``assigned``/``unassigned`` event
+    whose effect is still in force, or the refusal :func:`_restore_assignee`
+    documents."""
     fact = issue_activity.assignee_fact_for_event(conn, event["id"])
     if fact is None:
         raise undo.UndoRefused(
@@ -189,15 +305,7 @@ def _restore_assignee(
             code=undo.NO_EFFECT_CODE,
             status_code=409,
         )
-    try:
-        issue_commands.update_issue(
-            conn,
-            actor=actor,
-            issue_id=event["target_id"],
-            assignee_id=fact["before_assignee_id"],
-        )
-    except issue_commands.IssueCommandError as exc:
-        raise _refusal(exc) from exc
+    return fact
 
 
 def _detach_label(conn: sqlite3.Connection, actor: dict | None, event: dict) -> None:
@@ -232,19 +340,50 @@ def _issue_etag(conn: sqlite3.Connection, issue_id: int) -> str | None:
 def register() -> None:
     """Wire Aegis's inverses into the undo engine. Idempotent."""
     undo.register_validator("issue", _issue_etag)
-    undo.register("archived", action_class=undo.TWO_WAY, compensator=_unarchive_issue)
-    undo.register("unarchived", action_class=undo.TWO_WAY, compensator=_archive_issue)
-    undo.register("labeled", action_class=undo.TWO_WAY, compensator=_detach_label)
-    undo.register("unlabeled", action_class=undo.TWO_WAY, compensator=_attach_label)
     undo.register(
-        "changed_status", action_class=undo.TWO_WAY, compensator=_restore_status
+        "archived",
+        action_class=undo.TWO_WAY,
+        compensator=_unarchive_issue,
+        precheck=_archived_in_force,
+    )
+    undo.register(
+        "unarchived",
+        action_class=undo.TWO_WAY,
+        compensator=_archive_issue,
+        precheck=_unarchived_in_force,
+    )
+    undo.register(
+        "labeled",
+        action_class=undo.TWO_WAY,
+        compensator=_detach_label,
+        precheck=_labeled_in_force,
+    )
+    undo.register(
+        "unlabeled",
+        action_class=undo.TWO_WAY,
+        compensator=_attach_label,
+        precheck=_unlabeled_in_force,
+    )
+    undo.register(
+        "changed_status",
+        action_class=undo.TWO_WAY,
+        compensator=_restore_status,
+        precheck=_status_in_force,
     )
     # One compensator for both directions: the fact's before/after carries the
     # direction, so undoing an assign restores the previous holder (or clears it)
     # and undoing an unassign re-assigns them.
-    undo.register("assigned", action_class=undo.TWO_WAY, compensator=_restore_assignee)
     undo.register(
-        "unassigned", action_class=undo.TWO_WAY, compensator=_restore_assignee
+        "assigned",
+        action_class=undo.TWO_WAY,
+        compensator=_restore_assignee,
+        precheck=_assignee_in_force,
+    )
+    undo.register(
+        "unassigned",
+        action_class=undo.TWO_WAY,
+        compensator=_restore_assignee,
+        precheck=_assignee_in_force,
     )
 
     # Classified, deliberately not reversible. Naming them is the point: a surface

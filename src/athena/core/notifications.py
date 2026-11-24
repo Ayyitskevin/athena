@@ -281,12 +281,15 @@ def list_notifications(
     limit: int = 50,
     actor: dict | None | object = _UNGATED,
     before_id: int | None = None,
+    keep_import_stamp: bool = False,
 ) -> list[dict]:
     """A user's inbox, newest first. unread_only narrows to the unread ones. `actor`
     (the inbox owner viewing it) gates out notifications whose target they can no
     longer see; _UNGATED leaves it ungated for internal callers/tests. `before_id`
     starts below that notification id, so a caller can read the inbox a page at a
-    time in the same order.
+    time in the same order. ``keep_import_stamp`` keeps each row's
+    ``event_imported_at`` for a renderer that must tell imported history from
+    native (the browser inbox's report partial, U9); the API rows omit it.
 
     The read walks the user's rows newest first through an index
     (idx_notifications_unread for the unread ones, idx_notifications_inbox for all)
@@ -315,8 +318,9 @@ def list_notifications(
     # The detail is the event actor's words (a comment excerpt, a new title):
     # each row names who wrote it, or null for an imported event.
     authorship.stamp(conn, rows, id_key="actor_id", imported_key="event_imported_at")
-    for row in rows:
-        del row["event_imported_at"]
+    if not keep_import_stamp:
+        for row in rows:
+            del row["event_imported_at"]
     return rows
 
 

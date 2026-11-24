@@ -189,6 +189,31 @@ def _latest_rejection(
     return _row(row) if row else None
 
 
+def would_pass(
+    conn: sqlite3.Connection,
+    actor: dict | None,
+    *,
+    action_kind: str,
+    target_kind: str,
+    target_id: int,
+) -> bool:
+    """Whether :func:`require` would let this exact intent through right now,
+    asked without spending an approval or recording an ask: the actor is
+    ungated, or holds an approved, unspent request for it. A surface uses this
+    to avoid offering an act that would only raise an approval request (U9);
+    the command still calls :func:`require` under its own transaction."""
+    if actor is None or not is_gated(conn, actor["id"], action_kind):
+        return True
+    live = live_request(
+        conn,
+        user_id=actor["id"],
+        action_kind=action_kind,
+        target_kind=target_kind,
+        target_id=target_id,
+    )
+    return live is not None and live.state == "approved"
+
+
 def require(
     conn: sqlite3.Connection,
     actor: dict | None,
