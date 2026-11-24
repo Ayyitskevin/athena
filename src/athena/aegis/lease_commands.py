@@ -46,6 +46,7 @@ from athena.aegis.issue_commands import (
 from athena.core import (
     access,
     activity,
+    budgets,
     coordination_roots,
     db,
     identity,
@@ -580,6 +581,12 @@ def claim_issue(
         _refuse_overlapping_paths(
             conn, actor=actor, issue_id=issue_id, paths=declared_paths, root=root
         )
+        if not renewed:
+            # Taking work is a coordination write (D6). A renewal is not
+            # metered: a holder must always be able to keep, yield or complete
+            # what it holds. Charged last, after every refusal that would have
+            # stopped the claim anyway.
+            budgets.charge(conn, actor, counter=budgets.COORDINATION)
         try:
             lease = leases.upsert_lease(
                 conn,

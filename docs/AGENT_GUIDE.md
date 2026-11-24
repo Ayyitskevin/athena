@@ -17,6 +17,7 @@ it where one exists. These codes carry their facts as fields beside the prose:
 to the lease's holder (`generation`), `fence_overlap` (`fence`), `rate_limited`
 (`rate_limit`), `payload_too_large` (`limit_bytes`), `capacity_reached` (`limit`),
 `agent_budget_exhausted` (`budget`, `held_leases`, `retry_after_seconds`),
+`agent_coordination_budget_exhausted` (`budget`, `retry_after_seconds`),
 `cursor_ahead` (`latest_visible_event_id`),
 `approval_required` (`approval`, `events_after`) and
 `idempotency_authorization_changed` (`issue_id`, when the keyed write named an

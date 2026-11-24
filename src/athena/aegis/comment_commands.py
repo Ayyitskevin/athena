@@ -21,7 +21,7 @@ from __future__ import annotations
 import sqlite3
 
 from athena.aegis import comments, issue_activity, issue_commands, issues
-from athena.core import access, db, identity, search, users
+from athena.core import access, budgets, db, identity, search, users
 
 
 class CommentCommandError(Exception):
@@ -89,6 +89,9 @@ def create_comment(
     — that is request shape, not a trust boundary."""
     with db.transaction(conn, immediate=True):
         _visible_issue_or_refuse(conn, actor, issue_id)
+        # A comment is a coordination write (D6): counted apart from the writes
+        # that change the work, and refused once that counter is spent.
+        budgets.charge(conn, actor, counter=budgets.COORDINATION)
         actor_id = actor["id"]
         comment = comments.add_comment(
             conn, issue_id=issue_id, author_id=actor_id, body=body, commit=False

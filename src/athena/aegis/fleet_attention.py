@@ -180,8 +180,8 @@ def needs_you(
     budget_exhaustions = int(
         conn.execute(
             "SELECT COUNT(*) AS n FROM activity "
-            "WHERE verb = ? AND created_at >= ? AND imported_at IS NULL",
-            (budgets.VERB_BUDGET_EXHAUSTED, since),
+            "WHERE verb IN (?, ?) AND created_at >= ? AND imported_at IS NULL",
+            (*budgets.EXHAUSTION_VERBS, since),
         ).fetchone()["n"]
     )
 
@@ -800,11 +800,11 @@ def _collect_budget_exhaustions(
         return [], 0, 0
     since = _since_text(window_hours=window_hours, now=now)
     rows = conn.execute(
-        "SELECT id, actor_id, target_kind, target_id, created_at, detail "
+        "SELECT id, actor_id, verb, target_kind, target_id, created_at, detail "
         "FROM activity "
-        "WHERE verb = ? AND created_at >= ? AND imported_at IS NULL "
+        "WHERE verb IN (?, ?) AND created_at >= ? AND imported_at IS NULL "
         "ORDER BY id DESC LIMIT 200",
-        (budgets.VERB_BUDGET_EXHAUSTED, since),
+        (*budgets.EXHAUSTION_VERBS, since),
     ).fetchall()
     items: list[AttentionRankItem] = []
     examined = len(rows)
@@ -812,7 +812,7 @@ def _collect_budget_exhaustions(
         source_query = urlencode(
             {
                 "actor": row["actor_id"],
-                "verb": budgets.VERB_BUDGET_EXHAUSTED,
+                "verb": row["verb"],
                 "kind": row["target_kind"],
                 "target": row["target_id"],
             }

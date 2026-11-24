@@ -24,7 +24,7 @@ On the dashboard, admin-only, above everything else:
 | Run controls awaiting an agent | Live control requests — unsettled, unexpired | standing |
 | Failing automation rules | Rules with a recorded failure | standing |
 | Failing webhooks | Endpoints with a delivery failure | standing |
-| Budget ceilings hit | `agent_budget_exhausted` events: one per account and budget window, whose row says how much was spent, how many leases the account holds and the first request refused | last 24h |
+| Budget ceilings hit | `agent_budget_exhausted` and `agent_coordination_budget_exhausted` events: one of each per account and budget window. The first is the action ceiling, whose row says how much was spent, how many leases the account holds and the first request refused | last 24h |
 | Boundary refusals | Failed logins, revoked tokens, scope denials, paused refusals | last 24h |
 
 **The card computes nothing.** Every number comes from the surface that owns it,

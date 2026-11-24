@@ -20,6 +20,15 @@ deploy behaves exactly as before until a human admin sets a ceiling. That also
 means in-process actors (the automation engine's system user) stay unbudgeted
 unless an operator deliberately budgets them.
 
+**Two counters, one window (D6).** The action counter meters the writes that
+change the work. The coordination counter meters the writes about the work: a
+comment, a claim, a delegation. They are counted apart so that a seat out of
+action budget can still say so and hand the work back, and a seat that talks too
+much keeps the writes that do its work. The coordination ceiling is optional on
+a budget row: unset, coordination is not limited. Lease renewals, yields,
+completions and releases are never metered: the way out of a claim must stay
+open.
+
 **Fixed windows.** `window_started_at` anchors the period; the first charge at or
 after its end resets the counter and re-anchors. A fixed window permits a burst
 across the boundary (up to 2x the limit within one window-length). That is the
@@ -44,10 +53,19 @@ WINDOWS: dict[str, timedelta] = {
 VERB_BUDGET_SET = "agent_budget_set"
 VERB_BUDGET_CLEARED = "agent_budget_cleared"
 VERB_BUDGET_EXHAUSTED = "agent_budget_exhausted"
+VERB_COORDINATION_EXHAUSTED = "agent_coordination_budget_exhausted"
+#: Both exhaustions, for the readers that count "a ceiling was hit".
+EXHAUSTION_VERBS = (VERB_BUDGET_EXHAUSTED, VERB_COORDINATION_EXHAUSTED)
 
 # The stable machine-readable code every transport echoes for a refusal, so an
 # agent can branch on it instead of parsing prose.
 BUDGET_EXHAUSTED_CODE = "agent_budget_exhausted"
+COORDINATION_EXHAUSTED_CODE = "agent_coordination_budget_exhausted"
+
+#: The two counters. ``ACTION`` is the default everywhere, so a caller written
+#: before D6 meters what it always did.
+ACTION = "action"
+COORDINATION = "coordination"
 
 _TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -62,10 +80,19 @@ class Budget:
     action_used: int
     window_started_at: str
     set_by: int | None = None
+    #: None: coordination writes are not limited on this budget.
+    coordination_limit: int | None = None
+    coordination_used: int = 0
 
     @property
     def remaining(self) -> int:
         return max(0, self.action_limit - self.action_used)
+
+    @property
+    def coordination_remaining(self) -> int | None:
+        if self.coordination_limit is None:
+            return None
+        return max(0, self.coordination_limit - self.coordination_used)
 
     def public(self) -> dict:
         """The shape every surface returns — no internal columns."""
@@ -76,6 +103,9 @@ class Budget:
             "action_used": self.action_used,
             "remaining": self.remaining,
             "window_started_at": self.window_started_at,
+            "coordination_limit": self.coordination_limit,
+            "coordination_used": self.coordination_used,
+            "coordination_remaining": self.coordination_remaining,
         }
 
 
@@ -88,13 +118,21 @@ class BudgetExhausted(Exception):
     the mutation are never half-applied.
     """
 
-    def __init__(self, budget: Budget, *, retry_after_seconds: int) -> None:
+    def __init__(
+        self, budget: Budget, *, retry_after_seconds: int, counter: str = ACTION
+    ) -> None:
         super().__init__(
-            f"agent budget exhausted: {budget.action_used}/{budget.action_limit} "
+            f"agent coordination budget exhausted: {budget.coordination_used}/"
+            f"{budget.coordination_limit} comments, claims and delegations used "
+            f"this {budget.window}"
+            if counter == COORDINATION
+            else f"agent budget exhausted: {budget.action_used}/{budget.action_limit} "
             f"metered actions used this {budget.window}"
         )
         self.budget = budget
         self.retry_after_seconds = retry_after_seconds
+        #: Which ceiling refused: ``ACTION`` or ``COORDINATION``.
+        self.counter = counter
 
 
 def stamp_window(moment) -> str:
@@ -115,6 +153,8 @@ def _row_to_budget(row: sqlite3.Row) -> Budget:
         action_used=row["action_used"],
         window_started_at=row["window_started_at"],
         set_by=row["set_by"],
+        coordination_limit=row["coordination_limit"],
+        coordination_used=row["coordination_used"],
     )
 
 
@@ -147,6 +187,8 @@ def _rolled(budget: Budget, now) -> Budget:
         action_used=0,
         window_started_at=stamp_window(now),
         set_by=budget.set_by,
+        coordination_limit=budget.coordination_limit,
+        coordination_used=0,
     )
 
 
@@ -158,32 +200,56 @@ def observed(conn: sqlite3.Connection, user_id: int) -> Budget | None:
     return None if budget is None else _rolled(budget, utc_now())
 
 
-def charge(conn: sqlite3.Connection, actor: dict | None, *, cost: int = 1) -> None:
-    """Consume ``cost`` metered actions from ``actor``'s budget, or refuse.
+def charge(
+    conn: sqlite3.Connection,
+    actor: dict | None,
+    *,
+    cost: int = 1,
+    counter: str = ACTION,
+) -> None:
+    """Consume ``cost`` from one of ``actor``'s two counters, or refuse.
 
-    Call this INSIDE the metered command's ``db.transaction(immediate=True)``: the
-    read-check-write runs under SQLite's writer reservation, so two concurrent
-    writes cannot both spend the last unit, and a later failure in the same command
-    rolls the charge back with the mutation.
+    ``counter`` is ``ACTION`` (a write that changes the work; the default) or
+    ``COORDINATION`` (a comment, a claim, a delegation). Call this INSIDE the
+    metered command's ``db.transaction(immediate=True)``: the read-check-write
+    runs under SQLite's writer reservation, so two concurrent writes cannot both
+    spend the last unit, and a later failure in the same command rolls the
+    charge back with the mutation.
 
-    No-ops for an unbudgeted actor (the default), so metering is strictly opt-in.
-    Raises :class:`BudgetExhausted` when the window's limit is already reached; the
-    caller records the refusal after the rollback (see
-    ``budget_commands.record_exhaustion``).
+    No-ops for an unbudgeted actor (the default), and for a coordination write
+    on a budget with no coordination ceiling, so metering is strictly opt-in.
+    A charge that finds the stored window over stores the fresh window with
+    both counters reset. Raises :class:`BudgetExhausted` when the counter's
+    limit is already reached; the caller records the refusal after the rollback
+    (see ``budget_commands.record_exhaustion``).
     """
+    if counter not in (ACTION, COORDINATION):
+        raise ValueError(f"unknown budget counter: {counter}")
     if actor is None:
         return
     budget = get_budget(conn, actor["id"])
     if budget is None:
         return
+    if counter == COORDINATION and budget.coordination_limit is None:
+        return
     now = utc_now()
     budget = _rolled(budget, now)
-    if budget.action_used + cost > budget.action_limit:
+    used, limit = (
+        (budget.coordination_used, budget.coordination_limit)
+        if counter == COORDINATION
+        else (budget.action_used, budget.action_limit)
+    )
+    assert limit is not None
+    if used + cost > limit:
         window_ends = _parse(budget.window_started_at) + WINDOWS[budget.window]
         retry_after = max(1, int((window_ends - now).total_seconds()))
-        raise BudgetExhausted(budget, retry_after_seconds=retry_after)
+        raise BudgetExhausted(budget, retry_after_seconds=retry_after, counter=counter)
+    action_used = budget.action_used + (cost if counter == ACTION else 0)
+    coordination_used = budget.coordination_used + (
+        cost if counter == COORDINATION else 0
+    )
     conn.execute(
-        "UPDATE agent_budgets SET action_used = ?, window_started_at = ?, "
-        "updated_at = datetime('now') WHERE user_id = ?",
-        (budget.action_used + cost, budget.window_started_at, actor["id"]),
+        "UPDATE agent_budgets SET action_used = ?, coordination_used = ?, "
+        "window_started_at = ?, updated_at = datetime('now') WHERE user_id = ?",
+        (action_used, coordination_used, budget.window_started_at, actor["id"]),
     )

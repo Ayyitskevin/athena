@@ -422,6 +422,11 @@
                     <input id="budget-limit-{{ agent.user.id }}" type="number" name="action_limit" min="0"
                            value="{{ agent.budget.action_limit if agent.budget else '' }}"
                            placeholder="limit" class="budget-limit-input">
+                    {# D6: the second ceiling, on comments, claims and delegations. Empty = not limited. #}
+                    <label class="visually-hidden" for="budget-coordination-{{ agent.user.id }}">Coordination limit (comments, claims and delegations; empty for none)</label>
+                    <input id="budget-coordination-{{ agent.user.id }}" type="number" name="coordination_limit" min="0"
+                           value="{{ agent.budget.coordination_limit if agent.budget and agent.budget.coordination_limit is not none else '' }}"
+                           placeholder="coordination" class="budget-limit-input">
                     <label class="visually-hidden" for="budget-window-{{ agent.user.id }}">Window</label>
                     <select id="budget-window-{{ agent.user.id }}" name="window">
                         {% for w in budget_windows %}

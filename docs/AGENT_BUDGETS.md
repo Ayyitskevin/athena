@@ -41,8 +41,48 @@ Deliberately **not** metered:
 - **Automation rule firings** (`update_issue_as_automation`). Rules are the
   operator's own automation, not delegated agent work — a budget must never
   silently stop a rule the operator configured.
-- Other durable writes (comments, labels, leases, attachments, and the rest).
-  This is a bounded first slice, not a claim of total coverage.
+- **Keeping and ending a claim**: a lease renewal, a yield, a completion, a
+  release, a handoff resume and a declined delegation. The way out of a claim
+  must stay open to an account that has spent everything.
+- Other durable writes (labels, attachments, links, watches, comment edits and
+  the rest). This is a bounded slice, not a claim of total coverage.
+
+## The coordination counter
+
+Comments, claims and delegations are counted apart, against a second, optional
+ceiling on the same budget (decision D6). A budget of 3 an hour used to stop
+the fourth issue edit and no comment at all.
+
+| Write | Command |
+|---|---|
+| Issue comment | `aegis.comment_commands.create_comment` |
+| Page comment | `mentor.page_comment_commands.create_page_comment` |
+| Claim (an acquisition, by `claim_issue` or by pickup) | `aegis.lease_commands.claim_issue` |
+| Delegation (when one is made; repeating one that stands spends nothing) | `aegis.issue_commands.add_contributor` |
+
+- **Apart, not added.** A seat out of action budget can still say so in a
+  comment and hand the work back; a seat that talks too much keeps the writes
+  that do its work. Each counter refuses only its own writes.
+- **One window.** `coordination_limit` shares the budget's `window` and
+  `window_started_at`; both counters start again together.
+- **Optional.** `coordination_limit` omitted or `null` leaves coordination
+  unlimited, which is what every budget set before it existed means. `0`
+  refuses every comment, claim and delegation in the window. A budget is
+  replaced whole: setting one without `coordination_limit` removes a ceiling
+  set earlier.
+- **Set the same way**: `PUT /users/{id}/budget` with `coordination_limit`,
+  `set_agent_budget(..., coordination_limit=N)`, or the second number on the
+  agents page. The budget read, `whoami` and the desk carry
+  `coordination_limit`, `coordination_used` and `coordination_remaining`.
+
+A coordination write past the ceiling is refused `429
+agent_coordination_budget_exhausted`, with `budget`, `retry_after_seconds` and
+`Retry-After`. It names no leases and tells nobody on the account's behalf,
+because the account can still do, renew, complete or yield what it holds. The
+first refusal of a window records one `agent_coordination_budget_exhausted`
+event for the operator; it is counted with the action ceiling's under "Budget
+ceilings hit". Each ceiling's first refusal is recorded, whichever is spent
+first.
 
 ## Opt-in by default
 
@@ -101,7 +141,9 @@ Retry-After: 3421
   "budget": {
     "user_id": 42, "window": "day", "action_limit": 50,
     "action_used": 50, "remaining": 0,
-    "window_started_at": "2026-07-25T00:00:00Z"
+    "window_started_at": "2026-07-25T00:00:00Z",
+    "coordination_limit": null, "coordination_used": 0,
+    "coordination_remaining": null
   },
   "held_leases": [
     {"issue_id": 7, "generation": "6403f3965f78a1aa9339a041f474a4f4"}
@@ -119,7 +161,7 @@ Retry-After: 3421
 `held_leases` names each lease the refused account holds, at most 20. A lease
 held through the rest of the window keeps its issue from every other seat until
 it lapses, so the refusal's `next` is `yield_claim` with reason `capacity` for
-each of them: a yield is a coordination write and is not metered, it records
+each of them: a yield is never metered, by either counter, it records
 what was attempted, and the issue returns to the ready lane. An account that
 holds nothing stops writing until the window ends.
 

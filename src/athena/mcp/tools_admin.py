@@ -688,6 +688,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         user_id: int,
         window: str,
         action_limit: int,
+        coordination_limit: int | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Admin: cap how many metered writes a user may make per fixed window
@@ -695,11 +696,16 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         so this is the lever that starts bounding an agent. Raising a limit
         mid-window releases the agent at once without granting a fresh window;
         action_limit=0 freezes its metered writes while leaving reads working.
+        coordination_limit is a second ceiling, counted apart, on comments,
+        claims and delegations in the same window; omit it (or null) to leave
+        them unlimited, which also removes one set earlier. Renewals, yields
+        and completions are never metered.
         Returns the budget. Requires an admin token."""
         return client.set_agent_budget(
             user_id,
             window=window,
             action_limit=action_limit,
+            coordination_limit=coordination_limit,
             idempotency_key=idempotency_key,
         )
 

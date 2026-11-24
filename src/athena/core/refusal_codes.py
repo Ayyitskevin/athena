@@ -416,6 +416,16 @@ _ENTRIES: tuple[RefusalCode, ...] = (
             ),
         ),
     ),
+    RefusalCode(
+        code="agent_coordination_budget_exhausted",
+        statuses=(429,),
+        meaning=(
+            "Your account's coordination budget for this window is spent: "
+            "comments, claims and delegations are refused until "
+            "`retry_after_seconds`; nothing was applied. Work you hold is not "
+            "affected: you can still edit, renew, complete or yield it."
+        ),
+    ),
     # --- idempotency ----------------------------------------------------------
     RefusalCode(
         code="idempotency_key_invalid",

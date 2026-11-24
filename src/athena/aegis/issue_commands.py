@@ -1236,6 +1236,11 @@ def _add_contributor(
         changed = contributors_data.add_contributor(
             conn, issue_id, user_id, resolved["id"], commit=False
         )
+        if changed and require_agent:
+            # A delegation is a coordination write (D6). Charged only when one
+            # is made: repeating a delegation that stands records nothing and
+            # spends nothing. A refusal here rolls the added row back.
+            budgets.charge(conn, resolved, counter=budgets.COORDINATION)
         if changed:
             recorder = (
                 issue_activity.record_delegated

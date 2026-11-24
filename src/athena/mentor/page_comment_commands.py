@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.core import access, db, identity, search
+from athena.core import access, budgets, db, identity, search
 from athena.mentor import page_activity, page_comments, pages
 
 
@@ -88,6 +88,8 @@ def create_page_comment(
     that is request shape, not a trust boundary."""
     with db.transaction(conn, immediate=True):
         _visible_page_or_refuse(conn, actor, page_id)
+        # A comment is a coordination write (D6), on a page as on an issue.
+        budgets.charge(conn, actor, counter=budgets.COORDINATION)
         actor_id = actor["id"]
         comment = page_comments.add_comment(
             conn, page_id=page_id, author_id=actor_id, body=body, commit=False
