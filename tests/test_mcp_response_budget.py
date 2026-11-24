@@ -251,6 +251,7 @@ def _plan(world: dict[str, Any], admin: TestClient) -> list[Step]:
         # writes: the claim first, so the lease reads and the loop have a holder
         ("claim_issue", lambda s: {"issue_id": big, "if_match": s["etag"]()}),
         ("get_issue_lease", lambda s: {"issue_id": big}),
+        ("get_idempotency_key", lambda s: {"key": "never-sent"}),
         ("heartbeat_agent_run", lambda s: {"run_id": RUN_ID}),
         ("comment_on_issue", lambda s: {"issue_id": big, "body": "noted"}),
         (

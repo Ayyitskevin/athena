@@ -633,6 +633,14 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             limit=limit,
         )
 
+    @tool(scope=READ_ONLY, profiles=SEAT)
+    def get_idempotency_key(key: str) -> dict:
+        """After a keyed write timed out or was refused idempotency_in_progress
+        or idempotency_indeterminate: read what a retry under that
+        idempotency_key would meet (`state`, the request's method and path,
+        and `retry` in words). Changes nothing; your own keys only."""
+        return client.get_idempotency_key(key)
+
     @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def whoami() -> dict:
         """Who am I? Your identity (id, email, role, agent flag), the acting

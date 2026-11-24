@@ -76,6 +76,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `get_agent_budget` | `GET /users/{user_id}/budget` | read-only | Read a user's durable action budget — how many metered writes it may … |
 | `get_attention_ranking` | `GET /attention/ranking` | read-only | Read the bounded, actor-filtered "Now" queue. Each row cites its … |
 | `get_fleet_metrics` | `GET /fleet/metrics` | read-only | Read bounded issue throughput for this token's visible scope. Dates are … |
+| `get_idempotency_key` | `GET /idempotency/{quote(key, safe='')}` | read-only | After a keyed write timed out or was refused idempotency_in_progress … |
 | `get_issue` | `GET /issues/{ref}` | read-only | Get one issue by issue_id (the number every write tool takes) or by … |
 | `get_issue_history` | `GET /issues/{issue_id}/history` | read-only | Read one issue's bounded operator run narrative. Every item cites … |
 | `get_issue_lease` | `GET /issues/{issue_id}/lease` | read-only | Who holds the exclusive claim on this issue right now — {holder_id, holder_name, … |
@@ -282,8 +283,8 @@ back with `isError` false, `applied: false` and `next`.
 | `idempotency_key_invalid` | 400 | Send exactly one Idempotency-Key of 1-255 visible ASCII characters. |  |
 | `idempotency_key_unsupported` | 400 | This endpoint does not take an Idempotency-Key; resend without one. |  |
 | `idempotency_mismatch` | 409 | This Idempotency-Key was already used for a different request; use a new key for a different call. |  |
-| `idempotency_in_progress` | 409 | A request with this Idempotency-Key is still running; retry the same call after Retry-After seconds. |  |
-| `idempotency_indeterminate` | 409 | The earlier request under this key ended with an unknown outcome; read the target's state before choosing a new key. |  |
+| `idempotency_in_progress` | 409 | A request with this Idempotency-Key is still running; retry the same call after Retry-After seconds. `get_idempotency_key` reads the key's state without retrying. |  |
+| `idempotency_indeterminate` | 409 | The earlier request under this key ended with an unknown outcome; read the target's state before choosing a new key. `get_idempotency_key` names the keyed request's method and path. |  |
 | `idempotency_authorization_changed` | 409 | What you may do changed after this key was claimed (the assignee, creator or a contributor of the issue it named, `issue_id`; or a role, token, membership, visibility, pause, placement, agent flag, close policy, approval gate or budget limit anywhere), so its stored response is not replayed and this answer does not say whether the write was applied. Read the target; repeat under a new key only if it was not. The key stays refused until its receipt would have expired. | `get_issue_work_context`: issue_id: the refusal's issue_id (the issue your keyed write named); its activity and comments show whether your write was applied. Repeat it with a new idempotency_key only if it was not. For a write on no issue, read what it changed instead. |
 | `undo_event_not_found` | 404 | No activity event with that id is visible to you. |  |
 | `undo_not_reversible` | 401, 422 | This event's action has no inverse that undo may apply. |  |
@@ -309,4 +310,4 @@ with `isError` true and `status_code` null.
 
 ---
 
-*142 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*143 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

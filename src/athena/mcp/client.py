@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Any
+from urllib.parse import quote
 import re
 
 import httpx
@@ -1012,6 +1013,10 @@ class AthenaClient:
         """The unauthenticated liveness read — proves the server is there at
         all, so an auth failure afterwards is attributable to the token."""
         return self._result(self._client.get("/healthz"))
+
+    def get_idempotency_key(self, key: str) -> Any:
+        """Read the state of an idempotency key this credential used."""
+        return self._result(self._client.get(f"/idempotency/{quote(key, safe='')}"))
 
     def whoami(self) -> Any:
         """Read the authenticated identity: id, email, role, agent flag, and the

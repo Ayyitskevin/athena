@@ -450,7 +450,8 @@ _ENTRIES: tuple[RefusalCode, ...] = (
         statuses=(409,),
         meaning=(
             "A request with this Idempotency-Key is still running; retry the "
-            "same call after Retry-After seconds."
+            "same call after Retry-After seconds. `get_idempotency_key` reads "
+            "the key's state without retrying."
         ),
     ),
     RefusalCode(
@@ -458,7 +459,8 @@ _ENTRIES: tuple[RefusalCode, ...] = (
         statuses=(409,),
         meaning=(
             "The earlier request under this key ended with an unknown outcome; "
-            "read the target's state before choosing a new key."
+            "read the target's state before choosing a new key. "
+            "`get_idempotency_key` names the keyed request's method and path."
         ),
     ),
     RefusalCode(

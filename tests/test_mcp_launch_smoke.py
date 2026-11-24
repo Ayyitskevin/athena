@@ -63,7 +63,7 @@ def test_the_printed_mcp_config_launches_lists_its_profile_and_answers_my_desk()
         f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
     )
     assert "MCP LAUNCH SMOKE PASSED" in stdout
-    assert "seat: pid" in stdout and "26 tools" in stdout
-    assert "seat+knowledge: pid" in stdout and "37 tools" in stdout
+    assert "seat: pid" in stdout and "27 tools" in stdout
+    assert "seat+knowledge: pid" in stdout and "38 tools" in stdout
     assert len(launched) == 3, stdout  # athena-serve and two athena-mcp
     assert survivors == [], f"processes outlived the smoke check: {survivors}"

@@ -45,7 +45,23 @@ call with the same key and arguments and you get the first answer, whatever run
 id the new session has. A tool answer that is a stored one carries
 `_replayed: true`: it is what the first call was told, as it was then, so a
 lease in it may have lapsed since, and a new intent (a new poll) needs a new
-key. The codes are listed in
+key.
+
+A keyed write that timed out leaves you with a key and no answer. Ask before
+you guess: `get_idempotency_key(key=...)` (REST `GET /idempotency/{key}`) says
+what a retry under that key would meet and changes nothing. Only the credential
+that sent a key can read it; anyone else's reads `unused`.
+
+| `state` | What it means | What to do |
+|---|---|---|
+| `unused` | No request under this key is on record, or its receipt expired. | Send the write; it runs. |
+| `in_progress` | The first request is still running. A retry now is refused 409 `idempotency_in_progress` with `Retry-After`. | Wait that long and read the key again. |
+| `completed` | The write finished; `status_code` is its answer's status. | Repeat the same call with the same key to get that answer, marked `_replayed`. |
+| `indeterminate` | The first request ended and nothing recorded how: its owner went away, or its answer could not be kept. A retry is refused 409 `idempotency_indeterminate`. | Read the target that `method` and `path` name. If the write is not there and is still needed, send it under a new key. |
+| `authorization_changed` | What you may do changed since the key was used, so its answer is withheld. A retry is refused 409 `idempotency_authorization_changed`. | Read the target, then use a new key if the write is still needed. |
+
+A different request under a key that is on record is refused 409
+`idempotency_mismatch`, whatever its state. The codes are listed in
 [AGENT_API.md](AGENT_API.md#refusal-codes).
 `GET /openapi-agent.json` is the REST surface your token can call, without the browser
 routes `/openapi.json` also lists, and it declares per operation the bearer scheme,

@@ -78,6 +78,7 @@ from athena.core import (
     search_api,
     security_api,
     sessions,
+    idempotency_api,
     tokens_api,
     undo,
     users,
@@ -951,6 +952,7 @@ def create_app(
     app.include_router(aegis_embeds_api.router)
     app.include_router(aegis_forge_api.router)
     app.include_router(tokens_api.router)
+    app.include_router(idempotency_api.router)
     app.include_router(agent_runs_api.router)
     app.include_router(run_controls_api.router)
     app.include_router(answerability_api.router)

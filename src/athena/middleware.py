@@ -791,7 +791,7 @@ class IdempotencyMiddleware:
             if actor is None:
                 return None, None, False
             return (
-                "tok:" + tokens._hash(raw),
+                idempotency.token_identity(raw),
                 int(actor["_token_id"]),
                 bool(actor.get("paused_at")),
             )
@@ -807,7 +807,11 @@ class IdempotencyMiddleware:
                     self._resolve_actor, self._source(scope), actor_id
                 )
                 if actor is not None:
-                    return f"actor:{actor_id}", None, bool(actor.get("paused_at"))
+                    return (
+                        idempotency.actor_identity(actor_id),
+                        None,
+                        bool(actor.get("paused_at")),
+                    )
         return None, None, False
 
     @classmethod

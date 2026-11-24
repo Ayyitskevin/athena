@@ -39,8 +39,8 @@ ISSUE_ONLY = ["read", "issue:write"]
 WITH_DOCS = ["read", "issue:write", "docs:write"]
 # (token scopes, the profile a printed config must name, its tool count)
 CASES = [
-    pytest.param(ISSUE_ONLY, "seat", 26, id="issue-token"),
-    pytest.param(WITH_DOCS, "seat+knowledge", 37, id="docs-token"),
+    pytest.param(ISSUE_ONLY, "seat", 27, id="issue-token"),
+    pytest.param(WITH_DOCS, "seat+knowledge", 38, id="docs-token"),
 ]
 
 

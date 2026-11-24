@@ -51,6 +51,9 @@ SEAT = frozenset(
         "decline_run_control",
         "claim_next_ready",
         "wait_for_events",
+        # A11: a seat makes keyed writes, so it is the seat that has to be
+        # able to ask what became of one.
+        "get_idempotency_key",
     }
 )
 # The audit's eleven for knowledge work.
@@ -141,25 +144,25 @@ def test_the_four_profiles_are_the_whole_vocabulary():
 @pytest.mark.parametrize(
     "profile_name,scopes,expected",
     [
-        ("seat", SEAT_SCOPES, 26),
-        ("seat+knowledge", SEAT_SCOPES, 37),
-        ("seat", ADMIN, 26),
-        ("seat+knowledge", ADMIN, 37),
-        ("seat", ISSUE_ONLY, 26),
+        ("seat", SEAT_SCOPES, 27),
+        ("seat+knowledge", SEAT_SCOPES, 38),
+        ("seat", ADMIN, 27),
+        ("seat+knowledge", ADMIN, 38),
+        ("seat", ISSUE_ONLY, 27),
         # the eleven minus the three docs:write tools
-        ("seat+knowledge", ISSUE_ONLY, 34),
-        ("conductor", SEAT_SCOPES, 39),
-        ("conductor", ISSUE_ONLY, 39),
-        ("conductor", ADMIN, 39),
-        ("conductor", READ_TOKEN, 19),
+        ("seat+knowledge", ISSUE_ONLY, 35),
+        ("conductor", SEAT_SCOPES, 40),
+        ("conductor", ISSUE_ONLY, 40),
+        ("conductor", ADMIN, 40),
+        ("conductor", READ_TOKEN, 20),
         # docs:write permits six inherited any-write tools (cursor, heartbeat,
         # targeted notification ack and own controls), but no issue writes.
-        ("conductor", DOCS_ONLY, 25),
-        # the eleven reads among the core: my_desk, list_my_delegated_work,
+        ("conductor", DOCS_ONLY, 26),
+        # the twelve reads among the core: my_desk, list_my_delegated_work,
         # search_work, get_issue, get_issue_work_context, list_issue_comments,
         # get_issue_lease, current_run, list_notifications, list_run_controls,
-        # wait_for_events
-        ("seat", READ_TOKEN, 11),
+        # wait_for_events, get_idempotency_key
+        ("seat", READ_TOKEN, 12),
     ],
 )
 def test_exact_counts_per_profile_and_token_class(profile_name, scopes, expected):
@@ -213,6 +216,7 @@ def test_conductor_assignment_and_delegation_still_require_issue_write():
         assert writes.isdisjoint(_names(scopes, profile))
     assert writes <= _names(ISSUE_ONLY, profile)
     assert _names(READ_TOKEN, profile) == {
+        "get_idempotency_key",
         "my_desk",
         "list_my_delegated_work",
         "search_work",
