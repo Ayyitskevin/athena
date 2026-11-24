@@ -113,8 +113,9 @@ The empty outcomes are `already_holding`, `nothing_ready`, or
 `candidates_conflicted` (replacing the old client-only `lost_race`); each carries
 `review_request`, the review the desk asks of that account, or null.
 
-Choose an `idempotency_key` before a retryable pickup and preserve its credential,
-arguments and run lineage. Success and empty outcomes both replay as historical
+Choose an `idempotency_key` before a retryable pickup and preserve its credential
+and arguments; a restarted session may retry under its new run id. Success and
+empty outcomes both replay as historical
 receipts; a replay never renews or reacquires. Read current full work context before
 work and explicitly resume an open handoff. A new poll uses a new key; an uncertain
 outcome needs reconciliation first. See [ATOMIC_PICKUP_SPEC.md](ATOMIC_PICKUP_SPEC.md)
@@ -296,7 +297,11 @@ blockers, `get_attention_ranking()` for actor-filtered questions/signals, and
 nothing and drops done issues; retain known issue IDs to inspect completed work.
 Without admin authority, attention exposes visible issue blockers, your own
 claim/control signals, and the claims on issues you can see and answer for: you are
-the assignee, or you delegated the issue to its holder. Empty or clipped results do not prove fleet health,
+the assignee, or you delegated the issue to its holder. A completion that reported
+`HOLD` or `BLOCKED` on such an issue is a `held_report` row, never for your own
+report: it stays until an account other than the reporter comments, changes the
+status or assignment or claims the issue, or anyone claims it again, so decide
+what happens to the work and say so on the issue. Empty or clipped results do not prove fleet health,
 process liveness or complete history.
 
 Narrow profiles carry `wait_for_events`, not `recent_events`. To drain immediately,

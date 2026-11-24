@@ -8,7 +8,7 @@ import runpy
 from fastapi.testclient import TestClient
 import pytest
 
-from support import lease_facts
+from support import answer_fields, lease_facts, replayed_fields
 
 from athena import config
 from athena.main import create_app
@@ -708,7 +708,8 @@ def test_real_mcp_claim_and_idempotency_bind_root(client):
         "idempotency_key": "fictional-root-claim",
     }
     first = asyncio.run(server.call_tool("claim_issue", args))
-    assert asyncio.run(server.call_tool("claim_issue", args)) == first
+    replay = asyncio.run(server.call_tool("claim_issue", args))
+    assert replayed_fields(replay) == answer_fields(first)
     lease = client.get(f"/issues/{item}/lease").json()
     assert lease["coordination_root"] == root()
     from mcp.server.fastmcp.exceptions import ToolError

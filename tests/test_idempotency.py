@@ -16,7 +16,7 @@ import threading
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from athena import config
+from athena import config, middleware
 from athena.core import db, idempotency
 from athena.main import create_app
 from athena.mentor import pages
@@ -485,7 +485,134 @@ def test_concurrent_wait_timeout_never_runs_a_second_handler(tmp_path):
     assert calls["count"] == 1
 
 
-def test_body_query_content_type_and_run_headers_are_fingerprinted(tmp_path):
+def test_a_restarted_session_replays_its_own_key_under_a_new_run(tmp_path):
+    """F14: `athena-mcp` mints a run id per session, so a session that crashed
+    and restarted retries its in-flight write under a new run. The key names
+    the write, not the session: the retry replays the first answer, nothing is
+    written twice, and the one event stays attributed to the run that made it."""
+    with TestClient(create_app(tmp_path / "restart.db")) as client:
+        _bootstrap(client)
+        keyed = {"Idempotency-Key": "slice-3-create", **H1}
+        first = client.post(
+            "/issues",
+            json={"title": "once"},
+            headers={**keyed, "X-Athena-Run": "mcp-before-crash"},
+        )
+        assert first.status_code == 201, first.text
+        retry = client.post(
+            "/issues",
+            json={"title": "once"},
+            headers={
+                **keyed,
+                "X-Athena-Run": "mcp-after-restart",
+                "X-Athena-Parent-Run": "conductor-run",
+            },
+        )
+        untagged = client.post("/issues", json={"title": "once"}, headers=keyed)
+        created = client.get(
+            "/activity",
+            params={"target_kind": "issue", "target_id": first.json()["id"]},
+            headers=H1,
+        ).json()
+
+        for response in (retry, untagged):
+            assert response.status_code == 201, response.text
+            assert response.headers["idempotent-replay"] == "true"
+            assert response.json() == first.json()
+        assert _ids(client) == [first.json()["id"]]
+    assert [e["run_id"] for e in created if e["verb"] == "created"] == [
+        "mcp-before-crash"
+    ]
+
+
+def test_a_restarted_mcp_session_replays_the_key_it_was_given(tmp_path):
+    """The same thing as an agent meets it: two `athena-mcp` sessions of one
+    seat, each with the run id its launch minted, and one idempotency key."""
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    from support import bootstrap, make_app, mcp_server_for, onboard_agent
+
+    app, _ = make_app(tmp_path)
+    with TestClient(app) as client:
+        bootstrap(client)
+        seat = onboard_agent(client)
+
+        async def create(run_id: str) -> dict:
+            server = mcp_server_for(app, seat, run_id=run_id)
+            async with create_connected_server_and_client_session(
+                server._mcp_server  # noqa: SLF001 — the protocol server under test
+            ) as session:
+                result = await session.call_tool(
+                    "create_issue",
+                    {"title": "once", "idempotency_key": "slice-3-create"},
+                )
+            answer = json.loads(result.content[0].text)
+            assert not result.isError, answer
+            return answer
+
+        before = asyncio.run(create("mcp-1a2b3c4d5e6f"))
+        after = asyncio.run(create("mcp-6f5e4d3c2b1a"))
+        titles = [
+            issue["title"]
+            for issue in client.get("/issues", headers={"X-Athena-Actor": "1"}).json()
+        ]
+
+    assert after["id"] == before["id"]
+    assert titles.count("once") == 1
+    # The agent can tell the stored answer from a fresh one.
+    assert "_replayed" not in before and after["_replayed"] is True
+    assert {k: v for k, v in after.items() if k != "_replayed"} == before
+
+
+def test_a_receipt_stored_before_runs_left_the_match_still_replays(tmp_path):
+    """A receipt written by the release before F14 holds the fingerprint that
+    covered the run headers. A retry that carries the same run headers, as it
+    had to then, still matches it; one under another run does not, as then."""
+    db_path = tmp_path / "upgrade.db"
+    with TestClient(create_app(db_path)) as client:
+        _bootstrap(client)
+        keyed = {"Idempotency-Key": "from-before", **H1, "X-Athena-Run": "old-run"}
+        first = client.post("/issues", json={"title": "kept"}, headers=keyed)
+        assert first.status_code == 201, first.text
+        earlier = middleware.IdempotencyMiddleware._earlier_fingerprint(
+            {
+                "method": "POST",
+                "path": "/issues",
+                "raw_path": b"/issues",
+                "query_string": b"",
+                "headers": [
+                    (name.lower().encode(), value.encode())
+                    for name, value in first.request.headers.items()
+                ],
+            },
+            first.request.content,
+        )
+        conn = db.connect(db_path)
+        try:
+            changed = conn.execute(
+                "UPDATE idempotency_keys SET request_fingerprint = ? "
+                "WHERE idempotency_key = 'from-before'",
+                (earlier,),
+            ).rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        assert changed == 1
+
+        same_run = client.post("/issues", json={"title": "kept"}, headers=keyed)
+        other_run = client.post(
+            "/issues",
+            json={"title": "kept"},
+            headers={**keyed, "X-Athena-Run": "new-run"},
+        )
+
+    assert same_run.status_code == 201, same_run.text
+    assert same_run.headers["idempotent-replay"] == "true"
+    assert other_run.status_code == 409, other_run.text
+    assert other_run.json()["code"] == "idempotency_mismatch"
+
+
+def test_body_query_and_content_type_are_fingerprinted(tmp_path):
     with TestClient(create_app(tmp_path / "fingerprint.db")) as client:
         _bootstrap(client)
         headers = {"Idempotency-Key": "exact-request", **H1}
@@ -508,13 +635,13 @@ def test_body_query_content_type_and_run_headers_are_fingerprinted(tmp_path):
             content=first.request.content,
             headers={**headers, "Content-Type": "application/json; charset=utf-8"},
         )
-        run_clash = client.post(
+        tag_clash = client.post(
             "/issues",
             content=first.request.content,
             headers={
                 **headers,
                 "Content-Type": "application/json",
-                "X-Athena-Run": "another-run",
+                "If-Match": '"another-revision"',
             },
         )
 
@@ -522,7 +649,7 @@ def test_body_query_content_type_and_run_headers_are_fingerprinted(tmp_path):
             body_clash,
             query_clash,
             content_type_clash,
-            run_clash,
+            tag_clash,
         ):
             assert response.status_code == 409
             assert response.json()["detail"] == (

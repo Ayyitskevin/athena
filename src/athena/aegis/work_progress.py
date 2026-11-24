@@ -12,8 +12,9 @@ to the work itself (``SUBSTANTIVE_WORK_VERBS``). Everything else on an issue's t
 is bookkeeping about who holds it or how the board is organised:
 
 - lease bookkeeping: ``claimed``, ``lease_renewed``, ``lease_lapsed`` — the clock,
-  not the work — and ``lease_released``, an admin ending another account's lease,
-  which ends a possession and records no work (U3);
+  not the work — ``lease_released``, an admin ending another account's lease,
+  which ends a possession and records no work (U3), and
+  ``holder_budget_exhausted``, a refused write that applied nothing (F13);
 - coordination: ``claim_yielded``, ``claim_handoff_resumed``, ``delegated``,
   ``delegation_declined`` — who should hold it;
 - triage: ``assigned``/``unassigned``, ``added_contributor``/``removed_contributor``,

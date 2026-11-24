@@ -29,6 +29,7 @@ from athena.aegis import (
     issue_activity,
     issue_etags,
     issues,
+    lease_lapse_commands,
     leases,
     report_credentials,
     review_commands,
@@ -1235,9 +1236,11 @@ def complete_claim(
     clock has already expired (clearing a lapsed row is the holder's to do — nothing else
     removes it, so it would otherwise sit on their desk forever). An admin may release
     anyone's ACTIVE lease, a moderation lever recorded as ``lease_released`` (not as a
-    completion, and with no report); an expired row belonging to someone else is
-    nobody's to complete. Rejects with IssueCommandError('conflict') if there is no lease
-    row, or it belongs to someone else; 404 for an unseeable issue. Completion releases the
+    completion, and with no report). An admin may also settle another account's EXPIRED
+    row without claiming it (C8), naming its generation: the lapse is recorded first
+    (``lease_lapsed``, once per generation) and the settlement is ``lease_released``.
+    Rejects with IssueCommandError('conflict') if there is no lease row, or a non-admin's
+    row belongs to someone else; 404 for an unseeable issue. Completion releases the
     coordination lease only — it does not change the issue's status; the agent transitions
     status through the ordinary (audited) status command."""
     actor = _require_issue_writer(actor)
@@ -1302,14 +1305,14 @@ def complete_claim(
                 "candidate completion requires your own active claim",
                 code=CLAIM_REQUIRED_CODE,
             )
-        # An expired row that is not yours is not a possession anyone may
-        # complete — including an admin, whose release lever stays ACTIVE-only.
-        # It is left for the next acquisition to replace, exactly as before.
-        if existing is None or (not existing["active"] and not mine):
+        # An expired row that is not yours is not a possession a non-admin may
+        # complete. An admin may settle it (C8), with its generation, below.
+        admin = identity.is_admin(actor)
+        if existing is None or (not existing["active"] and not mine and not admin):
             raise IssueCommandError(
                 "conflict", "no active claim to complete", code=CLAIM_REQUIRED_CODE
             )
-        if not mine and not identity.is_admin(actor):
+        if not mine and not admin:
             raise _claim_held(
                 conn,
                 actor,
@@ -1317,7 +1320,7 @@ def complete_claim(
                 f"issue is claimed by {existing['holder_name']}, not you",
             )
         lapsed = not existing["active"]
-        if lapsed and generation is None:
+        if lapsed and mine and generation is None:
             # The immediate writer lock makes the server-observed expired
             # generation an exact fence: no replacement can appear between this
             # read and the deletion. Same reasoning as decline's expired branch.
@@ -1347,6 +1350,15 @@ def complete_claim(
             review_commands.prepare_review(
                 conn, issue=issue, actor=actor, candidate_id=review_id
             )
+        if lapsed and not mine:
+            # The clock ended this possession before the admin settled it (C8).
+            # Record that first, through the lapse's one writer: once per
+            # generation, so a lapse an observer already recorded is not
+            # recorded again. The release below then says only that the admin
+            # cleared the row, never that it ended live work.
+            lease_lapse_commands.record_lease_lapse(
+                conn, actor=actor, issue_id=issue_id, generation=current_generation
+            )
         if not leases.delete_lease(conn, issue_id, current_generation, commit=False):
             raise IssueCommandError(
                 "lease_generation_mismatch",
@@ -1367,9 +1379,10 @@ def complete_claim(
                 "releasing another account's lease carries no completion report",
             )
         else:
-            # An admin ending another account's live lease is a release, not a
-            # completion of that account's work (U3): its own verb, naming the
-            # holder, told to the holder, and read by nothing as finished work.
+            # An admin ending another account's live lease, or settling its
+            # lapsed row, is a release, not a completion of that account's work
+            # (U3, C8): its own verb, naming the holder, told to the holder, and
+            # read by nothing as finished work.
             event = issue_activity.record_lease_released(
                 conn,
                 actor_id=actor["id"],
@@ -1471,3 +1484,43 @@ def decline_delegation(
             commit=False,
         )
         return contributors_data.list_contributors(conn, issue_id)
+
+
+def account_active_leases(
+    conn: sqlite3.Connection, actor: dict, holder_id: int
+) -> list[dict]:
+    """The holder's active leases on issues ``actor`` may see, by issue id:
+    what pausing, revoking or offboarding the holder names (C8). A lease on an
+    issue the actor cannot see is left out, as a hidden issue reads as missing
+    everywhere. Read inside the act's transaction; writes nothing."""
+    listed = []
+    for lease in leases.live_leases_at(conn):
+        if lease["holder_id"] != holder_id:
+            continue
+        issue = issues.get_issue(conn, int(lease["issue_id"]))
+        if issue is None or not access.can_see_issue(conn, actor, issue["id"]):
+            continue
+        listed.append(
+            {
+                "issue_id": issue["id"],
+                "key": issue.get("key"),
+                "title": issue["title"],
+                "generation": lease["generation"],
+                "expires_at": lease["expires_at"],
+            }
+        )
+    return listed
+
+
+def release_account_lease(conn: sqlite3.Connection, actor: dict, lease: dict) -> dict:
+    """Release one lease :func:`account_active_leases` named, as ``actor``,
+    through :func:`complete_claim`: the command an admin's release of one lease
+    uses (U3), fenced by the generation the list read, and recorded as
+    ``lease_released`` naming the holder. Composed inside the act's
+    transaction, so a refusal rolls the whole act back."""
+    return complete_claim(
+        conn,
+        actor=actor,
+        issue_id=int(lease["issue_id"]),
+        generation=lease["generation"],
+    )

@@ -21,6 +21,7 @@ import json
 import threading
 
 from fastapi.testclient import TestClient
+from support import replayed_fields
 
 from athena.aegis import issue_commands
 from athena.core import db, idempotency
@@ -280,4 +281,4 @@ def test_mcp_update_issue_retried_under_its_key_applies_after_approval(tmp_path)
         applied = call()
         assert applied["status"] == "done"
         assert _status(admin, issue_id) == "done"
-        assert call() == applied
+        assert replayed_fields(call()) == applied

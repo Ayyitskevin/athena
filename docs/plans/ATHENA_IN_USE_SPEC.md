@@ -38,7 +38,9 @@ the dashboard show one "needs you" number, a fresh claim is not attention, and
 an approval row says what is being approved. The first two requirements of
 Wave 5 are built in PR #477: an edit keeps the text it replaced and can be
 undone, and one unrelated assignment no longer voids every stored idempotency
-receipt. Nothing has been re-graded since.
+receipt. Two more are built in PR #478: a restarted session replays its own
+idempotency key, and stopping an account names its leases and may release
+them. Nothing has been re-graded since.
 
 **Decisions in force.**
 
@@ -56,9 +58,8 @@ receipt. Nothing has been re-graded since.
 
 **Known issues, most serious first.**
 
-1. A fleet has no recovery path for a seat that dies holding work, a review
-   that never comes or a conductor that stops: the rest of Wave 5 (C8, C7,
-   F13, F14, F15).
+1. A seat that renews without progress leaves the operator and its
+   conductor nothing to read: the rest of Wave 5 (C7).
 2. `IssueOut.parent_id` gives the id of a parent issue the caller cannot see
    (found by F6's property test; older than this specification).
 3. The project brief and `/desk/since` without a cursor still grow with
@@ -101,12 +102,16 @@ one "needs you" number, the heartbeat grace and the attention ranking, the
 approval row, the one report partial and undo on the issue page. "Wave 8
 results" says the same for each. From Wave 5: the prior text of an edit, its
 read and its undo, `If-Match` for a bearer edit of a title or body, and the
-idempotency fence scoped to the issue a key names. "Wave 5 results" says the
-same for each.
+idempotency fence scoped to the issue a key names, a key that survives a
+restart with replays marked for the agent, the leases of a stopped
+account named and released on request, a spent budget that names the
+leases to yield and tells who answers for the work, a HOLD or BLOCKED report
+that asks whoever answers for it, and each agent's last refusal readable by
+the operator. "Wave 5 results" says the same for
+each.
 
 **Next step.** Nothing built is waiting. Build the rest of Wave 5 in the order
-its row gives (C8, C7, F13, F14, F15, A11, A14, W4, W5): it is where a fleet
-gets its recovery paths. Then the rest of Wave 6 (H6, H5, H7, H9), of Wave 7
+its row gives (C7, A11, A14, W4, W5). Then the rest of Wave 6 (H6, H5, H7, H9), of Wave 7
 (H13 to H17, H19, H20) and of Wave 8 (U2, U4, U5, U8, U10 to U15, C10), and
 Wave 9. Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
@@ -720,6 +725,129 @@ Found and not fixed:
   migrate with the service stopped.
 - **`IssueOut.parent_id` gives the id of a parent the caller cannot see.**
   F6's property test met it; it is older than this specification.
+
+### Wave 5 results (second lanes)
+
+This is F14, C8, F13 and F15 (PR #478), one commit each. The lead built F14,
+F13 and F15, test first. A build agent built C8 from a six-part brief; it had no
+independent review, and the lead read it, re-ran its tests on the integrated
+tree and probed it against a throwaway instance. Running two build agents
+beside the lead had exhausted a usage window, so one ran at a time.
+
+| Measure | Before | After |
+|---|---|---|
+| A restarted session retrying its in-flight write | 409 `idempotency_mismatch`: the key was matched on the run id, and `athena-mcp` mints one per session | Replays the first answer; the event stays attributed to the run that made it (F14) |
+| An MCP answer that is a stored one | Not marked | Carries `_replayed: true`, as REST sends `Idempotent-Replay` (F14) |
+| Pause, token revocation, offboarding and removal | Leave the account's leases and fences active and say nothing | Each answers with `active_leases`; `release_leases` releases each in the same transaction, one `lease_released` per lease (C8, D12) |
+| An admin settling a dead agent's expired lease | Refused `claim_required`; the admin had to claim it first | Settled with its exact generation: `lease_lapsed` once, then `lease_released` (C8) |
+| A seat refused for budget while holding a lease | 429 with no `next`; the issue stays out of reach until the lease lapses | 429 with `held_leases`, `retry_after_seconds` and `next` = `yield_claim` with reason `capacity`; the yield is not metered (F13) |
+| Who is told that a holder ran out of budget | Nobody | The issue's assignee and the account that delegated it, once per budget window, by one `holder_budget_exhausted` event per held issue (F13) |
+| `agent_budget_exhausted` rows for 20 refused requests in one window | 20 | 1, saying what was spent, how many leases are held and the first request refused (F13) |
+| A completion that reports `HOLD` or `BLOCKED` | An event; no attention signal | A ranked row, `held_report` (`high`), for the assignee, the delegating account and the operator, and a count on the card, until someone acts on the issue (F15) |
+| What an operator can read about a refused or idle agent | Nothing: a refusal and "nothing ready" are answers, on no trail | Per agent, the newest 4xx it was answered (`code`, status, request, time) and the newest time a pickup answered `nothing_ready`, in the run-health read and on the agent-runs page (F15) |
+
+The product gate's receipt is in PR #478.
+
+Decisions the lead took while building, each reversible by the owner:
+
+- **The run is not part of what a key is matched on.** The requirement
+  allowed this or a stable run id in the printed configuration. A stable run
+  id would make every session of a seat one run, which run controls and the
+  heartbeat rule depend on being separate.
+- **A replay is marked for the agent.** The run match had one protective
+  effect: a key reused in a later session for an identical call was refused
+  and not answered from history. The marker replaces it.
+- **`release_leases` is never a default**, is refused on a resume and on the
+  acting admin's own account, and a failed release rolls the whole act back.
+- **A spent budget releases nothing.** The refusal names the yield; the seat
+  makes it, or the lease lapses and says so. An automatic release would end
+  work a seat could still report on.
+- **"Once per window" is the stored budget window.** A raised limit inside a
+  window does not open a new one, so a second exhaustion after a raise in the
+  same window records nothing and tells nobody.
+- **The holder's own refusal is not sent to the holder**, also when the
+  holder is the issue's assignee.
+- **What ends a HOLD row is an act on the issue, not a button.** The ready
+  lane's answer rule (a comment, status change, assignment or claim by an
+  account other than the reporter), or anyone claiming the issue again. No
+  new write was added to acknowledge one.
+- **The last refusal is the newest only, per agent, outside the trail.** A
+  row per refusal would let a looping agent grow a table by being refused,
+  and a refusal on the trail would say something happened. It is diagnosis:
+  the agent's own calls move it and nothing may be decided from it. Agent
+  accounts only.
+- **"Nothing ready" is recorded at pickup**, not when the desk is read: the
+  desk is the hot read and stays a read.
+
+Found while building, and fixed before each was committed:
+
+- **F14.** Three older tests asserted the run match on purpose (pickup and
+  both review-queue receipts); they assert the new rule. Thirty-four test
+  cases in eight tests compared a replayed MCP answer with its original for
+  exact equality; they check the marker and compare the rest. Four mutants
+  are each caught.
+- **C8.** One older test encoded the rule C8 reverses for an admin. A first
+  wording of the desk's text added bytes to every desk answer; it was
+  reworded to the same length, so the trial's ceilings did not move.
+- **F13.** A refused charge stored no budget window, so an account whose
+  limit refuses the first write of a new window (a limit of zero, a frozen
+  account) would have had every refusal open its own window and record
+  again; the recorder stores the rolled window. Three mutants survived the
+  first tests (the frozen window, the holder told of its own refusal, a
+  stored inbox row for an account that cannot see the issue); the tests were
+  strengthened until each was caught. The new read of
+  the trail was undeclared to the imported-history check and is declared
+  native-only. The product gate failed once on this head: the new command
+  module is imported only by the app's composition root, which the test
+  selector's own check refuses until the map names its tests.
+- **F15.** Left to itself the planner found the held completions by walking
+  every issue event; the read is driven from the partial index and a test
+  plans it. A "newest settlement" clause in the first version was redundant
+  (a completion ends its lease and only a claim starts one, so a later report
+  always follows a claim) and no test could tell it from its absence; it was
+  removed. Eighteen mutants are each caught, after two survived the first
+  tests (that clause, and a success held like a refusal, now covered by a
+  streaming test of the middleware).
+
+What the lead ran against C8 on a live instance: a pause with no option
+named two leases and released neither; the option on a resume was refused
+422; a second pause with the option released both, recorded one
+`lease_released` each with the holder told, and no second `paused_user`; a
+token revocation left the lease active though the seat could no longer act,
+and released it on request; an offboard released on request; a member was
+refused 403. For an expired lease an admin was refused 428 with no
+generation and 409 with a wrong one, another seat was refused 403, and the
+exact generation settled it as `lease_lapsed` then `lease_released`, after
+which the issue was back in its assignee's ready lane.
+
+Found and not fixed:
+
+- **F14.** A key reused across sessions for an identical call is answered
+  from history where it was refused. The answer says so, and only for the
+  same credential. A process on older code refuses a receipt this release
+  stored, which fails closed. A list answer is not marked; no keyed write
+  answers with a list today.
+- **C8.** The cockpit's Admin, Agents buttons do not offer `release_leases`
+  and the page does not show the leases; removal has no MCP tool. A removed
+  account that watches an issue still gets an inbox row for the release the
+  removal wrote: the watcher fan-out does not skip removed accounts, which is
+  older than C8. A lease on an issue the acting admin cannot see would be
+  neither named nor released; no such issue exists today, because an admin
+  sees every project. An admin settling a lapsed lease leaves two events,
+  the lapse and the release. The lister reads every live lease in the
+  instance to find one account's.
+- **F13.** The refusal names at most 20 held leases and the events cover the
+  same 20. A seat that ignores the `next` keeps its leases until they lapse.
+  A delegating account that can no longer see the issue is not told, and
+  nothing tells the operator that it was skipped.
+- **F15.** A comment by any third account ends a HOLD row, as it lifts the
+  ready lane's hold. A completion recorded before migration 0086 stored no
+  verdict and is never listed. The row's `next_action` is a link to the
+  issue; no call is named for an agent. A replayed idempotency receipt of a
+  refusal is not traced, because the replay is answered before the route. A
+  seat that reads the desk and never calls pickup leaves no "nothing ready"
+  time. The trace costs one extra write for each refused request of an agent,
+  after the write token resolution already makes.
 
 ## Priorities
 

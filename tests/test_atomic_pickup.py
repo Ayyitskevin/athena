@@ -623,7 +623,7 @@ def test_expired_success_replay_is_historical_new_pickup_reacquires(setup):
     assert counts(path) == (1, 2)
 
 
-def test_negative_receipt_requires_new_poll_key_and_detects_body_and_run_mismatch(
+def test_negative_receipt_requires_new_poll_key_and_detects_a_body_mismatch(
     setup,
 ):
     client, path, _app, agent = setup
@@ -633,16 +633,18 @@ def test_negative_receipt_requires_new_poll_key_and_detects_body_and_run_mismatc
     issue(client, agent)
     assert checked(pickup(client, agent, **headers), 200) == original
     assert counts(path) == (0, 0)
-    for payload, request_headers in [
-        ({"limit": 2}, headers),
-        ({"project_id": 999}, headers),
-        ({}, {**headers, "X-Athena-Run": "run-b"}),
-    ]:
-        refused = pickup(client, agent, payload, **request_headers)
+    for payload in ({"limit": 2}, {"project_id": 999}):
+        refused = pickup(client, agent, payload, **headers)
         assert (
             refused.status_code == 409
             and refused.json()["code"] == "idempotency_mismatch"
         )
+    # The key names the poll, not the session (F14): the same poll under
+    # another run is the same receipt, marked as a replay, and claims nothing.
+    other_run = pickup(client, agent, **{**headers, "X-Athena-Run": "run-b"})
+    assert checked(other_run, 200) == original
+    assert other_run.headers["idempotent-replay"] == "true"
+    assert counts(path) == (0, 0)
     acquired = checked(
         pickup(client, agent, **{**headers, "Idempotency-Key": "new-poll"}), 200
     )

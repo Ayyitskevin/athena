@@ -81,7 +81,8 @@ def test_pickup_is_one_post_with_explicit_arguments_and_run(
             result = client.claim_next_ready(**arguments)
 
     # Historical receipt bytes pass through; no fresh context read or renewal.
-    assert result == receipt
+    # The transport marks the answer a replay, and the client says so (F14).
+    assert result == {**receipt, "_replayed": True}
     assert len(requests) == 1
     request = requests[0]
     assert request.url.query == b""

@@ -17,6 +17,7 @@ from fastapi import Request
 from starlette._utils import get_route_path
 from athena import config
 from athena.core import (
+    agent_signal_commands,
     db,
     deployment,
     deps,
@@ -499,6 +500,93 @@ class RunContextMiddleware:
             run_context.reset_run_id(run_token)
 
 
+class RefusalTraceMiddleware:
+    """Keep the newest refusal each agent account received (F15).
+
+    A refusal is an answer, so it is on no trail, and an operator could not tell
+    an agent refused on every call from one with nothing to do. Refusals are
+    raised from many places and answered by several handlers; every one of them
+    leaves through here as a 4xx JSON body with a registered ``code``, so this is
+    the one place that sees them all, whichever handler wrote the body.
+
+    Only a request a bearer token authenticated is traced (``current_actor``
+    names the account in the request's state), and only for an agent account,
+    which the command checks. The response is held until the row is written, so
+    a read that follows the refusal sees it; a refusal body is small, and one
+    that is not is passed through untraced. Tracing is best-effort: a failure
+    to record never changes the answer.
+
+    A replayed receipt does not pass through here: the idempotency middleware
+    answers it before the route runs. What is kept is what the routes refused.
+    """
+
+    _MAX_BODY_BYTES = 64 * 1024
+
+    def __init__(self, app, *, db_path):
+        self.app = app
+        self.db_path = db_path
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        held_start: dict | None = None
+        chunks: list[bytes] = []
+
+        async def traced_send(message):
+            nonlocal held_start
+            if message["type"] == "http.response.start":
+                actor_id = scope.get("state", {}).get("refusal_actor_id")
+                if actor_id is None or not 400 <= message["status"] <= 499:
+                    await send(message)
+                    return
+                held_start = message
+                return
+            if held_start is None or message["type"] != "http.response.body":
+                await send(message)
+                return
+            chunks.append(message.get("body", b""))
+            more = bool(message.get("more_body"))
+            body = b"".join(chunks)
+            if more and len(body) <= self._MAX_BODY_BYTES:
+                return
+            start, held_start = held_start, None
+            if not more:
+                await self._trace(scope, int(start["status"]), body)
+            await send(start)
+            await send({"type": "http.response.body", "body": body, "more_body": more})
+
+        await self.app(scope, receive, traced_send)
+
+    async def _trace(self, scope, status_code: int, body: bytes) -> None:
+        try:
+            code = json.loads(body).get("code")
+        except (ValueError, AttributeError):
+            return
+        if not isinstance(code, str) or not code:
+            return
+        try:
+            await asyncio.to_thread(
+                self._record,
+                user_id=int(scope["state"]["refusal_actor_id"]),
+                code=code,
+                status_code=status_code,
+                method=str(scope.get("method", "")),
+                path=str(scope.get("path", "")),
+            )
+        except Exception:  # noqa: BLE001 - the refusal must go out regardless
+            _logger.exception("could not record an agent's refusal")
+
+    def _record(self, **refusal) -> None:
+        # A connection of its own: the request's may hold the refused work's
+        # rolled-back transaction state, and this write must not depend on it.
+        conn = db.connect(self.db_path)
+        try:
+            agent_signal_commands.record_refusal(conn, **refusal)
+        finally:
+            conn.close()
+
+
 # Mutating REST APIs that support durable Idempotency-Key semantics. Browser and
 # session endpoints are deliberately outside this contract: replaying HTML, CSRF
 # state, redirects, or cookies would be unsafe. New API roots must opt in here.
@@ -529,16 +617,33 @@ _SECRET_CREATE_PATHS = frozenset(
         "/admin/webhooks",
     }
 )
+# What a key is matched on, beside the method, path, query and body: the
+# headers that change what the request asks for. The run-lineage headers are
+# not among them (F14). They say which session is asking, and `athena-mcp`
+# mints a run id per session, so a session that crashed and restarted retried
+# its in-flight write under a new run and was told the key belonged to a
+# different request, which is the one retry a key exists to make safe. The key
+# names the write; the event it recorded stays attributed to the run that made
+# it.
 _FINGERPRINT_HEADERS = (
     b"accept",
     b"content-encoding",
     b"content-type",
     b"if-match",
     b"if-unmodified-since",
+)
+# The match of the release before F14, which covered the run-lineage headers
+# too. A receipt stored then holds this fingerprint, so a retry is compared
+# with both: one that carries the same run headers, as it had to then, still
+# matches its receipt across the upgrade. New receipts store the current one.
+_EARLIER_FINGERPRINT_HEADERS = (
+    *_FINGERPRINT_HEADERS,
     FORK_FROM_EVENT_HEADER,
     PARENT_RUN_HEADER,
     RUN_HEADER,
 )
+_FINGERPRINT_VERSION = b"athena-idempotency-v3"
+_EARLIER_FINGERPRINT_VERSION = b"athena-idempotency-v2"
 _REPLAYABLE_RESPONSE_HEADERS = frozenset(
     {
         b"cache-control",
@@ -743,6 +848,18 @@ class IdempotencyMiddleware:
 
     @classmethod
     def _fingerprint(cls, scope, body: bytes) -> str:
+        return cls._digest(scope, body, _FINGERPRINT_VERSION, _FINGERPRINT_HEADERS)
+
+    @classmethod
+    def _earlier_fingerprint(cls, scope, body: bytes) -> str:
+        return cls._digest(
+            scope, body, _EARLIER_FINGERPRINT_VERSION, _EARLIER_FINGERPRINT_HEADERS
+        )
+
+    @classmethod
+    def _digest(
+        cls, scope, body: bytes, version: bytes, header_names: tuple[bytes, ...]
+    ) -> str:
         digest = hashlib.sha256()
 
         def add(label: bytes, value: bytes) -> None:
@@ -751,14 +868,14 @@ class IdempotencyMiddleware:
             digest.update(len(value).to_bytes(8, "big"))
             digest.update(value)
 
-        add(b"version", b"athena-idempotency-v2")
+        add(b"version", version)
         add(b"method", scope.get("method", "").encode("ascii"))
         raw_path = scope.get("raw_path")
         if raw_path is None:
             raw_path = scope.get("path", "").encode("utf-8")
         add(b"path", raw_path)
         add(b"query", scope.get("query_string", b""))
-        for header_name in _FINGERPRINT_HEADERS:
+        for header_name in header_names:
             values = cls._header_values(scope, header_name)
             add(header_name + b"-count", str(len(values)).encode("ascii"))
             for value in values:
@@ -775,6 +892,7 @@ class IdempotencyMiddleware:
         method: str,
         path: str,
         fingerprint: str,
+        earlier_fingerprint: str,
     ) -> idempotency.ClaimResult:
         return await asyncio.to_thread(
             self._run_db,
@@ -785,6 +903,7 @@ class IdempotencyMiddleware:
             method=method,
             path=path,
             request_fingerprint=fingerprint,
+            earlier_fingerprints=(earlier_fingerprint,),
             lease_seconds=self.lease_seconds,
         )
 
@@ -972,6 +1091,7 @@ class IdempotencyMiddleware:
             await self.app(scope, replay_receive, send)
             return
         fingerprint = self._fingerprint(scope, body)
+        earlier_fingerprint = self._earlier_fingerprint(scope, body)
 
         deadline = asyncio.get_running_loop().time() + self.wait_seconds
         poll_delay = 0.025
@@ -984,6 +1104,7 @@ class IdempotencyMiddleware:
                     method=method,
                     path=path,
                     fingerprint=fingerprint,
+                    earlier_fingerprint=earlier_fingerprint,
                 )
             except sqlite3.Error:
                 _logger.exception("could not claim idempotency key")

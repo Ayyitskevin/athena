@@ -16,7 +16,8 @@ it where one exists. These codes carry their facts as fields beside the prose:
 `claim_held` (`holder`, `expires_at`, `events_after`), `lease_generation_required`
 to the lease's holder (`generation`), `fence_overlap` (`fence`), `rate_limited`
 (`rate_limit`), `payload_too_large` (`limit_bytes`), `capacity_reached` (`limit`),
-`agent_budget_exhausted` (`budget`), `cursor_ahead` (`latest_visible_event_id`),
+`agent_budget_exhausted` (`budget`, `held_leases`, `retry_after_seconds`),
+`cursor_ahead` (`latest_visible_event_id`),
 `approval_required` (`approval`, `events_after`) and
 `idempotency_authorization_changed` (`issue_id`, when the keyed write named an
 issue). A `validation_error` names a bound (a maximum length, a range) in its
@@ -30,7 +31,13 @@ not say whether the write was applied. A keyed write that hands the issue away
 is `get_issue_work_context(issue_id=<the refusal's issue_id>)`: if the issue's
 activity shows your write, it is done; if not, repeat it under a new
 `idempotency_key`. Never reuse the refused key for a different call. It is refused
-until the original answer would have expired. The codes are listed in
+until the original answer would have expired. A key is matched on the call and
+your credential, not on your run: if your session restarts mid-write, repeat the
+call with the same key and arguments and you get the first answer, whatever run
+id the new session has. A tool answer that is a stored one carries
+`_replayed: true`: it is what the first call was told, as it was then, so a
+lease in it may have lapsed since, and a new intent (a new poll) needs a new
+key. The codes are listed in
 [AGENT_API.md](AGENT_API.md#refusal-codes).
 `GET /openapi-agent.json` is the REST surface your token can call, without the browser
 routes `/openapi.json` also lists, and it declares per operation the bearer scheme,
@@ -433,10 +440,13 @@ To decline a delegation: MCP `decline_delegation(issue_id, generation?)` · REST
 - **Never delete.** Issues cannot be destroyed. Archive one instead:
   `POST /issues/{issue_id}/archive` hides it from default lists and keeps its history.
 - **Never sweep leases.** Expired leases are shown to their holder in the desk. Settle
-  only your own, with `complete_claim` and the generation you observed. An admin cannot
-  settle another actor's expired lease. Do not clear leases in bulk. A lapse is
+  only your own, with `complete_claim` and the generation you observed. Only an admin
+  may settle another actor's expired lease, one lease at a time and naming its
+  generation. Do not clear leases in bulk. A lapse is
   recorded once as a `lease_lapsed` event and told to the issue's assignee and the
-  account that delegated it; recording it releases nothing.
+  account that delegated it; recording it releases nothing. Pausing, revoking or
+  offboarding an agent names its active leases and releases them only when the
+  operator asks with `release_leases` ([ACTIVE_WORK.md](ACTIVE_WORK.md)).
 - **Never bulk-acknowledge notifications.** `mark_notifications_read` marks every unread
   row, including ones that arrived after you read. Acknowledge what you handled with
   `mark_notification_read`: `through_id` (every unread row up to and including the

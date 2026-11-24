@@ -29,6 +29,7 @@ from starlette._utils import get_route_path
 from athena import __version__ as athena_version
 from athena import config
 from athena.aegis import api as aegis_api
+from athena.aegis import budget_exhaustion_commands
 from athena.aegis import automation as aegis_automation
 from athena.aegis import fleet_attention_api as aegis_fleet_attention_api
 from athena.aegis import notification_priority_api as aegis_notification_priority_api
@@ -49,6 +50,7 @@ from athena.aegis import fleet_work_api as aegis_fleet_work_api
 from athena.aegis import sprints_api as aegis_sprints_api
 from athena.aegis import work_context_api as aegis_work_context_api
 from athena.core import (
+    account_leases,
     activity,
     agent_runs_api,
     activity_api,
@@ -85,6 +87,7 @@ from athena.core import (
     workers_api,
 )
 from athena.aegis import issue_undo as aegis_issue_undo
+from athena.aegis import lease_commands as aegis_lease_commands
 from athena.aegis import lease_lapse_commands as aegis_lease_lapse_commands
 from athena.mentor import api as mentor_api
 from athena.mentor import learnings_api as mentor_learnings_api
@@ -115,6 +118,7 @@ from athena.middleware import (
     SECURITY_HEADERS,
     DeploymentBoundaryMiddleware,
     IdempotencyMiddleware,
+    RefusalTraceMiddleware,
     RequestBodyLimitMiddleware,
     RequestConnectionMiddleware,
     RunContextMiddleware,
@@ -476,6 +480,13 @@ def create_app(
     # down: a lapsed lease its caller is accountable for (C4, D11). Same reason
     # as above: core owns the feed and may not import aegis.
     feed_observers.register("lease_lapses", aegis_lease_lapse_commands.observe_lapses)
+    # Pausing, revoking or offboarding an account names its active leases and,
+    # when the operator asks, releases them through the lease command (C8,
+    # D12). Same reason again: core owns those acts and may not import aegis.
+    account_leases.register(
+        aegis_lease_commands.account_active_leases,
+        aegis_lease_commands.release_account_lease,
+    )
 
     # Every JSON refusal carries a registered `code` beside its unchanged
     # `detail` (core/refusal_codes.py owns the codes): the HTTPException and
@@ -536,17 +547,37 @@ def create_app(
     # browser, and MCP through REST) reports the same 429 with the same stable code
     # and Retry-After, and an agent hitting its ceiling always reaches the trail as
     # the decision the operator should see.
+    #
+    # Once per budget window (F13): the first refusal records the exhaustion and
+    # tells the accounts that answer for each issue the refused account holds; a
+    # later one records nothing. Every refusal names those leases, so the seat
+    # can yield them with reason `capacity`, which is not metered.
     def _budget_exhausted(request: Request, exc: Exception) -> JSONResponse:
         if not isinstance(exc, budgets.BudgetExhausted):
             raise exc
+        holder_id = exc.budget.user_id
+        held: list[dict] = []
         try:
             conn = db.connect(request.app.state.db_path)
             try:
-                budget_commands.record_exhaustion(
+                held = budget_exhaustion_commands.held_leases(conn, holder_id)
+                leases_held = "1 lease" if len(held) == 1 else f"{len(held)} leases"
+                first = budget_commands.record_exhaustion(
                     conn,
-                    actor_id=exc.budget.user_id,
-                    detail=f"{request.method} {request.url.path}",
+                    actor_id=holder_id,
+                    detail=(
+                        f"{exc.budget.action_used}/{exc.budget.action_limit} "
+                        f"metered actions this {exc.budget.window}; holding "
+                        f"{leases_held}; first refused: {request.method} "
+                        f"{request.url.path}"
+                    ),
                 )
+                if first is not None:
+                    budget_exhaustion_commands.tell_accountable(
+                        conn,
+                        holder_id=holder_id,
+                        retry_after_seconds=exc.retry_after_seconds,
+                    )
             finally:
                 conn.close()
         except Exception:  # noqa: BLE001 — the 429 must go out regardless
@@ -557,6 +588,8 @@ def create_app(
                 "detail": str(exc),
                 "code": budgets.BUDGET_EXHAUSTED_CODE,
                 "budget": exc.budget.public(),
+                "held_leases": held,
+                "retry_after_seconds": exc.retry_after_seconds,
             },
             headers={"Retry-After": str(exc.retry_after_seconds)},
         )
@@ -674,6 +707,10 @@ def create_app(
 
     app.add_exception_handler(_BrowserSessionRequired, _browser_session_required)
 
+    # Registered first, therefore innermost: it sees each refusal as the routes
+    # and their handlers answered it, before the idempotency middleware stores
+    # the response (F15).
+    app.add_middleware(RefusalTraceMiddleware, db_path=resolved_db)
     app.add_middleware(
         IdempotencyMiddleware,
         db_path=resolved_db,

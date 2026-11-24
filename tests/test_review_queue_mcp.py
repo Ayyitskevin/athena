@@ -89,7 +89,11 @@ def test_completion_extensions_are_one_post_and_keep_nested_null(
             "idempotency_key": key,
             **extension,
         }
-        assert _call(client, "complete_claim", args, mcp=mcp) == receipt
+        # The transport marks every answer a replay; the client says so (F14).
+        assert _call(client, "complete_claim", args, mcp=mcp) == {
+            **receipt,
+            "_replayed": True,
+        }
 
     assert len(requests) == 1
     request = requests[0]

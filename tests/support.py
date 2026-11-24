@@ -236,6 +236,23 @@ def events(db_file: Path, *verbs: str) -> list[dict[str, Any]]:
     return [row for row in rows if not verbs or row["verb"] in verbs]
 
 
+def answer_fields(answer: Any) -> dict[str, Any]:
+    """The fields of one MCP answer: the client's dict, or what
+    ``FastMCP.call_tool`` returned (its content blocks and structured value)."""
+    if isinstance(answer, tuple):
+        return dict(json.loads(answer[0][0].text))
+    return dict(answer)
+
+
+def replayed_fields(answer: Any) -> dict[str, Any]:
+    """The fields of an MCP answer that Athena replayed from a stored receipt,
+    without its marker. A stored answer says it is one (``_replayed``, F14);
+    everything else is the first answer, which is what a test compares."""
+    fields = answer_fields(answer)
+    assert fields.pop("_replayed", None) is True, "a stored answer must say so"
+    return fields
+
+
 def lease_facts(lease: Mapping[str, Any]) -> dict[str, Any]:
     """A lease answer without its countdown or the claim answer's issue ETag.
 

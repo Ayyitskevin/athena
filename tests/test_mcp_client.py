@@ -15,6 +15,7 @@ import httpx
 import pickle
 import pytest
 from fastapi.testclient import TestClient
+from support import answer_fields, replayed_fields
 
 from athena.main import create_app
 from athena.aegis import automation, issues
@@ -1217,10 +1218,12 @@ def test_automation_rule_lifecycle_through_client(tmp_path):
         assert disabled["enabled"] is False
         assert disabled["schedule_status"] == "disabled"
         assert (
-            ath.set_automation_rule_enabled(
-                created["id"],
-                False,
-                idempotency_key="disable-scheduled-rule",
+            replayed_fields(
+                ath.set_automation_rule_enabled(
+                    created["id"],
+                    False,
+                    idempotency_key="disable-scheduled-rule",
+                )
             )
             == disabled
         )
@@ -1463,7 +1466,7 @@ def test_sprint_lifecycle_through_mcp_is_audited_and_idempotent(tmp_path):
 
         first = asyncio.run(server.call_tool("create_sprint", create_args))
         replay = asyncio.run(server.call_tool("create_sprint", create_args))
-        assert replay == first
+        assert replayed_fields(replay) == answer_fields(first)
         sprint = json.loads(first[0][0].text)
         assert sprint["state"] == "planned"
         assert [row["id"] for row in ath.list_sprints(project["id"])] == [sprint["id"]]
@@ -1699,7 +1702,7 @@ def test_client_replays_one_logical_mutation_and_surfaces_mismatch(tmp_path):
         first = ath.create_issue(title="one logical write", idempotency_key=key)
         replay = ath.create_issue(title="one logical write", idempotency_key=key)
 
-        assert replay == first
+        assert replayed_fields(replay) == first
         assert [issue["id"] for issue in ath.list_issues()] == [first["id"]]
         assert [
             event["verb"] for event in ath.recent_events(kind="issue")["events"]
@@ -2483,7 +2486,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         }
         first = asyncio.run(server.call_tool("create_issue", keyed_args))
         replay = asyncio.run(server.call_tool("create_issue", keyed_args))
-        assert replay == first
+        assert replayed_fields(replay) == answer_fields(first)
         assert [i["title"] for i in ath.list_issues()].count("via mcp once") == 1
         import json
 

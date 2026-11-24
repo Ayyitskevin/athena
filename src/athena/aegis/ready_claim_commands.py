@@ -19,7 +19,7 @@ from athena.aegis import (
     work_context,
 )
 from athena.aegis.issue_commands import IssueCommandError, _require_issue_writer
-from athena.core import access, db
+from athena.core import access, agent_signal_commands, db
 from athena.core.ids import MAX_SQLITE_INTEGER
 
 SCHEMA = "athena.ready_claim.v1"
@@ -155,6 +155,11 @@ def claim_next_ready(
             conn, actor=actor, now=now, limit=limit, project_id=project_id
         )
         if not lane["items"]:
+            # A seat told there is nothing leaves that for the operator to
+            # read (F15): the time, kept per agent account, in this transaction.
+            agent_signal_commands.record_nothing_ready(
+                conn, user_id=int(actor["id"]), commit=False
+            )
             return {
                 **result,
                 "reason": "nothing_ready",

@@ -901,6 +901,39 @@ def record_lease_lapsed(
     )
 
 
+def record_holder_budget_exhausted(
+    conn: sqlite3.Connection,
+    *,
+    holder_id: int,
+    holder_name: str,
+    issue_id: int,
+    generation: str,
+    retry_after_seconds: int,
+    commit: bool,
+) -> dict:
+    """Record that the holder of this issue's lease ran out of budget (F13).
+
+    The actor is the holder, whose own refused write is the cause; nothing was
+    applied and the lease is untouched. The detail has the shape a lapse's has:
+    ``generation <g>; holder_id <n>; retry_after_seconds <n>; holder <name>``,
+    the name last because a name may hold any character. Recorded once per
+    budget window by ``budget_exhaustion_commands.tell_accountable``, which
+    chooses who is told. ``commit=False`` folds it into that transaction."""
+    return activity.record(
+        conn,
+        actor_id=holder_id,
+        verb="holder_budget_exhausted",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=(
+            f"generation {generation}; holder_id {holder_id}; "
+            f"retry_after_seconds {retry_after_seconds}; holder {holder_name}"
+        ),
+        facts={"generation": generation},
+        commit=commit,
+    )
+
+
 def record_lease_released(
     conn: sqlite3.Connection,
     *,
@@ -911,7 +944,9 @@ def record_lease_released(
     holder_name: str,
     commit: bool,
 ) -> dict:
-    """Record that an admin ended another account's live lease (U3).
+    """Record that an admin ended another account's live lease (U3), settled its
+    lapsed row, or released it while pausing, revoking or offboarding the
+    account (C8). A lapsed row's lapse is recorded first, as ``lease_lapsed``.
 
     A release, not a completion: the holder finished nothing, so this is its own
     verb and no reader of ``claim_completed`` (settlement, work progress, the

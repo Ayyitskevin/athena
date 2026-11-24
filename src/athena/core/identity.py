@@ -76,6 +76,9 @@ def current_actor(
                 detail="invalid or revoked token",
                 code="unauthenticated",
             )
+        # Who a refusal of this request is answered to (F15): set before the
+        # limiter and the pause check, so those refusals are attributed too.
+        request.state.refusal_actor_id = int(actor["id"])
         _enforce_token_rate_limit(request, actor)
         # Bearer requests are bounded by the per-token limiter above, so the
         # paused-refusal recording is already flood-bounded here.

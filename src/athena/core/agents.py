@@ -15,6 +15,7 @@ import sqlite3
 from athena.core import (
     activity,
     agent_run_checkins,
+    agent_signals,
     db,
     reported_usage,
     tokens,
@@ -57,6 +58,14 @@ def agent_run_health(conn: sqlite3.Connection, *, agent_id: int | None = None) -
             selected_agent = selected_agents[0] if selected_agents else None
 
         rows = [_agent_run_health(conn, agent) for agent in selected_agents]
+        # What each was last refused and when a pickup last told it nothing
+        # was ready (F15): the trail has neither, because neither happened to
+        # anything. Diagnosis only; an agent's own calls move them.
+        signals = agent_signals.last_signals(
+            conn, [int(row["user"]["id"]) for row in rows]
+        )
+        for row in rows:
+            row.update(signals[int(row["user"]["id"])])
         checkins = agent_run_checkins.list_recent_checkins(
             conn,
             agent_id=agent_id,

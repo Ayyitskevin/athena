@@ -230,8 +230,25 @@ def test_historical_receipt_cannot_restore_a_superseded_candidate(board, mode):
 
 
 @pytest.mark.parametrize("mode", ["submission", "review"])
-@pytest.mark.parametrize("change", ["version", "generation", "run"])
-def test_same_key_cannot_change_version_generation_or_run(board, mode, change):
+def test_same_key_under_another_run_replays_and_writes_nothing(board, mode):
+    """The key names the write, not the session (F14): a restarted session
+    retries under a new run and gets the first answer."""
+    with TestClient(create_app(board["path"])) as client:
+        path, body, actor_headers = prepare(client, board, mode)
+        first = client.post(path, json=body, headers=actor_headers)
+        checked(first)
+        before = snapshot(board["path"])
+        restarted = {**actor_headers, "X-Athena-Run": "the-session-after-a-restart"}
+        replay = client.post(path, json=body, headers=restarted)
+        checked(replay)
+        assert replay.content == first.content
+        assert replay.headers["Idempotent-Replay"] == "true"
+        assert snapshot(board["path"]) == before
+
+
+@pytest.mark.parametrize("mode", ["submission", "review"])
+@pytest.mark.parametrize("change", ["version", "generation"])
+def test_same_key_cannot_change_version_or_generation(board, mode, change):
     with TestClient(create_app(board["path"])) as client:
         path, body, actor_headers = prepare(client, board, mode)
         first = client.post(path, json=body, headers=actor_headers)
@@ -239,9 +256,7 @@ def test_same_key_cannot_change_version_generation_or_run(board, mode, change):
         before = snapshot(board["path"])
         changed = deepcopy(body)
         changed_headers = dict(actor_headers)
-        if change == "run":
-            changed_headers["X-Athena-Run"] = "another-logical-execution"
-        elif change == "generation":
+        if change == "generation":
             changed["generation"] = "f" * 32
         elif mode == "submission":
             changed["candidate_submission"]["identity"]["revision"] = "c" * 40

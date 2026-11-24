@@ -21,8 +21,8 @@ situation through five reads and a few 403s:
   now, and `leases.lapsed` — rows the clock released while you were away, on
   open or done issues (`issue_done`), which stay yours to settle deliberately
   (`complete_claim` with the row's generation) because nothing sweeps them
-  for you. Reading does not settle anything, and an admin cannot settle another
-  account's expired row. `lapsed_total` counts the full lane before its shared
+  for you. Reading does not settle anything; only an admin may settle another
+  account's expired row, naming its generation. `lapsed_total` counts the full lane before its shared
   `limit`; `lapsed_clipped` says whether rows are omitted. The oldest expiry,
   `lapsed_oldest_expires_at`, is null when empty or clipped (unknown when
   clipped); total/clipped distinguish these cases. The page is ordered by

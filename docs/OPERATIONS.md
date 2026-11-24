@@ -1346,6 +1346,12 @@ curl -fsS 'http://127.0.0.1:8000/activity/agent-runs?agent_id=2' \
   -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN"
 ```
 
+Each agent's row also carries `last_refusal` (the newest 4xx answer it
+received: `code`, `status_code`, `request`, `at`) and `last_nothing_ready_at`
+(the newest time a pickup told it nothing was ready), so an idle agent that is
+refused on every call reads differently from one with no work. See
+[EXCEPTION_SURFACES.md](EXCEPTION_SURFACES.md#what-an-agent-was-last-refused).
+
 The cockpit's **Active claimed work** section uses a separate read model for the
 operator question "what is claimed and what needs attention?":
 
@@ -1435,11 +1441,20 @@ curl -fsS -X POST http://127.0.0.1:8000/issues \
 ```
 
 The key must be 1–255 visible ASCII characters. Athena fingerprints the method,
-raw path and query, bounded raw request body, `Accept`, content type/encoding,
-conditional headers, and Athena run-lineage headers. Reusing a key for different
-request bytes returns `409`; it never replays the first success over a different
-mutation. Multipart retries must preserve the raw boundary and bytes, not merely
-the same logical fields.
+raw path and query, bounded raw request body, `Accept`, content type/encoding
+and conditional headers. Reusing a key for different request bytes returns
+`409`; it never replays the first success over a different mutation. Multipart
+retries must preserve the raw boundary and bytes, not merely the same logical
+fields.
+
+The run headers (`X-Athena-Run`, `X-Athena-Parent-Run`,
+`X-Athena-Fork-From-Event`) are not part of that match. They say which session
+is asking, and `athena-mcp` mints a run id for each session unless
+`ATHENA_RUN_ID` is set, so a session that crashed and restarted retries its
+in-flight write under a new run. The retry replays the first answer; nothing is
+written twice, and the event the write recorded stays attributed to the run
+that made it. A receipt stored by a release that did match on the run headers
+still matches a retry that carries the same ones.
 
 The first worker commits an executing claim before it runs the route. An
 identical concurrent request waits up to `ATHENA_IDEMPOTENCY_WAIT_SECONDS`.
@@ -1550,7 +1565,11 @@ ignoring its retry contract.
 The optional MCP `AthenaClient` and every mutation tool accept an optional
 `idempotency_key`. For a retry-critical operation, choose 1-255 visible ASCII
 characters as an opaque, non-secret key before the first attempt and reuse it
-only with the exact same tool arguments, credential, and run lineage. Omitting
+only with the exact same tool arguments and credential. The run may differ: a
+restarted session retries under the run id its new launch minted. A tool
+answer that Athena replayed from a stored receipt carries `_replayed: true`
+(REST sends `Idempotent-Replay: true`), so a caller can tell the first call's
+answer from a fresh one. Omitting
 the field preserves ordinary keyless semantics: Athena deliberately does not
 generate a key inside the tool call,
 because a caller cannot recover that key if the MCP response itself is lost.

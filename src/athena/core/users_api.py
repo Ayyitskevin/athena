@@ -11,7 +11,7 @@ import secrets
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel, Field
 
 from athena.core.request_models import RequestBody
@@ -25,6 +25,7 @@ from athena.core import (
     users,
 )
 from athena.core.ids import RowIdPath
+from athena.core.packet_time import Timestamp
 from athena.core.deps import get_conn
 from athena.core.identity import (
     admin_actor,
@@ -161,9 +162,39 @@ class UserPausedUpdate(RequestBody):
     paused: bool
 
 
+class AccountLeaseOut(BaseModel):
+    """One active lease of the account an act stopped (C8). Only a lease on an
+    issue the caller may see is listed."""
+
+    issue_id: int
+    key: str | None
+    title: str
+    generation: str
+    expires_at: Timestamp
+    # True when this act released it (``release_leases``), recorded as
+    # ``lease_released``; False when the lease is still held.
+    released: bool
+
+
+#: The query option the four acts share. Never a default (ruling K1).
+RELEASE_LEASES_QUERY = Query(
+    False,
+    description=(
+        "Also release each of the account's active leases in this act, recorded "
+        "per lease as lease_released. Without it nothing is released."
+    ),
+)
+
+
+class UserPausedOut(UserOut):
+    # The account's active leases when the pause or resume ran (C8).
+    active_leases: list[AccountLeaseOut]
+
+
 class TokenRevocationOut(BaseModel):
     user_id: int
     revoked_token_count: int
+    active_leases: list[AccountLeaseOut]
 
 
 class OffboardOut(BaseModel):
@@ -171,6 +202,7 @@ class OffboardOut(BaseModel):
     role: Role
     revoked_session_count: int
     revoked_token_count: int
+    active_leases: list[AccountLeaseOut]
 
 
 class RemoveOut(BaseModel):
@@ -178,6 +210,7 @@ class RemoveOut(BaseModel):
     removed_at: str
     revoked_session_count: int
     revoked_token_count: int
+    active_leases: list[AccountLeaseOut]
 
 
 class AgentOnboard(RequestBody):
@@ -569,19 +602,26 @@ def clear_budget(
         ) from exc
 
 
-@router.put("/{user_id}/paused", response_model=UserOut)
+@router.put("/{user_id}/paused", response_model=UserPausedOut)
 def update_paused(
     user_id: RowIdPath,
     payload: UserPausedUpdate,
+    release_leases: bool = RELEASE_LEASES_QUERY,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     """The operator lever between watch and revoke: pause freezes the account at
     identity resolution without destroying anything; resume restores it exactly.
-    Audited, idempotent, and refuses to pause the last active admin."""
+    Audited, idempotent, and refuses to pause the last active admin. Answers
+    with the account's active leases; ``release_leases=true`` on a pause also
+    releases them (422 on a resume or on your own account)."""
     try:
         return agent_commands.set_user_paused(
-            conn, actor=actor, target_user_id=user_id, paused=payload.paused
+            conn,
+            actor=actor,
+            target_user_id=user_id,
+            paused=payload.paused,
+            release_leases=release_leases,
         )
     except agent_commands.AgentCommandError as exc:
         raise Refusal(
@@ -594,16 +634,18 @@ def update_paused(
 @router.delete("/{user_id}/tokens", response_model=TokenRevocationOut)
 def revoke_user_tokens(
     user_id: RowIdPath,
+    release_leases: bool = RELEASE_LEASES_QUERY,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     """Admin kill switch: revoke EVERY live token a user holds. Unlike the
     self-service DELETE /tokens/{id} (owner-scoped), this reaches another user's
     credentials, so it is admin-only — the lever to lock out a compromised or
-    runaway agent. Idempotent and audited."""
+    runaway agent. Idempotent and audited. Answers with the account's active
+    leases; ``release_leases=true`` also releases them."""
     try:
         return agent_commands.revoke_agent_tokens(
-            conn, actor=actor, target_user_id=user_id
+            conn, actor=actor, target_user_id=user_id, release_leases=release_leases
         )
     except agent_commands.AgentCommandError as exc:
         raise Refusal(
@@ -616,13 +658,18 @@ def revoke_user_tokens(
 @router.post("/{user_id}/offboard", response_model=OffboardOut)
 def offboard(
     user_id: RowIdPath,
+    release_leases: bool = RELEASE_LEASES_QUERY,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     """Admin one-click offboard: demote the user to viewer, revoke every session,
-    and revoke every token — one audited action. Refuses to strip the last admin."""
+    and revoke every token — one audited action. Refuses to strip the last admin.
+    Answers with the account's active leases; ``release_leases=true`` also
+    releases them."""
     try:
-        return agent_commands.offboard_user(conn, actor=actor, target_user_id=user_id)
+        return agent_commands.offboard_user(
+            conn, actor=actor, target_user_id=user_id, release_leases=release_leases
+        )
     except agent_commands.AgentCommandError as exc:
         raise Refusal(
             status_code=STATUS_BY_KIND[exc.kind],
@@ -634,14 +681,19 @@ def offboard(
 @router.post("/{user_id}/remove", response_model=RemoveOut)
 def remove(
     user_id: RowIdPath,
+    release_leases: bool = RELEASE_LEASES_QUERY,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     """Admin removal: offboard AND stamp the tombstone in one audited action.
     The user vanishes from every list, picker, and email lookup; attributed
-    history stays intact (nothing is deleted). Restore with /restore."""
+    history stays intact (nothing is deleted). Restore with /restore. Answers
+    with the account's active leases; ``release_leases=true`` also releases
+    them."""
     try:
-        return agent_commands.remove_user(conn, actor=actor, target_user_id=user_id)
+        return agent_commands.remove_user(
+            conn, actor=actor, target_user_id=user_id, release_leases=release_leases
+        )
     except agent_commands.AgentCommandError as exc:
         raise Refusal(
             status_code=STATUS_BY_KIND[exc.kind],
