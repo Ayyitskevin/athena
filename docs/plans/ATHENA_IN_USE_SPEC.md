@@ -500,6 +500,13 @@ committed:
   when a copy from an earlier refusal was still there; the line names that
   copy and prints no command until it is moved.
 
+- **Code scanning read a local named `secrets` as a secret reaching the
+  doctor's warning line.** It held a fixed sentence; no secret reaches that
+  line. The local is renamed and nothing is suppressed.
+- **The coverage floors rose to 94.06, 85.95 and 92.19.** Hosted CI failed
+  the head because branch and combined coverage had risen more than half a
+  point above their floors.
+
 Decisions the lead took while building, each reversible by the owner:
 
 - A printed remedy runs exactly as printed and does what its line says, or
