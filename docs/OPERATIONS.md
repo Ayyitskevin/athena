@@ -762,7 +762,7 @@ password manager before continuing.
 (
   set -euo pipefail
 
-  install -d -m 700 /var/lib/athena/attachments
+  install -d -m 700 /var/lib/athena /var/lib/athena/attachments
   export ATHENA_DB=/var/lib/athena/athena.db
   export ATHENA_ATTACH_DIR=/var/lib/athena/attachments
   athena_bootstrap_token="$(
@@ -848,6 +848,31 @@ password manager before continuing.
   unset ATHENA_BOOTSTRAP_TOKEN athena_bootstrap_token athena_admin_password
 )
 ```
+
+The data directory and the database are private to the service user: the
+database holds password hashes, CSRF tokens and webhook secrets in the clear.
+The block creates `/var/lib/athena` and its `attachments` directory `0700`
+(naming both, since `install -d` gives a parent it creates on the way the
+umask's mode). `athena-serve --bootstrap` (and `athena-doctor --migrate`)
+creates a missing database file `0600`, and a missing data directory `0700`,
+whatever the process umask; SQLite creates `athena.db-wal` and
+`athena.db-shm` with the database file's own mode. A directory or file that
+already exists keeps its mode. A dangling symbolic link at the database path
+gets its target created `0600` too. `athena-doctor` warns on a data directory,
+database, `-wal` or `-shm` file open to group or others. It prints a command
+only where running it as written is safe and does what the line says:
+`chmod 600 /var/lib/athena/athena.db` for a regular file the account running the
+doctor owns, in a directory of that account that is neither sticky nor
+world-writable, when the file is not writable by its group or others; and
+`chmod 700 /var/lib/athena` for that directory when it is not writable by its
+group or others and holds nothing but Athena's entries (the database, its
+`-wal`, `-shm` and `-journal` files, `athena.db.kept`, and the configured
+attachment directory). Otherwise it states the condition and prints no command:
+a shared directory such as `/tmp`, another account's directory or file, a
+group-writable mode a service account may rely on, a directory holding other
+entries (`lost+found`, backups, another application's files), a database path
+that is a directory, or a path holding a control character. Paths in its lines
+are printed with control characters escaped.
 
 `--bootstrap` is refused outside local mode. Static policy, a read-only
 recognition check, and a complete in-memory migration/schema rehearsal run

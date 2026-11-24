@@ -45,6 +45,29 @@ from athena.core.run_replay import export_run_replay_database
 from athena.core.source_import import SOURCE_KINDS, write_source_bundle
 
 
+def _printable(text: str) -> str:
+    """``text`` with every character a terminal would act on escaped.
+
+    Every line the operator CLIs print about a database goes through here: a
+    path, a schema object name or a migration name read from the database can
+    hold a newline or an escape sequence, and none may reach the terminal raw."""
+    return "".join(
+        character
+        if character.isprintable()
+        else character.encode("unicode_escape", "backslashreplace").decode("ascii")
+        for character in text
+    )
+
+
+def _shell_word(text: str) -> str | None:
+    """``text`` as one shell word, or None when it holds a character a terminal
+    acts on: no quoting form is safe to paste into every shell (bash's
+    ``$'...'`` runs embedded text under POSIX sh), so no command is printed."""
+    if text.isprintable():
+        return shlex.quote(text)
+    return None
+
+
 def _sqlite_uri(path: Path, *, mode: str) -> str:
     """Build an exact SQLite URI without treating path bytes as URI syntax."""
     if mode not in {"ro", "rw"}:
@@ -71,6 +94,165 @@ def _dry_run_migration(db_path: Path) -> None:
         candidate.close()
 
 
+# A database Athena creates is private to the service user (H10): it holds
+# password hashes, CSRF tokens and webhook secrets in the clear. SQLite gives its
+# -wal and -shm files the database file's own permission bits.
+DATA_DIRECTORY_MODE = 0o700
+DATABASE_FILE_MODE = 0o600
+
+
+def _create_private_database(db_path: Path) -> None:
+    """Create a missing data directory 0700 and a missing database file 0600.
+
+    Only on creation, and only the database's own directory (its parent must
+    exist). An existing directory or file keeps its mode: changing what the
+    operator set is theirs to do, and ``athena-doctor`` reports one that is
+    wider. The modes are passed to ``mkdir``/``open``, so a process umask can
+    only narrow them further."""
+    directory = db_path.parent
+    if not os.path.lexists(directory):
+        directory.mkdir(mode=DATA_DIRECTORY_MODE)
+    if os.path.islink(db_path) and not db_path.exists():
+        # A dangling symlink: SQLite would follow it and create the target with
+        # the umask's mode. Create the target private first.
+        db_path = Path(os.path.realpath(db_path))
+    elif os.path.lexists(db_path):
+        return
+    try:
+        descriptor = os.open(
+            db_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            DATABASE_FILE_MODE,
+        )
+    except FileExistsError:
+        return
+    os.close(descriptor)
+
+
+def _shared_directory(directory: Path) -> str | None:
+    """Why a ``chmod`` of a file in ``directory`` would not make it private, or
+    None when the directory is the caller's own and not shared."""
+    try:
+        metadata = directory.stat()
+    except OSError:
+        return f"{directory} cannot be inspected"
+    mode = stat.S_IMODE(metadata.st_mode)
+    if metadata.st_uid != os.geteuid():
+        return f"{directory} belongs to another account"
+    if mode & (stat.S_ISVTX | stat.S_IWOTH):
+        return f"{directory} is shared (mode {mode:04o})"
+    return None
+
+
+def _athena_entries(database: Path, attach_dir: Path | None) -> set[str]:
+    """The exact names Athena keeps beside its database: the database, its
+    ``-wal``, ``-shm`` and ``-journal`` files, the copy a remedy keeps, and the
+    configured attachment directory when it lives there."""
+    names = {database.name + suffix for suffix in ("", "-wal", "-shm", "-journal")}
+    names.add(database.name + ".kept")
+    if attach_dir is not None and attach_dir.absolute().parent == database.parent:
+        names.add(attach_dir.name)
+    return names
+
+
+def _other_entries(directory: Path, database: Path, attach_dir: Path | None) -> bool:
+    """Whether ``directory`` holds any entry but Athena's own (``lost+found``,
+    a backups directory, another application's file): a ``chmod 700`` of it
+    would then decide for them, so none is printed."""
+    try:
+        names = set(os.listdir(directory))
+    except OSError:
+        return True
+    return bool(names - _athena_entries(database, attach_dir))
+
+
+def _file_mode_warnings(db_path: Path, attach_dir: Path | None = None) -> list[str]:
+    """One line per data file open to group or others.
+
+    A ``chmod`` is printed only where running it as written is safe and does
+    what the line says: for a regular file the caller owns, in a directory of
+    the caller's own that is neither sticky nor world-writable, and that is not
+    group- or world-writable itself (a service account may write it through its
+    group); for that directory only when it holds nothing but Athena's entries
+    and is not group- or world-writable either. A path holding a control
+    character gets no command. Otherwise the line states the condition."""
+    database = db_path.absolute()
+    if database.is_dir():
+        return [
+            f"database path {database} is a directory, not a database file; name "
+            "the database file itself"
+        ]
+    directory = database.parent
+    secrets = "the database holds password hashes, CSRF tokens and webhook secrets"
+    warnings = []
+    shared = _shared_directory(directory)
+    try:
+        mode = stat.S_IMODE(directory.stat().st_mode)
+    except OSError:
+        mode = 0
+    if mode & 0o077:
+        word = _shell_word(str(directory))
+        if shared is not None:
+            advice = f"{shared}: keep the database in a directory of its own"
+        elif mode & 0o022:
+            advice = (
+                f"it is writable by its group or others (mode {mode:04o}), which an "
+                "account Athena runs as may rely on, so no command is printed"
+            )
+        elif _other_entries(directory, database, attach_dir):
+            advice = (
+                f"{directory} holds other entries besides Athena's, so no command "
+                "is printed for it"
+            )
+        elif word is None:
+            advice = "its path holds a control character, so no command is printed"
+        else:
+            advice = f"run `chmod 700 {word}`"
+        warnings.append(
+            f"data directory {directory} is mode {mode:04o}, open to group or "
+            f"others, and {secrets}; {advice}"
+        )
+    for path in (
+        database,
+        database.with_name(database.name + "-wal"),
+        database.with_name(database.name + "-shm"),
+    ):
+        try:
+            metadata = path.lstat()
+        except OSError:
+            continue
+        mode = stat.S_IMODE(metadata.st_mode)
+        if not mode & 0o077:
+            continue
+        word = _shell_word(str(path))
+        if not stat.S_ISREG(metadata.st_mode):
+            advice = f"{path} is not a regular file: replace it with the database file"
+        elif shared is not None:
+            advice = (
+                f"its directory {shared}, so changing its mode would not keep it "
+                "private: move it into a directory of its own"
+            )
+        elif mode & 0o022:
+            advice = (
+                f"it is writable by its group or others (mode {mode:04o}), which an "
+                "account Athena runs as may rely on, so no command is printed"
+            )
+        elif metadata.st_uid != os.geteuid():
+            advice = (
+                "it belongs to another account, so no command is printed: run this "
+                "check as the account Athena runs as"
+            )
+        elif word is None:
+            advice = "its path holds a control character, so no command is printed"
+        else:
+            advice = f"run `chmod 600 {word}`"
+        warnings.append(
+            f"database file {path} is mode {mode:04o}, open to group or others, "
+            f"and {secrets}; {advice}"
+        )
+    return warnings
+
+
 def _check_database(db_path: Path, *, migrate: bool) -> str:
     if migrate:
         # db.migrate() is forward-only and commits each migration. Rehearse the
@@ -78,6 +260,7 @@ def _check_database(db_path: Path, *, migrate: bool) -> str:
         # an incompatible-but-recognizable database fails before the real file
         # receives even the first pending migration.
         _dry_run_migration(db_path)
+        _create_private_database(db_path)
         conn = db.connect(db_path)
         try:
             applied_now = db.migrate(conn)
@@ -1095,7 +1278,9 @@ def _print_doctor_report(report: _DoctorReceipt, stream: TextIO) -> None:
     )
     for check in report.checks.values():
         print(
-            f"athena-doctor: check {check.name}: {check.status} — {check.reason}",
+            _printable(
+                f"athena-doctor: check {check.name}: {check.status} — {check.reason}"
+            ),
             file=stream,
         )
 
@@ -1165,6 +1350,17 @@ def doctor_main(argv: list[str] | None = None) -> int:
     _validate_doctor_arguments(parser, args)
 
     report = _DoctorReceipt(args)
+    if not args.recovery_bundle:
+        attach_dir = args.attach_dir
+        if attach_dir is None:
+            try:
+                from athena import config
+
+                attach_dir = config.ATTACH_DIR
+            except ValueError:
+                attach_dir = None
+        for warning in _file_mode_warnings(args.db_path, attach_dir):
+            print(_printable(f"athena-doctor: warning: {warning}"), file=sys.stderr)
     try:
         checks = _doctor_checks(args, report)
     except KeyboardInterrupt as exc:
@@ -1174,7 +1370,7 @@ def doctor_main(argv: list[str] | None = None) -> int:
             exc,
             recovery_destination=args.drill_dir if args.recovery_bundle else None,
         )
-        print(f"athena-doctor: {detail}", file=sys.stderr)
+        print(_printable(f"athena-doctor: {detail}"), file=sys.stderr)
         return 130
     except (
         FileNotFoundError,
@@ -1184,11 +1380,13 @@ def doctor_main(argv: list[str] | None = None) -> int:
         ValueError,
     ) as exc:
         _print_doctor_report(report, sys.stderr)
-        print(f"athena-doctor: {_recovery_error_text(exc)}", file=sys.stderr)
+        print(
+            _printable(f"athena-doctor: {_recovery_error_text(exc)}"), file=sys.stderr
+        )
         return 1
 
     for check in checks:
-        print(check)
+        print(_printable(check))
     _print_doctor_report(report, sys.stdout)
     if report.accepted_broken_chain:
         print("athena-doctor: completed with accepted broken activity chain")
