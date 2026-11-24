@@ -58,8 +58,8 @@ them. Nothing has been re-graded since.
 
 **Known issues, most serious first.**
 
-1. A seat that renews without progress or is refused leaves the operator
-   and its conductor nothing to read: the rest of Wave 5 (C7, F15).
+1. A seat that renews without progress leaves the operator and its
+   conductor nothing to read: the rest of Wave 5 (C7).
 2. `IssueOut.parent_id` gives the id of a parent issue the caller cannot see
    (found by F6's property test; older than this specification).
 3. The project brief and `/desk/since` without a cursor still grow with
@@ -104,12 +104,14 @@ results" says the same for each. From Wave 5: the prior text of an edit, its
 read and its undo, `If-Match` for a bearer edit of a title or body, and the
 idempotency fence scoped to the issue a key names, a key that survives a
 restart with replays marked for the agent, the leases of a stopped
-account named and released on request, and a spent budget that names the
-leases to yield and tells who answers for the work. "Wave 5 results" says the same for
+account named and released on request, a spent budget that names the
+leases to yield and tells who answers for the work, a HOLD or BLOCKED report
+that asks whoever answers for it, and each agent's last refusal readable by
+the operator. "Wave 5 results" says the same for
 each.
 
 **Next step.** Nothing built is waiting. Build the rest of Wave 5 in the order
-its row gives (C7, F15, A11, A14, W4, W5). Then the rest of Wave 6 (H6, H5, H7, H9), of Wave 7
+its row gives (C7, A11, A14, W4, W5). Then the rest of Wave 6 (H6, H5, H7, H9), of Wave 7
 (H13 to H17, H19, H20) and of Wave 8 (U2, U4, U5, U8, U10 to U15, C10), and
 Wave 9. Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
@@ -726,8 +728,8 @@ Found and not fixed:
 
 ### Wave 5 results (second lanes)
 
-This is F14, C8 and F13 (PR #478), one commit each. The lead built F14 and
-F13, test first. A build agent built C8 from a six-part brief; it had no
+This is F14, C8, F13 and F15 (PR #478), one commit each. The lead built F14,
+F13 and F15, test first. A build agent built C8 from a six-part brief; it had no
 independent review, and the lead read it, re-ran its tests on the integrated
 tree and probed it against a throwaway instance. Running two build agents
 beside the lead had exhausted a usage window, so one ran at a time.
@@ -741,6 +743,8 @@ beside the lead had exhausted a usage window, so one ran at a time.
 | A seat refused for budget while holding a lease | 429 with no `next`; the issue stays out of reach until the lease lapses | 429 with `held_leases`, `retry_after_seconds` and `next` = `yield_claim` with reason `capacity`; the yield is not metered (F13) |
 | Who is told that a holder ran out of budget | Nobody | The issue's assignee and the account that delegated it, once per budget window, by one `holder_budget_exhausted` event per held issue (F13) |
 | `agent_budget_exhausted` rows for 20 refused requests in one window | 20 | 1, saying what was spent, how many leases are held and the first request refused (F13) |
+| A completion that reports `HOLD` or `BLOCKED` | An event; no attention signal | A ranked row, `held_report` (`high`), for the assignee, the delegating account and the operator, and a count on the card, until someone acts on the issue (F15) |
+| What an operator can read about a refused or idle agent | Nothing: a refusal and "nothing ready" are answers, on no trail | Per agent, the newest 4xx it was answered (`code`, status, request, time) and the newest time a pickup answered `nothing_ready`, in the run-health read and on the agent-runs page (F15) |
 
 The product gate's receipt is in PR #478.
 
@@ -763,6 +767,17 @@ Decisions the lead took while building, each reversible by the owner:
   same window records nothing and tells nobody.
 - **The holder's own refusal is not sent to the holder**, also when the
   holder is the issue's assignee.
+- **What ends a HOLD row is an act on the issue, not a button.** The ready
+  lane's answer rule (a comment, status change, assignment or claim by an
+  account other than the reporter), or anyone claiming the issue again. No
+  new write was added to acknowledge one.
+- **The last refusal is the newest only, per agent, outside the trail.** A
+  row per refusal would let a looping agent grow a table by being refused,
+  and a refusal on the trail would say something happened. It is diagnosis:
+  the agent's own calls move it and nothing may be decided from it. Agent
+  accounts only.
+- **"Nothing ready" is recorded at pickup**, not when the desk is read: the
+  desk is the hot read and stays a read.
 
 Found while building, and fixed before each was committed:
 
@@ -782,7 +797,17 @@ Found while building, and fixed before each was committed:
   stored inbox row for an account that cannot see the issue); the tests were
   strengthened until each was caught. The new read of
   the trail was undeclared to the imported-history check and is declared
-  native-only.
+  native-only. The product gate failed once on this head: the new command
+  module is imported only by the app's composition root, which the test
+  selector's own check refuses until the map names its tests.
+- **F15.** Left to itself the planner found the held completions by walking
+  every issue event; the read is driven from the partial index and a test
+  plans it. A "newest settlement" clause in the first version was redundant
+  (a completion ends its lease and only a claim starts one, so a later report
+  always follows a claim) and no test could tell it from its absence; it was
+  removed. Eighteen mutants are each caught, after two survived the first
+  tests (that clause, and a success held like a refusal, now covered by a
+  streaming test of the middleware).
 
 What the lead ran against C8 on a live instance: a pause with no option
 named two leases and released neither; the option on a resume was refused
@@ -815,6 +840,14 @@ Found and not fixed:
   same 20. A seat that ignores the `next` keeps its leases until they lapse.
   A delegating account that can no longer see the issue is not told, and
   nothing tells the operator that it was skipped.
+- **F15.** A comment by any third account ends a HOLD row, as it lifts the
+  ready lane's hold. A completion recorded before migration 0086 stored no
+  verdict and is never listed. The row's `next_action` is a link to the
+  issue; no call is named for an agent. A replayed idempotency receipt of a
+  refusal is not traced, because the replay is answered before the route. A
+  seat that reads the desk and never calls pickup leaves no "nothing ready"
+  time. The trace costs one extra write for each refused request of an agent,
+  after the write token resolution already makes.
 
 ## Priorities
 
