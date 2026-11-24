@@ -205,6 +205,17 @@ class AthenaClient:
         if isinstance(result, dict) and etag is not None:
             result["_etag"] = etag
         if (
+            isinstance(result, dict)
+            and response.headers.get("Idempotent-Replay") == "true"
+        ):
+            # The stored answer of an earlier call with this key, not a fresh
+            # one (F14). A key is matched on the call and the credential and
+            # not on the run, so a restarted session's retry lands here, and so
+            # does a key reused for an identical call: the caller must be able
+            # to tell history from now. The body is the first answer's, as it
+            # was then.
+            result["_replayed"] = True
+        if (
             response.status_code == 202
             and isinstance(result, dict)
             and result.get("code") == _APPROVAL_REQUIRED

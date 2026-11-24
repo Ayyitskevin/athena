@@ -375,12 +375,18 @@ def claim_or_read(
     request_fingerprint: str,
     lease_seconds: int,
     now: int | None = None,
+    earlier_fingerprints: tuple[str, ...] = (),
 ) -> ClaimResult:
     """Atomically become the owner, observe a result, or get a safe refusal.
 
     BEGIN IMMEDIATE serializes the read/insert decision across processes. No
     transaction survives this function, so the winning route can write using its
     normal connection. A live executing owner is observed, never replaced.
+
+    A new receipt stores ``request_fingerprint``. A stored one matches the
+    request when it holds that or one of ``earlier_fingerprints``: the same
+    request as an earlier release fingerprinted it, so a retry still finds its
+    receipt across an upgrade that changes what a key is matched on.
     """
     current = _now(now)
     with db.transaction(conn, immediate=True):
@@ -467,7 +473,10 @@ def claim_or_read(
             )
             return ClaimResult("owner", {"owner_token": owner_token})
 
-        if record["request_fingerprint"] != request_fingerprint:
+        if record["request_fingerprint"] not in (
+            request_fingerprint,
+            *earlier_fingerprints,
+        ):
             return ClaimResult("mismatch", record)
         if (
             record["state"] == "executing"

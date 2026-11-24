@@ -529,16 +529,33 @@ _SECRET_CREATE_PATHS = frozenset(
         "/admin/webhooks",
     }
 )
+# What a key is matched on, beside the method, path, query and body: the
+# headers that change what the request asks for. The run-lineage headers are
+# not among them (F14). They say which session is asking, and `athena-mcp`
+# mints a run id per session, so a session that crashed and restarted retried
+# its in-flight write under a new run and was told the key belonged to a
+# different request, which is the one retry a key exists to make safe. The key
+# names the write; the event it recorded stays attributed to the run that made
+# it.
 _FINGERPRINT_HEADERS = (
     b"accept",
     b"content-encoding",
     b"content-type",
     b"if-match",
     b"if-unmodified-since",
+)
+# The match of the release before F14, which covered the run-lineage headers
+# too. A receipt stored then holds this fingerprint, so a retry is compared
+# with both: one that carries the same run headers, as it had to then, still
+# matches its receipt across the upgrade. New receipts store the current one.
+_EARLIER_FINGERPRINT_HEADERS = (
+    *_FINGERPRINT_HEADERS,
     FORK_FROM_EVENT_HEADER,
     PARENT_RUN_HEADER,
     RUN_HEADER,
 )
+_FINGERPRINT_VERSION = b"athena-idempotency-v3"
+_EARLIER_FINGERPRINT_VERSION = b"athena-idempotency-v2"
 _REPLAYABLE_RESPONSE_HEADERS = frozenset(
     {
         b"cache-control",
@@ -743,6 +760,18 @@ class IdempotencyMiddleware:
 
     @classmethod
     def _fingerprint(cls, scope, body: bytes) -> str:
+        return cls._digest(scope, body, _FINGERPRINT_VERSION, _FINGERPRINT_HEADERS)
+
+    @classmethod
+    def _earlier_fingerprint(cls, scope, body: bytes) -> str:
+        return cls._digest(
+            scope, body, _EARLIER_FINGERPRINT_VERSION, _EARLIER_FINGERPRINT_HEADERS
+        )
+
+    @classmethod
+    def _digest(
+        cls, scope, body: bytes, version: bytes, header_names: tuple[bytes, ...]
+    ) -> str:
         digest = hashlib.sha256()
 
         def add(label: bytes, value: bytes) -> None:
@@ -751,14 +780,14 @@ class IdempotencyMiddleware:
             digest.update(len(value).to_bytes(8, "big"))
             digest.update(value)
 
-        add(b"version", b"athena-idempotency-v2")
+        add(b"version", version)
         add(b"method", scope.get("method", "").encode("ascii"))
         raw_path = scope.get("raw_path")
         if raw_path is None:
             raw_path = scope.get("path", "").encode("utf-8")
         add(b"path", raw_path)
         add(b"query", scope.get("query_string", b""))
-        for header_name in _FINGERPRINT_HEADERS:
+        for header_name in header_names:
             values = cls._header_values(scope, header_name)
             add(header_name + b"-count", str(len(values)).encode("ascii"))
             for value in values:
@@ -775,6 +804,7 @@ class IdempotencyMiddleware:
         method: str,
         path: str,
         fingerprint: str,
+        earlier_fingerprint: str,
     ) -> idempotency.ClaimResult:
         return await asyncio.to_thread(
             self._run_db,
@@ -785,6 +815,7 @@ class IdempotencyMiddleware:
             method=method,
             path=path,
             request_fingerprint=fingerprint,
+            earlier_fingerprints=(earlier_fingerprint,),
             lease_seconds=self.lease_seconds,
         )
 
@@ -972,6 +1003,7 @@ class IdempotencyMiddleware:
             await self.app(scope, replay_receive, send)
             return
         fingerprint = self._fingerprint(scope, body)
+        earlier_fingerprint = self._earlier_fingerprint(scope, body)
 
         deadline = asyncio.get_running_loop().time() + self.wait_seconds
         poll_delay = 0.025
@@ -984,6 +1016,7 @@ class IdempotencyMiddleware:
                     method=method,
                     path=path,
                     fingerprint=fingerprint,
+                    earlier_fingerprint=earlier_fingerprint,
                 )
             except sqlite3.Error:
                 _logger.exception("could not claim idempotency key")

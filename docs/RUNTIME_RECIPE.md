@@ -152,7 +152,8 @@ The other no-acquisition outcomes are `nothing_ready` and `candidates_conflicted
 the latter replaces the former client-only `lost_race` result. Fetch full work
 context before working and resume any open handoff explicitly.
 
-For an uncertain retry, reuse the exact key, credential, request and run lineage.
+For an uncertain retry, reuse the exact key, credential and request. The run
+may differ: a restarted session has a new run id, and its retry still replays.
 Success and no-work outcomes are historical receipts, including the original lease
 expiry and `active` value; replay never renews or reacquires. Use a new key for a
 new polling intent, after reconciling any uncertain prior outcome. Completed

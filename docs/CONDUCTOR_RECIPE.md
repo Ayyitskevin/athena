@@ -113,8 +113,9 @@ The empty outcomes are `already_holding`, `nothing_ready`, or
 `candidates_conflicted` (replacing the old client-only `lost_race`); each carries
 `review_request`, the review the desk asks of that account, or null.
 
-Choose an `idempotency_key` before a retryable pickup and preserve its credential,
-arguments and run lineage. Success and empty outcomes both replay as historical
+Choose an `idempotency_key` before a retryable pickup and preserve its credential
+and arguments; a restarted session may retry under its new run id. Success and
+empty outcomes both replay as historical
 receipts; a replay never renews or reacquires. Read current full work context before
 work and explicitly resume an open handoff. A new poll uses a new key; an uncertain
 outcome needs reconciliation first. See [ATOMIC_PICKUP_SPEC.md](ATOMIC_PICKUP_SPEC.md)

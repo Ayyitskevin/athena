@@ -30,7 +30,13 @@ not say whether the write was applied. A keyed write that hands the issue away
 is `get_issue_work_context(issue_id=<the refusal's issue_id>)`: if the issue's
 activity shows your write, it is done; if not, repeat it under a new
 `idempotency_key`. Never reuse the refused key for a different call. It is refused
-until the original answer would have expired. The codes are listed in
+until the original answer would have expired. A key is matched on the call and
+your credential, not on your run: if your session restarts mid-write, repeat the
+call with the same key and arguments and you get the first answer, whatever run
+id the new session has. A tool answer that is a stored one carries
+`_replayed: true`: it is what the first call was told, as it was then, so a
+lease in it may have lapsed since, and a new intent (a new poll) needs a new
+key. The codes are listed in
 [AGENT_API.md](AGENT_API.md#refusal-codes).
 `GET /openapi-agent.json` is the REST surface your token can call, without the browser
 routes `/openapi.json` also lists, and it declares per operation the bearer scheme,

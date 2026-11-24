@@ -206,8 +206,9 @@ its first possession remains active, including calls using different tokens or
 runs. Ordinary direct claims still permit several possessions; this is a queue
 pickup rule, not a global lease quota or evidence of a running worker.
 
-Choose an `idempotency_key` before a retryable call and keep the exact request,
-credential and run lineage. Success and no-acquisition outcomes both replay as
+Choose an `idempotency_key` before a retryable call and keep the exact request
+and credential; the run may differ, so a restarted session's retry still
+replays. Success and no-acquisition outcomes both replay as
 historical receipts, including the original expiry and `lease.active` value.
 Replay never renews or reacquires. A new polling intent needs a new key; reconcile
 an uncertain outcome before changing its key. Completed receipts have finite
