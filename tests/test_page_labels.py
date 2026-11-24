@@ -53,7 +53,7 @@ def test_attach_detach_and_labels_on_pageout(tmp_path):
         assert [la["id"] for la in client.get(f"/pages/{pid}").json()["labels"]] == [
             lid
         ]
-        listed = client.get(f"/spaces/{_space_of(client, pid)}/pages").json()
+        listed = client.get(f"/spaces/{_space_of(client, pid)}/pages").json()["pages"]
         assert [la["id"] for page in listed for la in page["labels"]] == [lid]
 
         # Idempotent re-attach keeps one.

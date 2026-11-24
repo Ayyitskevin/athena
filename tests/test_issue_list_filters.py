@@ -63,12 +63,16 @@ def test_priority_and_assignee_align_web_and_api(tmp_path):
         _issue(client, "beta", priority="low")
         client.put(f"/issues/{a['id']}/assignee", json={"assignee_id": 2}, headers=H1)
 
-        api_titles = {r["title"] for r in client.get("/issues?priority=high").json()}
+        api_titles = {
+            r["title"] for r in client.get("/issues?priority=high").json()["issues"]
+        }
         assert api_titles == {"alpha"}
         web = client.get("/aegis/issues?priority=high").text
         assert "alpha" in web and "beta" not in web
 
-        api_assignee = {r["title"] for r in client.get("/issues?assignee=2").json()}
+        api_assignee = {
+            r["title"] for r in client.get("/issues?assignee=2").json()["issues"]
+        }
         assert api_assignee == {"alpha"}
         web_assignee = client.get("/aegis/issues?assignee=2").text
         assert "alpha" in web_assignee and "beta" not in web_assignee

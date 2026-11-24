@@ -53,21 +53,21 @@ def test_archive_hides_from_the_list_and_unarchive_restores(tmp_path):
         sp = _space(c)
         page = _page(c, sp["id"])
         # Visible by default.
-        listed = c.get(f"/spaces/{sp['id']}/pages", headers=H1).json()
+        listed = c.get(f"/spaces/{sp['id']}/pages", headers=H1).json()["pages"]
         assert [p["id"] for p in listed] == [page["id"]]
 
         assert c.post(f"/pages/{page['id']}/archive", headers=H1).status_code == 200
         # Gone from the default list; present with include_archived; still readable by id.
-        assert c.get(f"/spaces/{sp['id']}/pages", headers=H1).json() == []
+        assert c.get(f"/spaces/{sp['id']}/pages", headers=H1).json()["pages"] == []
         with_arch = c.get(
             f"/spaces/{sp['id']}/pages?include_archived=true", headers=H1
-        ).json()
+        ).json()["pages"]
         assert [p["id"] for p in with_arch] == [page["id"]]
         fetched = c.get(f"/pages/{page['id']}", headers=H1).json()
         assert fetched["archived_at"] is not None
 
         assert c.post(f"/pages/{page['id']}/unarchive", headers=H1).status_code == 200
-        back = c.get(f"/spaces/{sp['id']}/pages", headers=H1).json()
+        back = c.get(f"/spaces/{sp['id']}/pages", headers=H1).json()["pages"]
         assert [p["id"] for p in back] == [page["id"]]
         assert c.get(f"/pages/{page['id']}", headers=H1).json()["archived_at"] is None
 
@@ -162,12 +162,12 @@ def test_mcp_client_reaches_page_archive_under_a_run(tmp_path):
         archived = ath.archive_page(page["id"])
         assert archived["archived_at"] is not None
         # The default page list (via MCP) hides it; include_archived surfaces it.
-        assert ath.list_pages(sp["id"]) == []
-        assert [p["id"] for p in ath.list_pages(sp["id"], include_archived=True)] == [
-            page["id"]
-        ]
+        assert ath.list_pages(sp["id"])["pages"] == []
+        assert [
+            p["id"] for p in ath.list_pages(sp["id"], include_archived=True)["pages"]
+        ] == [page["id"]]
         ath.unarchive_page(page["id"])
-        assert [p["id"] for p in ath.list_pages(sp["id"])] == [page["id"]]
+        assert [p["id"] for p in ath.list_pages(sp["id"])["pages"]] == [page["id"]]
     finally:
         tc.__exit__(None, None, None)
     conn = db.connect(db_file)

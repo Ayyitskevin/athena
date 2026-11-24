@@ -47,7 +47,7 @@ def test_patch_moves_issue_through_lifecycle(tmp_path):
         assert r.json()["status"] == "in_progress"
 
         # And it persists — a fresh GET sees the new status.
-        assert client.get("/issues").json()[0]["status"] == "in_progress"
+        assert client.get("/issues").json()["issues"][0]["status"] == "in_progress"
 
 
 def test_patch_rejects_status_outside_lifecycle(tmp_path):

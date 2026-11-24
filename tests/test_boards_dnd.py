@@ -197,7 +197,7 @@ def test_board_swimlanes_use_primary_assignee_kind(tmp_path):
 
         listed = {
             issue["id"]: issue["assignee_is_agent"]
-            for issue in client.get("/issues", headers=H1).json()
+            for issue in client.get("/issues", headers=H1).json()["issues"]
         }
         assert listed == {
             human_issue["id"]: False,

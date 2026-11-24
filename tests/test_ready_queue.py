@@ -413,7 +413,7 @@ def test_a_hidden_projects_items_are_excluded(tmp_path):
         assert _ids(lane) == [public["id"]] and lane["total"] == 1
         query = c.get(
             "/issues", params={"q": "is:ready"}, headers=_bearer(agent)
-        ).json()
+        ).json()["issues"]
         assert [row["id"] for row in query] == [public["id"]]
         count = c.get(
             "/issues/query/count", params={"q": "is:ready"}, headers=_bearer(agent)
@@ -449,13 +449,13 @@ def test_is_ready_is_a_query_atom_with_the_same_rule(tmp_path):
             r["title"]
             for r in c.get(
                 "/issues", params={"q": "is:ready"}, headers=_bearer(agent)
-            ).json()
+            ).json()["issues"]
         ]
         assert titles == ["ready"]
         # The negation wraps the positive form.
         others = c.get(
             "/issues", params={"q": "-is:ready"}, headers=_bearer(agent)
-        ).json()
+        ).json()["issues"]
         assert "ready" not in [r["title"] for r in others]
         # An anonymous caller has no "ready for me": refused, not empty.
         refused = c.get("/issues", params={"q": "is:ready"})

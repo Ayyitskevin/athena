@@ -20,8 +20,9 @@ surface:
 * a failure is the single failure object with its registered code, compact too;
 * the budget measures this text (``results.serialized_size`` is its length).
 
-The REST transport is mocked: an object answer for one pass and a list of the
-same row for the other, so every tool answers successfully in at least one.
+The REST transport is mocked: an object answer for one pass, a list of the
+same row for another and a D2 page of it for a third, so every tool answers
+successfully in at least one.
 """
 
 from __future__ import annotations
@@ -155,6 +156,16 @@ def answers() -> dict[str, dict[str, Any]]:
     return {
         "object": _every_tool_answering(ROW),
         "list": _every_tool_answering([ROW]),
+        # H6: the issue, page and comment lists answer one D2 page.
+        "page": _every_tool_answering(
+            {
+                "issues": [ROW],
+                "pages": [ROW],
+                "comments": [ROW],
+                "next_cursor": None,
+                "has_more": False,
+            }
+        ),
     }
 
 

@@ -339,10 +339,12 @@ def test_issue_list_filters_by_priority_and_assignee(tmp_path):
         _issue(client, "low one", priority="low")
         client.put(f"/issues/{a['id']}/assignee", json={"assignee_id": 1}, headers=H1)
         assert [
-            i["title"] for i in client.get("/issues?priority=high", headers=H1).json()
+            i["title"]
+            for i in client.get("/issues?priority=high", headers=H1).json()["issues"]
         ] == ["high one"]
         assert [
-            i["title"] for i in client.get("/issues?assignee=1", headers=H1).json()
+            i["title"]
+            for i in client.get("/issues?assignee=1", headers=H1).json()["issues"]
         ] == ["high one"]
 
 

@@ -160,7 +160,7 @@ def views(client, agent):
     alone = checked(client.get("/desk/ready", headers=bearer(agent)))
     query = checked(
         client.get("/issues", params={"q": "is:ready"}, headers=bearer(agent))
-    )
+    )["issues"]
     count = checked(
         client.get(
             "/issues/query/count", params={"q": "is:ready"}, headers=bearer(agent)

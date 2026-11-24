@@ -830,6 +830,7 @@ def list_issues(
     offset: int = 0,
     sort: str | None = None,
     order: str = "desc",
+    after_id: int | None = None,
 ) -> list[dict]:
     """List issues, optionally filtered. This is the ONE filtering path the API
     and the web list both use, so the two never disagree on what matches.
@@ -871,10 +872,15 @@ def list_issues(
       plain `i.id` ordering every existing caller already relies on. A paged caller
       must pass the sort it wants rather than reordering the page in Python: sorting
       after LIMIT only reorders the rows that happened to land on the page.
+    - after_id: keyset paging for the id order (sort=None): only issues whose id
+      is above it. The REST list's cursor resumes here, so an issue created
+      between two pages lands after every row already read.
 
     Column names below are hardcoded literals; all values stay parameterized."""
     if offset < 0 or offset > MAX_OFFSET:
         raise ValueError(f"offset must be between 0 and {MAX_OFFSET}")
+    if after_id is not None and sort is not None:
+        raise ValueError("after_id pages the id order only")
     built = _filter_sql(
         status=status,
         priority=priority,
@@ -890,6 +896,9 @@ def list_issues(
     if built is None:
         return []
     where, params = built
+    if after_id is not None:
+        where += (" AND " if where else " WHERE ") + "i.id > ?"
+        params.append(after_id)
     query = f"{_SELECT}{where} ORDER BY {order_by_sql(sort, order)}"
     if limit is not None:
         # Bound the result at the DB, not in Python — an unbounded caller must not be

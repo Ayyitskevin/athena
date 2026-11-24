@@ -152,7 +152,7 @@ class Board:
         alone = ok(self.client.get("/desk/ready", headers=bearer(agent)))
         query = ok(
             self.client.get("/issues", params={"q": "is:ready"}, headers=bearer(agent))
-        )
+        )["issues"]
         assert [row["issue"]["id"] for row in alone["items"]] == ids
         assert lane["total"] == alone["total"] == len(ids)
         assert sorted(row["id"] for row in query) == sorted(ids)

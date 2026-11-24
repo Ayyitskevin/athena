@@ -87,6 +87,8 @@ RESOURCE_READS: dict[str, str] = {
     "search_work": "issues, each its own representation",
     "list_subtasks": "issues, each its own representation",
     "list_issue_comments": "comments",
+    # H6: one comment whole, the comment list's own representation.
+    "get_issue_comment": "a comment",
     "get_issue_runbook": "a runbook page reference",
     "get_page": "a page; its ETag covers its version",
     "list_pages": "pages",
@@ -157,9 +159,8 @@ PAGING_STYLES: dict[str, tuple[frozenset[str], frozenset[str]]] = {
 #: new operation may use; the others keep their callers and gain none.
 PAGING_OPERATIONS: dict[str, frozenset[str]] = {
     D2: frozenset(),
-    "offset, bare list": frozenset(
-        {"GET /issues", "GET /issues/search", "GET /search"}
-    ),
+    # H6 moved GET /issues to D2 (with the page and comment lists, which had none).
+    "offset, bare list": frozenset({"GET /issues/search", "GET /search"}),
     "offset, next_offset and has_more": frozenset({"GET /delegations/me"}),
     "after, next_after and has_more": frozenset({"GET /events"}),
     "after_id, next_after and has_more": frozenset({"GET /activity/chain/verify"}),

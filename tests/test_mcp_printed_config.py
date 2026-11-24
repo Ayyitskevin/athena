@@ -37,10 +37,11 @@ from athena.mcp.client import AthenaClient
 
 ISSUE_ONLY = ["read", "issue:write"]
 WITH_DOCS = ["read", "issue:write", "docs:write"]
-# (token scopes, the profile a printed config must name, its tool count)
+# (token scopes, the profile a printed config must name, its tool count; H6 added
+# get_issue_comment to seat)
 CASES = [
-    pytest.param(ISSUE_ONLY, "seat", 27, id="issue-token"),
-    pytest.param(WITH_DOCS, "seat+knowledge", 38, id="docs-token"),
+    pytest.param(ISSUE_ONLY, "seat", 28, id="issue-token"),
+    pytest.param(WITH_DOCS, "seat+knowledge", 39, id="docs-token"),
 ]
 
 

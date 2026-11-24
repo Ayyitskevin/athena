@@ -15,7 +15,8 @@ from athena.mcp.server import (
     SETS,
     BodyOffset,
     IdempotencyKey,
-    ListOffset,
+    ListCursor,
+    PageListLimit,
 )
 
 
@@ -43,12 +44,22 @@ def register_page_tools(tool, mutation_tool, client) -> None:
 
     @tool(scope=READ_ONLY, profiles=KNOWLEDGE)
     def list_pages(
-        space_id: int, include_archived: bool = False, offset: ListOffset = 0
+        space_id: int,
+        include_archived: bool = False,
+        limit: PageListLimit = 50,
+        cursor: ListCursor | None = None,
     ) -> ListResult:
-        """List the pages in a space. Archived (soft-deleted) pages are hidden by
+        """List the pages in a space, alphabetical by title, as rows without
+        bodies (get_page reads one). Archived (soft-deleted) pages are hidden by
         default; pass include_archived=true to see them."""
-        rows = client.list_pages(space_id, include_archived=include_archived)
-        return results.sliced([results.summary(row) for row in rows], offset=offset)
+
+        def fetch(rows: int) -> results.CursorPage:
+            page = client.list_pages(
+                space_id, include_archived=include_archived, limit=rows, cursor=cursor
+            )
+            return page["pages"], page["next_cursor"], page["has_more"]
+
+        return results.cursor_page(fetch, limit=limit)
 
     @tool(scope=READ_ONLY, profiles=KNOWLEDGE)
     def get_page(page_id: int, body_offset: BodyOffset = 0) -> dict:

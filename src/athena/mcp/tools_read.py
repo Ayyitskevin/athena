@@ -20,7 +20,6 @@ from athena.mcp.server import (
     ERASES,
     FULL_ONLY,
     KNOWLEDGE,
-    MAX_COMMENT_CHARS,
     READS,
     READ_ONLY,
     SEAT,
@@ -32,6 +31,7 @@ from athena.mcp.server import (
     AutomationTriggerType,
     BodyOffset,
     CommentChars,
+    CommentListLimit,
     DelegationLimit,
     DelegationOffset,
     DigestWindowMinutes,
@@ -45,7 +45,7 @@ from athena.mcp.server import (
     IssueFilterId,
     IssueHistoryLimit,
     IssueListLimit,
-    IssueListOffset,
+    ListCursor,
     ListOffset,
     MuteUntil,
     NotificationLimit,
@@ -76,11 +76,10 @@ def _issue_ref(ref: str | None, issue_id: int | None) -> str:
     return ref if ref is not None else str(issue_id)
 
 
-def _comment_row(
-    row: dict, position: int, issue_id: int, include_body: bool, max_chars: int
-) -> dict:
+def _comment_row(row: dict, include_body: bool, max_chars: int) -> dict:
     """A comment as a list row: an excerpt by default, or its body up to
-    ``max_chars``, marked when cut and naming the call that reads more of it."""
+    ``max_chars``, marked when cut and naming the call that reads the rest of
+    it (get_issue_comment, from where the cut ends)."""
     body = row.get("body") or ""
     if not include_body:
         shaped = results.summary(row)
@@ -89,19 +88,14 @@ def _comment_row(
         return shaped
     if len(body) <= max_chars:
         return row
-    more = (
-        {
-            "tool": "list_issue_comments",
-            "arguments": {
-                "issue_id": issue_id,
-                "offset": position,
-                "include_body": True,
-                "max_chars": MAX_COMMENT_CHARS,
-            },
-        }
-        if max_chars < MAX_COMMENT_CHARS
-        else None
-    )
+    more = {
+        "tool": "get_issue_comment",
+        "arguments": {
+            "issue_id": row["issue_id"],
+            "comment_id": row["id"],
+            "body_offset": max_chars,
+        },
+    }
     return {
         **row,
         "body": body[:max_chars],
@@ -151,7 +145,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         search: str | None = None,
         include_archived: bool = False,
         limit: IssueListLimit = 50,
-        offset: IssueListOffset = 0,
+        cursor: ListCursor | None = None,
     ) -> ListResult:
         """List Aegis issues, optionally filtered by a project-configured status,
         project (id or 'none' for the backlog), sprint id, label name, or a text
@@ -160,9 +154,9 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         human, and null when unassigned. Archived issues are hidden by default; pass
         include_archived=true to see them. The backlog defaults to
         open/in_progress/done; other projects may define different status names.
-        Keep filters fixed and advance offset by the number returned. A short page
-        ends the scan. Changes to the board can shift rows between calls."""
-        rows = client.list_issues(
+        Rows are in id order. While truncated, keep the filters fixed and add the
+        cursor in `next`; an issue created meanwhile never repeats a row."""
+        page = client.list_issues(
             status=status,
             project=project,
             sprint=sprint,
@@ -170,12 +164,18 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             search=search,
             include_archived=include_archived,
             limit=limit,
-            offset=offset,
+            cursor=cursor,
         )
-        return paged([results.summary(row) for row in rows], limit=limit, offset=offset)
+        return listing(
+            [results.summary(row) for row in page["issues"]],
+            truncated=page["has_more"],
+            next={"cursor": page["next_cursor"]} if page["has_more"] else None,
+        )
 
     @tool(scope=READ_ONLY, profiles=SEAT)
-    def search_work(q: str, limit: int = 50, offset: int = 0) -> ListResult:
+    def search_work(
+        q: str, limit: IssueListLimit = 50, cursor: ListCursor | None = None
+    ) -> ListResult:
         """Find issues with a work query — the precise way to ask for work.
 
         The grammar is GitHub-shaped: space-separated `field:value` atoms, joined
@@ -194,8 +194,13 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         query says `is:archived`. An unknown field is an error naming the field,
         never an empty result — so a typo is visible instead of looking like "no
         work". The `full` profile has the vocabulary as data."""
-        rows = client.search_work(q, limit=limit, offset=offset)
-        return paged([results.summary(row) for row in rows], limit=limit, offset=offset)
+
+        def fetch(rows: int) -> results.CursorPage:
+            page = client.search_work(q, limit=rows, cursor=cursor)
+            summaries = [results.summary(row) for row in page["issues"]]
+            return summaries, page["next_cursor"], page["has_more"]
+
+        return results.cursor_page(fetch, limit=limit)
 
     @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def count_work(q: str) -> dict:
@@ -509,20 +514,34 @@ def register_read_tools(tool, mutation_tool, client) -> None:
     @tool(scope=READ_ONLY, profiles=SEAT)
     def list_issue_comments(
         issue_id: int,
-        offset: ListOffset = 0,
+        limit: CommentListLimit = 40,
+        cursor: ListCursor | None = None,
         include_body: bool = False,
         max_chars: CommentChars = 4_000,
     ) -> ListResult:
         """Read one issue's comment thread, oldest first — the discussion a
         delegated agent needs before acting. Write replies with comment_on_issue.
-        Rows carry an excerpt; include_body=true gives each body up to max_chars."""
-        rows = client.list_issue_comments(issue_id)
-        return results.sliced(
-            [
-                _comment_row(row, position, issue_id, include_body, max_chars)
-                for position, row in enumerate(rows)
-            ],
-            offset=offset,
+        Rows carry an excerpt; include_body=true gives each body up to max_chars,
+        and get_issue_comment reads one comment whole."""
+
+        def fetch(rows: int) -> results.CursorPage:
+            page = client.list_issue_comments(issue_id, limit=rows, cursor=cursor)
+            shaped = [
+                _comment_row(row, include_body, max_chars) for row in page["comments"]
+            ]
+            return shaped, page["next_cursor"], page["has_more"]
+
+        return results.cursor_page(fetch, limit=limit)
+
+    @tool(scope=READ_ONLY, profiles=SEAT)
+    def get_issue_comment(
+        issue_id: int, comment_id: int, body_offset: BodyOffset = 0
+    ) -> dict:
+        """Read one comment of an issue whole: the comment a list row cut. A
+        long body is cut to the response budget; body_offset reads on from
+        there. A comment on an issue you cannot see is not_found."""
+        return results.from_offset(
+            client.get_issue_comment(issue_id, comment_id), "body", body_offset
         )
 
     @tool(scope=READ_ONLY, profiles=FULL_ONLY)

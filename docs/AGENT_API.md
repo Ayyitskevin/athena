@@ -78,6 +78,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `get_fleet_metrics` | `GET /fleet/metrics` | read-only | Read bounded issue throughput for this token's visible scope. Dates are … |
 | `get_idempotency_key` | `GET /idempotency/{quote(key, safe='')}` | read-only | After a keyed write timed out or was refused idempotency_in_progress … |
 | `get_issue` | `GET /issues/{ref}` | read-only | Get one issue by issue_id (the number every write tool takes) or by … |
+| `get_issue_comment` | `GET /issues/{issue_id}/comments/{comment_id}` | read-only | Read one comment of an issue whole: the comment a list row cut. A … |
 | `get_issue_history` | `GET /issues/{issue_id}/history` | read-only | Read one issue's bounded operator run narrative. Every item cites … |
 | `get_issue_lease` | `GET /issues/{issue_id}/lease` | read-only | Who holds the exclusive claim on this issue right now — {holder_id, holder_name, … |
 | `get_issue_prior_text` | `GET /issues/{issue_id}/prior-texts/{event_id}` | read-only | Read the title and body one edit of an issue replaced, exactly as they … |
@@ -106,7 +107,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `list_my_delegated_work` | `GET /delegations/me` | read-only | List issues delegated to the authenticated contributor. By default this … |
 | `list_notifications` | `GET /notifications` | read-only | Read YOUR notification inbox — mentions, watched-issue changes, work … |
 | `list_page_versions` | `GET /pages/{page_id}/versions` | read-only | The page's superseded revisions, newest first (the live page is NOT one of … |
-| `list_pages` | `GET /spaces/{space_id}/pages` | read-only | List the pages in a space. Archived (soft-deleted) pages are hidden by … |
+| `list_pages` | `GET /spaces/{space_id}/pages` | read-only | List the pages in a space, alphabetical by title, as rows without … |
 | `list_priority_notifications` | `GET /notifications/priority` | read-only | Read YOUR inbox as a priority/mute/digest projection. Priority is an … |
 | `list_projects` | `GET /projects` | read-only | List Aegis projects (id, key, name). |
 | `list_run_controls` | `GET /run-controls` | read-only | Run controls — operator requests on live runs and how their agents … |
@@ -311,4 +312,4 @@ with `isError` true and `status_code` null.
 
 ---
 
-*143 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*144 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

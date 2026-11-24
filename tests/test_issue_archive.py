@@ -42,10 +42,14 @@ def test_archive_hides_from_default_list_and_unarchive_restores(tmp_path):
 
         # Default list/feed hides archived; include_archived reveals it; the single
         # read still resolves it (archival is not deletion).
-        assert [i["id"] for i in client.get("/issues", headers=H1).json()] == [keep]
+        assert [
+            i["id"] for i in client.get("/issues", headers=H1).json()["issues"]
+        ] == [keep]
         both = sorted(
             i["id"]
-            for i in client.get("/issues?include_archived=true", headers=H1).json()
+            for i in client.get("/issues?include_archived=true", headers=H1).json()[
+                "issues"
+            ]
         )
         assert both == sorted([keep, gone])
         assert client.get(f"/issues/{gone}", headers=H1).status_code == 200
@@ -53,7 +57,7 @@ def test_archive_hides_from_default_list_and_unarchive_restores(tmp_path):
         restored = client.post(f"/issues/{gone}/unarchive", headers=H1)
         assert restored.json()["archived_at"] is None
         assert sorted(
-            i["id"] for i in client.get("/issues", headers=H1).json()
+            i["id"] for i in client.get("/issues", headers=H1).json()["issues"]
         ) == sorted([keep, gone])
 
 

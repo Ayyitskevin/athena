@@ -108,7 +108,7 @@ def _claim(client, agent, issue_id):
 def _titles(client, query, headers=H1):
     r = client.get("/issues", params={"q": query, "limit": 100}, headers=headers)
     assert r.status_code == 200, r.text
-    return [row["title"] for row in r.json()]
+    return [row["title"] for row in r.json()["issues"]]
 
 
 def _count(client, query, headers=H1):

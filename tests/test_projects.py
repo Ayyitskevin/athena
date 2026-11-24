@@ -325,7 +325,8 @@ def test_list_filters_by_project(tmp_path):
         _make_issue(client, title="in core", project_id=core["id"])
         _make_issue(client, title="no project")
         titles = [
-            i["title"] for i in client.get(f"/issues?project={core['id']}").json()
+            i["title"]
+            for i in client.get(f"/issues?project={core['id']}").json()["issues"]
         ]
         assert titles == ["in core"]
 
@@ -340,7 +341,9 @@ def test_project_filter_composes_with_status(tmp_path):
         _make_issue(client, title="open in core", status="open", project_id=core["id"])
         titles = [
             i["title"]
-            for i in client.get(f"/issues?project={core['id']}&status=done").json()
+            for i in client.get(f"/issues?project={core['id']}&status=done").json()[
+                "issues"
+            ]
         ]
         assert titles == ["done in core"]
 
@@ -485,11 +488,14 @@ def test_api_filter_backlog_with_project_none(tmp_path):
         core = _create_project(client, "Core")
         _make_issue(client, title="in core", project_id=core["id"])
         _make_issue(client, title="no project")
-        backlog = [i["title"] for i in client.get("/issues?project=none").json()]
+        backlog = [
+            i["title"] for i in client.get("/issues?project=none").json()["issues"]
+        ]
         assert backlog == ["no project"]
         # the id form is unaffected by the sentinel
         assert [
-            i["title"] for i in client.get(f"/issues?project={core['id']}").json()
+            i["title"]
+            for i in client.get(f"/issues?project={core['id']}").json()["issues"]
         ] == ["in core"]
         # a non-"none", non-numeric value stays a 422 (param is still strict)
         assert client.get("/issues?project=bogus").status_code == 422
@@ -503,7 +509,8 @@ def test_api_backlog_composes_with_status(tmp_path):
         _make_issue(client, title="done loose", status="done")
         _make_issue(client, title="open loose", status="open")
         titles = [
-            i["title"] for i in client.get("/issues?project=none&status=done").json()
+            i["title"]
+            for i in client.get("/issues?project=none&status=done").json()["issues"]
         ]
         assert titles == ["done loose"]
 

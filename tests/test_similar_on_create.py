@@ -88,7 +88,9 @@ def test_a_similar_open_issue_never_blocks_the_create(tmp_path):
         assert (
             again["similar_open"] and again["title"] == "Login page crashes on submit"
         )
-        listed = client.get("/issues", params={"project": pid}, headers=H1).json()
+        listed = client.get("/issues", params={"project": pid}, headers=H1).json()[
+            "issues"
+        ]
         assert sum(i["title"] == "Login page crashes on submit" for i in listed) == 2
     finally:
         client.__exit__(None, None, None)

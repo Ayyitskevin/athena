@@ -138,10 +138,17 @@ what would have worked.
 ## Surfaces
 
 ```
-GET  /issues?q=<query>&limit=&offset=   # the same endpoint as the structured filters
+GET  /issues?q=<query>&limit=&cursor=   # the same endpoint as the structured filters
 GET  /issues/query/count?q=<query>      # total behind a bounded page
 GET  /issues/query/help                 # the vocabulary, as data
 ```
+
+`GET /issues` answers `{issues, next_cursor, has_more}`: at most `limit` issues
+(default 50, at most 100) in the query's `sort:` order. While `has_more` is true,
+send `next_cursor` back as `cursor` with the same `q`. The cursor is the last
+row's place in that order, so an issue created between two pages never repeats
+a row; a cursor from another sort, or from the structured filters, is a 422.
+The `offset` parameter it replaced is a 422 too.
 
 `q` and the structured filters (`status=`, `label=`, …) are **mutually
 exclusive**, and combining them is a 422 rather than a merge. Silently AND-ing

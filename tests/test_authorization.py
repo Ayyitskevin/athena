@@ -121,7 +121,7 @@ def test_bystander_cannot_edit(tmp_path):
             headers={"X-Athena-Actor": "3"},
         )
         assert r.status_code == 403
-        current = client.get("/issues").json()[0]
+        current = client.get("/issues").json()["issues"][0]
         assert current["title"] == "t"  # unchanged
 
 
@@ -294,4 +294,4 @@ def test_web_creator_can_change_status(tmp_path):
             follow_redirects=False,
         )
         assert r.status_code == 303
-        assert client.get("/issues").json()[0]["status"] == "done"
+        assert client.get("/issues").json()["issues"][0]["status"] == "done"

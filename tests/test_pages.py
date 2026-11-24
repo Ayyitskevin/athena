@@ -131,7 +131,7 @@ def test_create_list_and_show_page_via_api(tmp_path):
         # listed under its space
         listed = client.get(f"/spaces/{space['id']}/pages")
         assert listed.status_code == 200
-        assert [p["title"] for p in listed.json()] == ["Runbook"]
+        assert [p["title"] for p in listed.json()["pages"]] == ["Runbook"]
         # addressable on its own URL
         got = client.get(f"/pages/{made['id']}")
         assert got.status_code == 200
@@ -145,7 +145,7 @@ def test_empty_space_lists_no_pages(tmp_path):
         space = _make_space(client)
         r = client.get(f"/spaces/{space['id']}/pages")
         assert r.status_code == 200
-        assert r.json() == []
+        assert r.json() == {"pages": [], "next_cursor": None, "has_more": False}
 
 
 def test_create_page_requires_an_actor(tmp_path):

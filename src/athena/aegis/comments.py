@@ -86,3 +86,21 @@ def list_comments(conn: sqlite3.Connection, issue_id: int) -> list[dict]:
         f"{_SELECT} WHERE c.issue_id = ? ORDER BY c.id", (issue_id,)
     ).fetchall()
     return [_comment(row) for row in rows]
+
+
+#: The REST comment list's bounds (H6): a page of whole comments a call.
+LIST_DEFAULT_LIMIT = 50
+LIST_MAX_LIMIT = 200
+
+
+def list_comments_page(
+    conn: sqlite3.Connection, issue_id: int, *, limit: int, after_id: int = 0
+) -> tuple[list[dict], bool]:
+    """At most ``limit`` of an issue's comments after the comment ``after_id``,
+    oldest first, and whether more follow. Ids only grow, so a comment written
+    between two pages lands after every row already read."""
+    rows = conn.execute(
+        f"{_SELECT} WHERE c.issue_id = ? AND c.id > ? ORDER BY c.id LIMIT ?",
+        (issue_id, after_id, limit + 1),
+    ).fetchall()
+    return [_comment(row) for row in rows[:limit]], len(rows) > limit

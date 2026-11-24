@@ -40,7 +40,7 @@ def _seed_three_users(db_file):
 def _get_issue(client, issue_id) -> dict:
     """Read one issue back via the list endpoint (there is no single-GET API
     route; the list is the canonical read path)."""
-    for issue in client.get("/issues").json():
+    for issue in client.get("/issues").json()["issues"]:
         if issue["id"] == issue_id:
             return issue
     raise AssertionError(f"issue {issue_id} not found")
@@ -326,7 +326,7 @@ def test_attach_label_appears_in_issue_reads(tmp_path):
         assert r.status_code == 201, r.text
         assert [label["name"] for label in r.json()["labels"]] == ["bug"]
         # and it shows up in the list view too
-        listed = client.get("/issues").json()
+        listed = client.get("/issues").json()["issues"]
         assert [label["name"] for label in listed[0]["labels"]] == ["bug"]
 
 

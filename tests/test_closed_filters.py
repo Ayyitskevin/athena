@@ -57,4 +57,4 @@ def test_search_still_finds_by_a_known_kind(client):
 
 
 def test_a_configured_name_filter_still_matches_nothing_rather_than_refusing(client):
-    assert client.get("/issues?status=no_such_status").json() == []
+    assert client.get("/issues?status=no_such_status").json()["issues"] == []

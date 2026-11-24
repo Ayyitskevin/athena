@@ -78,7 +78,7 @@ def test_list_issue_comments_reads_the_thread_oldest_first(tmp_path):
             headers=H1,
         )
         agent.comment_on_issue(issue["id"], "picking this up")
-        thread = agent.list_issue_comments(issue["id"])
+        thread = agent.list_issue_comments(issue["id"])["comments"]
         assert [c["body"] for c in thread] == ["context from Ann", "picking this up"]
     finally:
         admin.__exit__(None, None, None)

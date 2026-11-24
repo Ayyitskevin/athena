@@ -77,20 +77,16 @@ def test_a_list_is_one_object_with_its_four_keys(app_client):
     for title in ("one", "two", "three"):
         app_client.post("/issues", json={"title": title})
     server = mcp_server.build_server(AthenaClient(client=app_client))
-    first, rest, everything = _wire(
-        server,
-        [
-            ("list_issues", {"limit": 2}),
-            ("list_issues", {"limit": 2, "offset": 2}),
-            ("list_issues", {}),
-        ],
+    first, everything = _wire(
+        server, [("list_issues", {"limit": 2}), ("list_issues", {})]
     )
     page = _one(first)
     assert set(page) == LIST_KEYS
     assert page["count"] == len(page["items"]) == 2
-    # A full page may have more behind it: truncated, and next continues it.
+    # More is behind it: truncated, and next continues it with the route's cursor.
     assert page["truncated"] is True
-    assert page["next"] == {"offset": 2}
+    assert set(page["next"]) == {"cursor"}
+    (rest,) = _wire(server, [("list_issues", {"limit": 2, **page["next"]})])
     tail = _one(rest)
     assert tail["count"] == 1
     assert tail["truncated"] is False and tail["next"] is None
@@ -99,7 +95,7 @@ def test_a_list_is_one_object_with_its_four_keys(app_client):
         row["title"] for row in page["items"] + tail["items"]
     ]
     # The rows are the REST rows as summaries: everything but the body (A6).
-    rest = app_client.get("/issues").json()
+    rest = app_client.get("/issues").json()["issues"]
     assert whole["items"] == [
         {key: value for key, value in row.items() if key != "body"} for row in rest
     ]

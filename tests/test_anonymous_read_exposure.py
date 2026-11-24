@@ -405,7 +405,7 @@ def test_reads_that_no_container_scopes_are_named_and_answer(
         monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)
         for path in exposure.UNSCOPED_READS:
             assert client.get(path, follow_redirects=False).status_code == 200, path
-        listed = client.get("/issues").json()
+        listed = client.get("/issues").json()["issues"]
         items = listed["items"] if isinstance(listed, dict) else listed
         assert issue["id"] in [item["id"] for item in items]
 

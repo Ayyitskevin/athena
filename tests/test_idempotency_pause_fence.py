@@ -69,7 +69,7 @@ def test_paused_bearer_cannot_replay_and_resume_stays_fenced(tmp_path):
         assert after_resume.json()["code"] == "idempotency_authorization_changed"
 
         # The fence never re-ran the mutation: exactly one issue exists.
-        issues = client.get("/issues", headers=ADMIN).json()
+        issues = client.get("/issues", headers=ADMIN).json()["issues"]
         assert [i["title"] for i in issues] == ["created"]
 
     conn = db.connect(db_file)

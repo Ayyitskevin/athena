@@ -191,7 +191,7 @@ def test_web_creator_can_change_priority(tmp_path):
             follow_redirects=False,
         )
         assert r.status_code == 303
-        assert client.get("/issues").json()[0]["priority"] == "high"
+        assert client.get("/issues").json()["issues"][0]["priority"] == "high"
 
 
 def test_web_bystander_cannot_change_priority(tmp_path):
@@ -205,7 +205,9 @@ def test_web_bystander_cannot_change_priority(tmp_path):
             f"/aegis/issues/{issue['id']}/priority", data={"priority": "urgent"}
         )
         assert r.status_code == 403
-        assert client.get("/issues").json()[0]["priority"] == "medium"  # unchanged
+        assert (
+            client.get("/issues").json()["issues"][0]["priority"] == "medium"
+        )  # unchanged
 
 
 def test_web_detail_shows_priority(tmp_path):

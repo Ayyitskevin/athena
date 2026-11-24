@@ -102,7 +102,7 @@ def test_web_create_page_is_api_backed(tmp_path):
             follow_redirects=False,
         )
         assert r.status_code == 303
-        pages = client.get(f"/spaces/{space['id']}/pages").json()
+        pages = client.get(f"/spaces/{space['id']}/pages").json()["pages"]
         assert [p["title"] for p in pages] == ["Runbook"]
         assert pages[0]["created_by"] == 1
 
@@ -143,7 +143,7 @@ def test_web_page_tree_renders_nesting(tmp_path):
         _login(client)
         space = _make_space(client)
         client.post(f"/mentor/spaces/{space['id']}/pages", data={"title": "Parent"})
-        parent = client.get(f"/spaces/{space['id']}/pages").json()[0]
+        parent = client.get(f"/spaces/{space['id']}/pages").json()["pages"][0]
         client.post(
             f"/mentor/spaces/{space['id']}/pages",
             data={"title": "Child", "parent_id": str(parent["id"])},
@@ -162,14 +162,15 @@ def test_page_detail_shows_space_nav_tree(tmp_path):
         _login(client)
         space = _make_space(client)
         client.post(f"/mentor/spaces/{space['id']}/pages", data={"title": "Runbooks"})
-        parent = client.get(f"/spaces/{space['id']}/pages").json()[0]
+        parent = client.get(f"/spaces/{space['id']}/pages").json()["pages"][0]
         client.post(
             f"/mentor/spaces/{space['id']}/pages",
             data={"title": "Deploy guide", "parent_id": str(parent["id"])},
         )
         client.post(f"/mentor/spaces/{space['id']}/pages", data={"title": "Onboarding"})
         by_title = {
-            p["title"]: p for p in client.get(f"/spaces/{space['id']}/pages").json()
+            p["title"]: p
+            for p in client.get(f"/spaces/{space['id']}/pages").json()["pages"]
         }
         child, sibling = by_title["Deploy guide"], by_title["Onboarding"]
 
@@ -192,14 +193,14 @@ def test_page_detail_breadcrumb_trail(tmp_path):
         _login(client)
         space = _make_space(client)
         client.post(f"/mentor/spaces/{space['id']}/pages", data={"title": "Handbook"})
-        gp = client.get(f"/spaces/{space['id']}/pages").json()[0]
+        gp = client.get(f"/spaces/{space['id']}/pages").json()["pages"][0]
         client.post(
             f"/mentor/spaces/{space['id']}/pages",
             data={"title": "Runbooks", "parent_id": str(gp["id"])},
         )
         parent = next(
             p
-            for p in client.get(f"/spaces/{space['id']}/pages").json()
+            for p in client.get(f"/spaces/{space['id']}/pages").json()["pages"]
             if p["title"] == "Runbooks"
         )
         client.post(
@@ -208,7 +209,7 @@ def test_page_detail_breadcrumb_trail(tmp_path):
         )
         child = next(
             p
-            for p in client.get(f"/spaces/{space['id']}/pages").json()
+            for p in client.get(f"/spaces/{space['id']}/pages").json()["pages"]
             if p["title"] == "Deploy"
         )
 
@@ -233,7 +234,7 @@ def test_page_detail_breadcrumb_top_level(tmp_path):
         _login(client)
         space = _make_space(client)
         client.post(f"/mentor/spaces/{space['id']}/pages", data={"title": "Charter"})
-        page = client.get(f"/spaces/{space['id']}/pages").json()[0]
+        page = client.get(f"/spaces/{space['id']}/pages").json()["pages"][0]
         crumb = (
             client.get(f"/mentor/pages/{page['id']}")
             .text.split('class="breadcrumb"')[1]
@@ -252,7 +253,7 @@ def test_web_cross_space_parent_is_rejected(tmp_path):
         b = client.get("/spaces").json()
         b = [s for s in b if s["key"] == "B"][0]
         client.post(f"/mentor/spaces/{a['id']}/pages", data={"title": "InA"})
-        a_page = client.get(f"/spaces/{a['id']}/pages").json()[0]
+        a_page = client.get(f"/spaces/{a['id']}/pages").json()["pages"][0]
         # try to nest a B-page under an A-page
         r = client.post(
             f"/mentor/spaces/{b['id']}/pages",
@@ -284,7 +285,7 @@ def test_web_page_detail_renders_body(tmp_path):
             f"/mentor/spaces/{space['id']}/pages",
             data={"title": "Doc", "body": "hello world"},
         )
-        page = client.get(f"/spaces/{space['id']}/pages").json()[0]
+        page = client.get(f"/spaces/{space['id']}/pages").json()["pages"][0]
         html = client.get(f"/mentor/pages/{page['id']}").text
         assert "Doc" in html and "hello world" in html
 
@@ -301,7 +302,7 @@ def test_web_edit_requires_login(tmp_path):
         _login(client)
         space = _make_space(client)
         client.post(f"/mentor/spaces/{space['id']}/pages", data={"title": "Doc"})
-        page = client.get(f"/spaces/{space['id']}/pages").json()[0]
+        page = client.get(f"/spaces/{space['id']}/pages").json()["pages"][0]
         client.post("/logout")
         assert client.get(f"/mentor/pages/{page['id']}/edit").status_code == 401
         assert (
@@ -318,7 +319,7 @@ def test_web_edit_empty_title_is_400(tmp_path):
         _login(client)
         space = _make_space(client)
         client.post(f"/mentor/spaces/{space['id']}/pages", data={"title": "Doc"})
-        page = client.get(f"/spaces/{space['id']}/pages").json()[0]
+        page = client.get(f"/spaces/{space['id']}/pages").json()["pages"][0]
         r = client.post(f"/mentor/pages/{page['id']}/edit", data={"title": "  "})
         assert r.status_code == 400
 
@@ -333,7 +334,7 @@ def test_web_edit_saves_and_snapshots_history(tmp_path):
         client.post(
             f"/mentor/spaces/{space['id']}/pages", data={"title": "Doc", "body": "v1"}
         )
-        page = client.get(f"/spaces/{space['id']}/pages").json()[0]
+        page = client.get(f"/spaces/{space['id']}/pages").json()["pages"][0]
 
         r = client.post(
             f"/mentor/pages/{page['id']}/edit",

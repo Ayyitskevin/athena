@@ -345,7 +345,7 @@ def test_a_playbook_with_no_unchecked_steps_refuses(tmp_path, body):
         refused = _start(client, page["id"])
         assert refused.status_code == 422
         assert "no unchecked" in refused.json()["detail"]
-        assert client.get("/issues", headers=H1).json() == []
+        assert client.get("/issues", headers=H1).json()["issues"] == []
         assert client.get(f"/pages/{page['id']}/backlinks", headers=H1).json() == []
 
 
@@ -362,7 +362,9 @@ def test_fenced_samples_do_not_consume_capacity_or_create_issues(tmp_path):
         assert result["checked_skipped"] == 0
         assert [child["title"] for child in result["children"]] == ["Real step"]
         assert result["children"][0]["parent_id"] == result["parent"]["id"]
-        assert {issue["id"] for issue in client.get("/issues", headers=H1).json()} == {
+        assert {
+            issue["id"] for issue in client.get("/issues", headers=H1).json()["issues"]
+        } == {
             result["parent"]["id"],
             result["children"][0]["id"],
         }
@@ -383,7 +385,7 @@ def test_too_many_steps_is_a_capacity_refusal(tmp_path):
         assert refused.status_code == 429
         assert str(playbook_commands.MAX_ITEMS) in refused.json()["detail"]
         # Nothing partial was created.
-        assert client.get("/issues", headers=H1).json() == []
+        assert client.get("/issues", headers=H1).json()["issues"] == []
 
 
 def test_an_archived_playbook_refuses(tmp_path):
@@ -500,7 +502,7 @@ def test_a_failed_instantiation_leaves_nothing_behind(tmp_path):
         _bootstrap(client)
         space = _space(client)
         page = _page(client, space["id"], body="- [ ] " + "x" * 10)
-        before = len(client.get("/issues", headers=H1).json())
+        before = len(client.get("/issues", headers=H1).json()["issues"])
 
         # Force a failure inside the loop, after the parent exists.
         original = playbook_commands.issue_commands.set_issue_parent
@@ -515,7 +517,7 @@ def test_a_failed_instantiation_leaves_nothing_behind(tmp_path):
         finally:
             playbook_commands.issue_commands.set_issue_parent = original
 
-        assert len(client.get("/issues", headers=H1).json()) == before
+        assert len(client.get("/issues", headers=H1).json()["issues"]) == before
 
 
 # --- retry safety and MCP -------------------------------------------------------
@@ -542,7 +544,7 @@ def test_an_idempotency_key_makes_a_retry_safe(tmp_path):
         assert replay.status_code == 201
         assert replay.json()["parent"]["id"] == first.json()["parent"]["id"]
         # Four issues total (one parent + three steps), not eight.
-        assert len(client.get("/issues", headers=H1).json()) == 4
+        assert len(client.get("/issues", headers=H1).json()["issues"]) == 4
 
 
 def test_mcp_starts_a_playbook_and_surfaces_refusals(tmp_path):

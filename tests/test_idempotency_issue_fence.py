@@ -184,7 +184,9 @@ def test_a_create_receipt_survives_assignments_even_of_what_it_created(tmp_path)
         _assign(client, other, sol["user"]["id"])
         _assign(client, first.json()["id"], 1)
         replay = client.post("/issues", json=body, headers=keyed)
-        titles = [i["title"] for i in client.get("/issues", headers=ADMIN).json()]
+        titles = [
+            i["title"] for i in client.get("/issues", headers=ADMIN).json()["issues"]
+        ]
 
     assert replay.status_code == 201, replay.text
     assert replay.headers.get(REPLAY) == "true"
@@ -340,7 +342,7 @@ def test_a_fenced_marker_expires_when_its_receipt_would_have(tmp_path):
             )
             conn.commit()
         again = client.post(f"/issues/{x}/comments", json={"body": "hi"}, headers=keyed)
-        listed = client.get(f"/issues/{x}/comments", headers=ADMIN).json()
+        listed = client.get(f"/issues/{x}/comments", headers=ADMIN).json()["comments"]
 
     assert again.status_code == 201, again.text
     assert again.headers.get(REPLAY) is None

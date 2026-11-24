@@ -37,7 +37,7 @@ def test_issue_starts_unassigned(tmp_path):
     with TestClient(app) as client:
         _seed_user(db_file)
         issue_id = _make_issue(client)
-        issue = client.get("/issues").json()[0]
+        issue = client.get("/issues").json()["issues"][0]
         assert issue["id"] == issue_id
         assert issue["assignee_id"] is None
         assert issue["assignee_name"] is None
@@ -63,7 +63,7 @@ def test_put_assigns_and_resolves_name(tmp_path):
         assert body["assignee_name"] == "Ann"
 
         # Persists — a fresh GET sees the assignment.
-        assert client.get("/issues").json()[0]["assignee_name"] == "Ann"
+        assert client.get("/issues").json()["issues"][0]["assignee_name"] == "Ann"
 
 
 def test_put_null_unassigns(tmp_path):

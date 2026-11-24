@@ -73,7 +73,7 @@ def _q(client, query, headers=H1, **params):
 def _titles(client, query, headers=H1, **params):
     r = _q(client, query, headers=headers, **params)
     assert r.status_code == 200, r.text
-    return [row["title"] for row in r.json()]
+    return [row["title"] for row in r.json()["issues"]]
 
 
 # --- the atoms mean what they say ------------------------------------------
@@ -335,7 +335,7 @@ def test_an_anonymous_caller_sees_only_public_work(tmp_path):
 
         anon = c.get("/issues", params={"q": "is:open"})
         assert anon.status_code == 200
-        assert [row["title"] for row in anon.json()] == ["open to all"]
+        assert [row["title"] for row in anon.json()["issues"]] == ["open to all"]
 
 
 # --- refusals reach the transport intact -----------------------------------
@@ -369,7 +369,9 @@ def test_the_structured_filters_still_work_untouched(tmp_path):
         _bootstrap(c)
         _issue(c, "urgent thing", priority="urgent")
         _issue(c, "calm thing", priority="low")
-        rows = c.get("/issues", params={"priority": "urgent"}, headers=H1).json()
+        rows = c.get("/issues", params={"priority": "urgent"}, headers=H1).json()[
+            "issues"
+        ]
         assert [r["title"] for r in rows] == ["urgent thing"]
 
 
@@ -511,7 +513,9 @@ def test_mcp_and_rest_return_the_same_ids_for_the_same_query(tmp_path, query):
                 )
 
         c.headers.update(_bearer(agent))
-        rest = [row["id"] for row in c.get("/issues", params={"q": query}).json()]
+        rest = [
+            row["id"] for row in c.get("/issues", params={"q": query}).json()["issues"]
+        ]
         client = AthenaClient(client=c)
-        assert [row["id"] for row in client.search_work(query)] == rest
+        assert [row["id"] for row in client.search_work(query)["issues"]] == rest
         assert client.count_work(query)["matched"] == len(rest)
