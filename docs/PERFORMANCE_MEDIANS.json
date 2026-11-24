@@ -1,6 +1,112 @@
 {
  "schema": "athena.hot_path_medians.v1",
- "recorded": false,
- "meaning": "Not yet recorded. The 10,000-issue medians are recorded by scripts/benchmark_hot_paths.py --record on a quiet machine from a committed tree; until then this file holds none, and no number here is a baseline. See docs/PERFORMANCE.md.",
- "paths": {}
+ "recorded": true,
+ "meaning": "Medians over real HTTP against athena-serve on a seeded fleet workspace, measured by scripts/benchmark_hot_paths.py. For people, not for the gate. See docs/PERFORMANCE.md.",
+ "commit": "de9176e",
+ "recorded_despite": null,
+ "measured_on": "2026-11-24",
+ "machine": "4 CPUs, linux, Python 3.12.3, SQLite 3.45.1",
+ "load_average_1m_at_end": 0.4,
+ "workspace": {
+  "shape": "fleet",
+  "issues": 10000,
+  "analyzed": false,
+  "comments": 17900,
+  "activity": 65198,
+  "notifications": 56005,
+  "issue_leases": 0,
+  "issue_claim_handoffs": 120,
+  "pages": 500
+ },
+ "calls_per_read": 30,
+ "paths": {
+  "GET /desk (seat)": {
+   "median_ms": 34.06,
+   "p95_ms": 38.44,
+   "n": 30,
+   "status": 200,
+   "bytes": 18931
+  },
+  "GET /desk (operator)": {
+   "median_ms": 24.38,
+   "p95_ms": 28.62,
+   "n": 30,
+   "status": 200,
+   "bytes": 19740
+  },
+  "GET /desk/ready (seat)": {
+   "median_ms": 12.28,
+   "p95_ms": 15.27,
+   "n": 30,
+   "status": 200,
+   "bytes": 5806
+  },
+  "GET /desk/since (seat, no cursor)": {
+   "median_ms": 38.65,
+   "p95_ms": 45.66,
+   "n": 30,
+   "status": 200,
+   "bytes": 2759
+  },
+  "GET work-context (hot issue)": {
+   "median_ms": 13.15,
+   "p95_ms": 17.91,
+   "n": 30,
+   "status": 200,
+   "bytes": 26895
+  },
+  "GET /events (seat, 50 behind)": {
+   "median_ms": 7.32,
+   "p95_ms": 8.76,
+   "n": 30,
+   "status": 200,
+   "bytes": 11780
+  },
+  "GET /notifications/priority (operator)": {
+   "median_ms": 8.06,
+   "p95_ms": 8.79,
+   "n": 30,
+   "status": 200,
+   "bytes": 26998
+  },
+  "GET /projects/{id}/brief (seat)": {
+   "median_ms": 69.75,
+   "p95_ms": 74.1,
+   "n": 30,
+   "status": 200,
+   "bytes": 3852
+  },
+  "in process: desk.build_desk (seat)": {
+   "median_ms": 17.61,
+   "p95_ms": 22.2,
+   "n": 30
+  },
+  "in process: desk.latest_visible_event_id (seat)": {
+   "median_ms": 0.01,
+   "p95_ms": 0.01,
+   "n": 30
+  },
+  "in process: ready_queue.build_ready (seat)": {
+   "median_ms": 2.76,
+   "p95_ms": 3.87,
+   "n": 30
+  },
+  "in process: operator_since.build_since (seat, no cursor)": {
+   "median_ms": 30.74,
+   "p95_ms": 51.01,
+   "n": 30
+  },
+  "POST /issues/claim-next (seat)": {
+   "median_ms": 25.28,
+   "p95_ms": 29.92,
+   "n": 60,
+   "status": 200
+  },
+  "POST /issues/{id}/comments (seat)": {
+   "median_ms": 12.42,
+   "p95_ms": 15.26,
+   "n": 60,
+   "status": 201
+  }
+ }
 }

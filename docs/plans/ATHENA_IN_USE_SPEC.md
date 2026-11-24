@@ -2,7 +2,7 @@
 
 Date: 2026-11-22. Review baseline: `0b42d40` (`main` after Waves 0, 0b, 1 and 2
 of [the agentic-use specification](AGENTIC_USE_SPEC_ATHENA.md)).
-Status: **decisions accepted by standing instruction; Waves 3 and 4 built.**
+Status: **decisions accepted by standing instruction; Waves 3 and 4 built; Wave 6 begun.**
 Evidence: [reports/repo-review-2026-11-22-round2.md](reports/repo-review-2026-11-22-round2.md).
 Finding IDs such as `FLEET-4`, `OPS-5`, `PERF-1` and `COCKPIT-2` refer to that
 report. Requirement IDs that begin A, B or C are carried from the first
@@ -27,8 +27,11 @@ and 4 are carried into this document. This document's Wave 3 is built in PR
 #471: the six false statements are true again and the three findings that
 blocked a fleet are fixed. Wave 4 is built in PRs #472 and #473: one outcome
 with three slices costs 88 tool calls and 233,740 bytes where it cost 142 and
-359,223. First lanes of Waves 6, 7 and 8 are built and independently reviewed
-but not merged. Nothing has been re-graded since.
+359,223. The first five requirements of Wave 6 are built in PR #474: the desk
+as a seat answers in 34 ms at 10,000 issues and 93 ms at 50,000, where it took
+259 and 1,285. First lanes of Waves 7 and 8, and F10 and F6 of Wave 5, are
+built and independently reviewed but not merged. Nothing has been re-graded
+since.
 
 **Decisions in force.**
 
@@ -49,8 +52,10 @@ but not merged. Nothing has been re-graded since.
 1. Any eligible account can replace an issue's text with no precondition, and
    the old text is unrecoverable (F10).
 2. One unrelated assignment voids every stored idempotency receipt (F6).
-3. The desk, the inbox and every write slow with history, each from one
-   statement (Wave 6).
+3. The project brief and `/desk/since` without a cursor still grow with
+   history (357 and 165 ms at 50,000 issues), three REST lists return
+   everything, and every bearer read takes the writer lock (H5, H6, H7, H9:
+   the rest of Wave 6).
 4. The cockpit's boards and lists key on the assignee while agents work by
    lease, and four operator steps cannot be done in the browser (Wave 8).
 5. Assignment answers with the name of an account that cannot see the issue's
@@ -73,12 +78,17 @@ many notifications in one call, the work-order report, the event feed's
 read and the onboarding profile, renewal on the generation alone, refusal
 facts as fields with every registered `next` followed by a test, and one
 timestamp shape with paging frozen. "Wave 4 results" says the same for each.
+From Wave 6: the desk's newest-visible-event read, the ready rule evaluated
+once over the issues that may be open, the search entry found by key, the
+inbox indexes, the fleet-shaped seed and the benchmark with recorded medians,
+and the 40 ms delay of a server started on an inherited socket. "Wave 6
+results" says the same for each.
 
 **Next step.** Integrate the lanes already built and reviewed, each wave as its
-own pull request: Wave 6 (H8, H1, H3; H2, H4), Wave 7 (C11, H10, H12, H18) and
-Wave 8 (U3, U9; U6, U7). Then Wave 5 in the order its row gives, starting with
-F10 and F6. Each requirement that removes calls lowers the fleet trial's
-ceilings in the same commit.
+own pull request: Wave 7 (C11, H10, H12, H18) and Wave 8 (U3, U9; U6, U7).
+Then Wave 5 in the order its row gives, starting with F10 and F6, which are
+built. The rest of Wave 6 (H6, H5, H7, H9) is not built. Each requirement that
+removes calls lowers the fleet trial's ceilings in the same commit.
 
 **How work is done here.** One requirement, one commit, with the test that
 fails without it. Delegated build work is briefed with
@@ -155,9 +165,9 @@ loosened without a line in the wave's results.
 | A keyed retry after an unrelated assignment | 409 `idempotency_authorization_changed`; the marker is kept forever | Replays; a marker expires with its receipt | 3 |
 | Tool calls and bytes for one outcome with three slices, full variant | 142 calls and 359,252 bytes, as F1's test measures them in process. The review's run against a live server counted the same 142 calls and 382,369 bytes: its ids were longer and its drains re-read each feed from the first cursor. | 90 calls (arithmetic: 142 less 35 acknowledgements, 15 setup calls and 4 ETag reads) and 250,000 bytes (arithmetic: 30% less). Measured after Wave 4: 88 calls and 233,740 bytes. | 4 |
 | Calls that acknowledge one notification each | 39 of 142 | At most 4. Measured after Wave 4: 0. | 4 |
-| `GET /desk` as a seat, median at 10,000 and 50,000 issues | 259 ms and 1,285 ms | 80 ms and 200 ms (arithmetic: less the trail scan and three of four ready passes) | 6 |
-| A comment write, median at 50,000 issues | 75 ms, against 18 ms at 1,000 | Within twice the 1,000-issue figure | 6 |
-| The operator's priority inbox, median at 50,000 issues | 1,875 ms | 100 ms | 6 |
+| `GET /desk` as a seat, median at 10,000 and 50,000 issues | 259 ms and 1,285 ms | 80 ms and 200 ms (arithmetic: less the trail scan and three of four ready passes). Measured after Wave 6: 34 ms and 93 ms. | 6 |
+| A comment write, median at 50,000 issues | 75 ms, against 18 ms at 1,000 | Within twice the 1,000-issue figure. Measured after Wave 6: 12.6 ms, against 11.6 ms at 1,000. | 6 |
+| The operator's priority inbox, median at 50,000 issues | 1,875 ms | 100 ms. Measured after Wave 6: 7 ms. | 6 |
 | Webhook deliveries after three duplicate starts over 30 events | 47 | 30 | 7 |
 | Routes that answer without a credential on a default instance | 74 of 156, reported nowhere | Counted and printed by `athena-doctor`; tailnet mode refuses to start without an explicit setting | 7 |
 | Operator steps that cannot be done in the browser | 4 | 0, or each on a declared list | 8 |
@@ -359,6 +369,89 @@ Found and not fixed:
 - **The changed profile still does not run the coverage stage**, so the floor
   ratchet was first seen in hosted CI.
 
+### Wave 6 results (first lanes)
+
+Measured on the Wave 6 head in the same 4-CPU, 15 GB container. This is H8,
+H1, H3, H2 and H4 (PR #474), one commit each, and one fix the benchmark
+found. H6, H5, H7 and H9 are not built. Two build agents built the five from
+six-part briefs; each lane was reviewed by an agent that had not built it and
+corrected after that review, and the lead read, re-ran, corrected and
+committed each.
+
+Medians over HTTP against `athena-serve` on a fleet-shaped workspace, by
+`scripts/benchmark_hot_paths.py`; the 10,000-issue column is the one recorded
+in `docs/PERFORMANCE_MEDIANS.json`.
+
+| Read or write | 1,000 issues | 10,000 | 50,000 | Baseline at 50,000 |
+|---|---|---|---|---|
+| `GET /desk` as a seat | 20 ms | 34 ms | 93 ms | 1,285 ms |
+| `GET /desk/ready` as a seat | 10 ms | 12 ms | 23 ms | not measured alone |
+| `POST /issues/claim-next` | 21 ms | 25 ms | 38 ms | 156 ms inside the writer lock |
+| A comment write | 11.6 ms | 12.4 ms | 12.6 ms | 75 ms |
+| The operator's priority inbox | 7 ms | 8 ms | 7 ms | 1,875 ms |
+| The newest visible event id, in process | 0.01 ms | 0.01 ms | 0.01 ms | 840 ms |
+| `GET /desk/since` with no cursor | 13 ms | 39 ms | 165 ms | not a target of these five |
+| `GET /projects/{id}/brief` | 13 ms | 70 ms | 357 ms | H5, not built |
+
+The baselines are the review's, from its own scripts on its own seed; they
+were not re-measured with this benchmark on the old code, so each pair is an
+order of magnitude and not a ratio. No answer changed: on the integrated tree
+the lead compared the old code with the new over 80 random workspaces, every
+desk lane, the ready lane and the `is:ready` atom, 668,534 comparisons, and
+all agreed. The reviewer had run 2,757,838 over 334 workspaces on the first
+build. The fleet trial's ceilings did not move.
+
+The product gate's receipt is in PR #474.
+
+Found by reviewing the builds, and fixed before each was committed:
+
+- **H3.** Skipping closed issues was switched off for the whole workspace
+  when any one project redefined done; it is decided per project. A lane
+  limit outside 1 to 50 changed its answer and is now refused. Hosted CI then
+  failed an existing test that traced the second of the rule's two
+  statements; the rule is one statement and the test follows it.
+- **H2.** A stale map row naming the rowid the next entry would take made
+  that write, and every one after it, fail: every new issue answered 500
+  after an old process had written once. The write replaces its map row on
+  either key. Run again on a drifted map, the migration could delete a
+  source's only entry; its first pass drops any map row that does not name
+  its own source's entry.
+- **H4.** The unread index carried the event id, and SQLite then planned an
+  acknowledgement by id as a probe of every visible event for every id: 22 s
+  where it had taken 7 s at 50,000 issues, inside the writer lock. The index
+  no longer carries it, the visibility gate is asked of each row's own event,
+  and a statement that names notifications by id finds each by its key; left
+  to choose, the planner walked every notification the user has. The
+  changelog claimed more reads were faster than are.
+- **Every HTTP median the benchmark printed was about 42 ms too high.**
+  `athena-serve --fd`, the socket-activated start, answered every request
+  about 40 ms late: 44 ms for `/healthz` against 2 ms for a server started
+  with a host and port. The server library wraps an inherited descriptor as a
+  UNIX-domain socket, so `TCP_NODELAY` was never set on its connections. The
+  launcher sets it on the listener. An instance started by socket activation
+  had this delay on every request.
+
+Found and not fixed:
+
+- **The desk still grows with history**: 3, 18 and 72 ms in process at the
+  three sizes. `/desk/since` with no cursor grows faster (5, 31 and 155 ms in
+  process), and neither was in these five requirements.
+- **H4.** Not faster: the priority summary, which reports on every visible
+  row; a priority read whose `min_priority` few rows pass, which reads back
+  until its page is full; and the unread count for a non-admin, which checks
+  visibility on every unread row. Notifications are still never deleted
+  (H20).
+- **H2.** Entries an old process writes after the migration are not mapped
+  until the migration file is run again; stop Athena before migrating.
+- **Plans are pinned with no statistics.** Athena never runs ANALYZE, so the
+  statements these five changed name their index or forbid one. A plan test
+  fails if one changes, and asks again after ANALYZE where statistics could
+  change it.
+- **H8.** The gate times nothing. The recorded medians describe one container
+  and are for people; the benchmark refuses to record on a busy machine or
+  from an uncommitted tree.
+- **The changed profile still does not run the coverage stage.**
+
 ## Priorities
 
 - **P0.** A written statement is false, or a fleet following the recipe is
@@ -543,7 +636,7 @@ one change with its own commit, in the order given.
 | 8. The cockpit | U2, U3, U4, U6, U7, U9, U14, U5, U8, U10, U11, U12, U13, U15, C10 | D12, D27 |
 | 9. Debts | G1 to G10, B6b, B11 | D9, D10 |
 
-Waves 3 and 4 are done; their results are above. Wave 3 is the six false
+Waves 3 and 4 are done, and Wave 6 is begun; their results are above. Wave 3 is the six false
 statements and the three findings that block a fleet following the recipe. Wave 4 is where the per-outcome scorecard row moves.
 Waves 6 to 9 do not depend on each other and can be reordered.
 

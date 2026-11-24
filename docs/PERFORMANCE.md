@@ -16,10 +16,11 @@ different things.
   history and holds the ratio. Those tests are listed below.
 - **The medians are for people.** [PERFORMANCE_MEDIANS.json](PERFORMANCE_MEDIANS.json)
   is where the benchmark below records the median of each hot path at 10,000
-  issues. It holds none yet: the medians are recorded once, on a quiet machine,
-  from a committed tree, and `--record` refuses otherwise. Until then no number
-  in it is a baseline, and comparisons are made by running the benchmark twice
-  on the same machine, before and after a change.
+  issues, with the commit, the machine and the load average they were measured
+  at. They are recorded on a quiet machine from a committed tree, and
+  `--record` refuses otherwise. A number in it describes that machine: compare
+  a change by running the benchmark twice on the same machine, before and
+  after.
 
 ## Seeding a workspace
 
