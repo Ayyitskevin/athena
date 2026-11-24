@@ -1185,14 +1185,26 @@ def test_run_server_builds_a_fresh_app_pinned_to_the_preflighted_listener(
         return application
 
     runs: list[tuple[object, dict]] = []
+    no_delay_at_run: list[int] = []
     monkeypatch.setattr(athena_main, "create_app", create_app)
-    monkeypatch.setattr(
-        "uvicorn.run",
-        lambda application, **kwargs: runs.append((application, kwargs)),
-    )
 
-    ops._run_server(host="127.0.0.1", port=8123, fd=None)
-    ops._run_server(host="127.0.0.1", port=8123, fd=9)
+    def run(application, **kwargs):
+        if "fd" in kwargs:
+            no_delay_at_run.append(
+                listener.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY)
+            )
+        runs.append((application, kwargs))
+
+    monkeypatch.setattr("uvicorn.run", run)
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        inherited = listener.fileno()
+        ops._run_server(host="127.0.0.1", port=8123, fd=None)
+        ops._run_server(host="127.0.0.1", port=8123, fd=inherited)
+    # The inherited listener has the option before the server takes it.
+    assert no_delay_at_run and no_delay_at_run[0] != 0
 
     assert len(created) == 2
     assert created[0][0] is not created[1][0]
@@ -1224,8 +1236,31 @@ def test_run_server_builds_a_fresh_app_pinned_to_the_preflighted_listener(
         (
             created[1][0],
             {
-                "fd": 9,
+                "fd": inherited,
                 **common_server_arguments,
             },
         ),
     ]
+
+
+def test_a_connection_accepted_on_an_inherited_listener_answers_without_delay():
+    """uvicorn wraps an inherited descriptor as a UNIX-domain socket, so the
+    event loop never sets ``TCP_NODELAY`` on its connections and every answer
+    waited about 40 ms (measured: 44 ms against 2 ms for `/healthz`). A
+    connection takes the option from its listener, so the launcher sets it
+    there."""
+
+    def accepted_no_delay(listener: socket.socket) -> int:
+        with socket.create_connection(listener.getsockname()):
+            connection, _ = listener.accept()
+            with connection:
+                return connection.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY)
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        assert accepted_no_delay(listener) == 0
+        ops._answer_without_delay(listener.fileno())
+        assert accepted_no_delay(listener) != 0
+        # The launcher worked on a duplicate: the caller's descriptor is open.
+        assert listener.getsockname()[1] > 0

@@ -394,6 +394,24 @@ def _listener_address(fd: int) -> tuple[str, int]:
     return address[0], address[1]
 
 
+def _answer_without_delay(fd: int) -> None:
+    """Set ``TCP_NODELAY`` on an inherited listener, so every connection it
+    accepts has it.
+
+    A server that opens its own listener gets this from the event loop, which
+    sets it on each TCP connection. uvicorn wraps an inherited descriptor as a
+    UNIX-domain socket whatever its family, the loop then takes its
+    connections for something other than TCP and leaves them alone, and each
+    answer waits about 40 ms for the client's delayed acknowledgement of the
+    response headers before the body is sent. A connection takes the option
+    from its listener when it is accepted."""
+    listener = socket.socket(fileno=os.dup(fd))
+    try:
+        listener.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    finally:
+        listener.close()
+
+
 def _run_server(*, host: str, port: int, fd: int | None) -> None:
     import uvicorn
 
@@ -406,6 +424,7 @@ def _run_server(*, host: str, port: int, fd: int | None) -> None:
         expected_server=(host, port),
     )
     if fd is not None:
+        _answer_without_delay(fd)
         uvicorn.run(
             application,
             fd=fd,
