@@ -25,10 +25,10 @@ Distinct account names alone do not prove independent review.
 Give the conductor member credentials with `read` and `issue:write`, and set
 `ATHENA_MCP_PROFILE=conductor` in its MCP server environment: onboard it with
 `POST /users/onboard_agent` and `"profile": "conductor"`, and the printed config
-names it. This selects the 26
+names it. This selects the 27
 `seat` tools plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`,
 `get_issue_prior_text`, `assign_issue`, `delegate_issue`, `list_eligible_accounts`, `request_candidate_review`, `set_issue_parent`,
-`list_subtasks`, and `link_issues`: 39 tools before scope filtering. `docs:write` is optional for this
+`list_subtasks`, and `link_issues`: 40 tools before scope filtering. `docs:write` is optional for this
 issue-only loop; page tools remain in `seat+knowledge` or `full`. The default remains
 `full`. Profiles never grant permission, and REST still enforces access.
 
@@ -227,7 +227,13 @@ When the request row's `reported_verdict` is **HOLD** or BLOCKED, the conductor
 records the concrete finding and reopens/routes the build slice for rework. The
 builder claims again, produces a new frozen candidate and reports its checks.
 Request the review of that new subject explicitly; the independent reviewer then
-reviews it. Preserve both revisions and their reports. When it is **PASS** or
+reviews it. Preserve both revisions and their reports. A HOLD says what is wrong
+with one candidate; ask of each one what rule would have prevented it, and have
+exactly one written down. The reviewer's `complete_claim` answer names the call
+in `next`: `record_run_learning(issue_id, summary)` on the issue it reviewed
+(`seat+knowledge`, `docs:write`). One rule per HOLD, in the reporter's words,
+recorded by the reporter; nothing is promoted automatically, and a HOLD with no
+rule worth keeping records none. When it is **PASS** or
 PASS-WITH-NOTES, the conductor checks the evidence against the operator's
 acceptance conditions before deliberately changing status.
 `complete_claim` releases only the lease; `update_issue(status="done")` is separate

@@ -24,12 +24,14 @@ from typing import Literal
 
 from athena import config
 from athena.aegis import (
+    accountable,
     claim_handoffs,
     contributors as contributors_data,
     issue_activity,
     issue_etags,
     issues,
     lease_lapse_commands,
+    lease_progress,
     leases,
     report_credentials,
     review_commands,
@@ -44,9 +46,11 @@ from athena.aegis.issue_commands import (
 from athena.core import (
     access,
     activity,
+    budgets,
     coordination_roots,
     db,
     identity,
+    notifications,
     packet_time,
     reported_usage,
 )
@@ -577,6 +581,12 @@ def claim_issue(
         _refuse_overlapping_paths(
             conn, actor=actor, issue_id=issue_id, paths=declared_paths, root=root
         )
+        if not renewed:
+            # Taking work is a coordination write (D6). A renewal is not
+            # metered: a holder must always be able to keep, yield or complete
+            # what it holds. Charged last, after every refusal that would have
+            # stopped the claim anyway.
+            budgets.charge(conn, actor, counter=budgets.COORDINATION)
         try:
             lease = leases.upsert_lease(
                 conn,
@@ -614,6 +624,8 @@ def claim_issue(
             path_fence=lease["path_fence"],
             commit=False,
         )
+        if renewed:
+            _count_renewal(conn, actor=actor, issue_id=issue_id, lease=lease)
         lease["open_claim_handoff"] = claim_handoffs.get_open_handoff(conn, issue_id)
         # The issue's current ETag, read in this transaction, so a holder that
         # only renews (no If-Match, A12) still sees that the issue changed:
@@ -623,6 +635,67 @@ def claim_issue(
         assert current is not None
         lease["issue_etag"] = issue_etags.current_etag(conn, current)
         return lease
+
+
+def _count_renewal(
+    conn: sqlite3.Connection, *, actor: dict, issue_id: int, lease: dict
+) -> None:
+    """Put on a renewal's answer how many times this possession has been
+    renewed with no work of the holder's recorded on the issue, and raise it
+    once, on the renewal that reaches the threshold (C7).
+
+    The count includes the renewal just recorded. It reaches the threshold on
+    exactly one renewal of an unbroken run, so the event is recorded once; work
+    by the holder starts the count again, and a later run can raise it again.
+    The event goes to the accounts that answer for the work, never the holder,
+    who reads the count on this answer. Nothing is released or refused: the
+    renewal succeeds."""
+    count = lease_progress.renewals_without_progress(
+        conn,
+        issue_id=issue_id,
+        holder_id=int(actor["id"]),
+        generation=lease["generation"],
+    )
+    lease["renewals_without_progress"] = count
+    if count != lease_progress.threshold():
+        return
+    event = issue_activity.record_no_progress(
+        conn,
+        holder_id=int(actor["id"]),
+        holder_name=str(actor["name"]),
+        issue_id=issue_id,
+        generation=lease["generation"],
+        renewals=count,
+        commit=False,
+    )
+    notifications.notify_users(
+        conn,
+        event_id=event["id"],
+        user_ids=accountable.answering_for(
+            conn, holder_id=int(actor["id"]), issue_id=issue_id
+        ),
+    )
+
+
+#: What every completion's answer says: the lease is gone, the issue is as it was.
+COMPLETION_NEXT = "complete_claim released the lease only; issue status is unchanged"
+#: The verdicts that say the work is not done (W4).
+HELD_VERDICTS = ("HOLD", "BLOCKED")
+
+
+def _completion_next(report: dict | None) -> str:
+    """The completion answer's ``next``. A report of HOLD or BLOCKED says what
+    is wrong with one piece of work; this asks its author, while the finding is
+    in front of it, for the one rule that would have prevented it, and names
+    the call that records it (W4). Nothing is recorded or promoted by
+    reporting: the learning is the reporter's own later act."""
+    verdict = None if report is None else report.get("verdict")
+    if verdict not in HELD_VERDICTS:
+        return COMPLETION_NEXT
+    return (
+        f"{COMPLETION_NEXT}. You reported {verdict}: record the one rule that "
+        "would have prevented it with record_run_learning(issue_id, summary)"
+    )
 
 
 def _normalize_claim_yield(reason: str, note: str | None) -> tuple[str, str | None]:
@@ -1404,9 +1477,7 @@ def complete_claim(
             # Always present on both branches: an absent field would make
             # "the clock had already released this" a defaulted meaning.
             "lapsed": lapsed,
-            "next": (
-                "complete_claim released the lease only; issue status is unchanged"
-            ),
+            "next": _completion_next(report),
         }
         if submission is not None:
             result["candidate_submission"] = review_commands.insert_submission(

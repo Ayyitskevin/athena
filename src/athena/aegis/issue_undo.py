@@ -519,6 +519,11 @@ def register() -> None:
         reason="the holder's possession ended; it claims again for a new one",
     )
     undo.register(
+        "no_progress",
+        action_class=undo.ONE_WAY,
+        reason="it records that renewals passed with no work; nothing was applied",
+    )
+    undo.register(
         "holder_budget_exhausted",
         action_class=undo.ONE_WAY,
         reason="it records a refusal; nothing was applied, so nothing is undone",

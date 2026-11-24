@@ -13,10 +13,13 @@ import sqlite3
 from athena.core import activity, db
 from athena.core._util import utc_now
 from athena.core.budgets import (
+    ACTION,
+    COORDINATION,
     parse_window_start,
     VERB_BUDGET_CLEARED,
     VERB_BUDGET_EXHAUSTED,
     VERB_BUDGET_SET,
+    VERB_COORDINATION_EXHAUSTED,
     WINDOWS,
     Budget,
     stamp_window,
@@ -48,8 +51,14 @@ def set_budget(
     target_user_id: int,
     window: str,
     action_limit: int,
+    coordination_limit: int | None = None,
 ) -> Budget:
     """Create or replace a user's budget atomically with its audit event.
+
+    ``coordination_limit`` is the second ceiling (D6): comments, claims and
+    delegations per window. None leaves coordination unlimited, which is what
+    every budget set before it existed means. A budget is replaced whole: a
+    call that omits it removes a coordination ceiling set earlier.
 
     Changing the ceiling preserves consumption and the current window: raising a
     limit mid-window releases the agent immediately without gifting it a fresh
@@ -66,6 +75,13 @@ def set_budget(
         raise ValueError("action_limit must be an integer")
     if action_limit < 0:
         raise ValueError("action_limit must not be negative")
+    if coordination_limit is not None:
+        if not isinstance(coordination_limit, int) or isinstance(
+            coordination_limit, bool
+        ):
+            raise ValueError("coordination_limit must be an integer or null")
+        if coordination_limit < 0:
+            raise ValueError("coordination_limit must not be negative")
     _refuse_own_budget(actor_id, target_user_id)
     with db.transaction(conn, immediate=True):
         before = get_budget(conn, target_user_id)
@@ -73,28 +89,31 @@ def set_budget(
             before is not None
             and before.window == window
             and before.action_limit == action_limit
+            and before.coordination_limit == coordination_limit
         ):
             return before
         if before is None:
             conn.execute(
                 "INSERT INTO agent_budgets "
-                "(user_id, window, action_limit, action_used, window_started_at, set_by) "
-                "VALUES (?, ?, ?, 0, ?, ?)",
+                "(user_id, window, action_limit, action_used, window_started_at, "
+                "set_by, coordination_limit) VALUES (?, ?, ?, 0, ?, ?, ?)",
                 (
                     target_user_id,
                     window,
                     action_limit,
                     stamp_window(utc_now()),
                     actor_id,
+                    coordination_limit,
                 ),
             )
         else:
-            # Preserve action_used and the window anchor: a limit change is not a
-            # fresh allowance.
+            # Preserve both counters and the window anchor: a limit change is
+            # not a fresh allowance.
             conn.execute(
-                "UPDATE agent_budgets SET window = ?, action_limit = ?, set_by = ?, "
+                "UPDATE agent_budgets SET window = ?, action_limit = ?, "
+                "coordination_limit = ?, set_by = ?, "
                 "updated_at = datetime('now') WHERE user_id = ?",
-                (window, action_limit, actor_id, target_user_id),
+                (window, action_limit, coordination_limit, actor_id, target_user_id),
             )
         activity.record(
             conn,
@@ -102,7 +121,12 @@ def set_budget(
             verb=VERB_BUDGET_SET,
             target_kind="user",
             target_id=target_user_id,
-            detail=f"{action_limit} actions per {window}",
+            detail=f"{action_limit} actions per {window}"
+            + (
+                ""
+                if coordination_limit is None
+                else f"; {coordination_limit} coordination writes per {window}"
+            ),
             commit=False,
         )
         updated = get_budget(conn, target_user_id)
@@ -139,11 +163,13 @@ def _trail_stamp(window_stamp: str) -> str:
 
 
 def record_exhaustion(
-    conn: sqlite3.Connection, *, actor_id: int, detail: str
+    conn: sqlite3.Connection, *, actor_id: int, detail: str, counter: str = ACTION
 ) -> dict | None:
     """Put a refused write on the trail, AFTER its transaction rolled back: once
-    per budget window (F13). Returns the event when this refusal is the first of
-    its window, and None for a later one, which records nothing.
+    per budget window and counter (F13, D6). Returns the event when this refusal
+    is the first of its window for ``counter``, and None for a later one, which
+    records nothing. Each counter has its own verb, so one being spent does not
+    silence the other's first refusal.
 
     The refusal is exactly the "steer by exception" signal the operator wants — an
     agent hitting its ceiling is a decision to make, not noise. One refused
@@ -168,24 +194,30 @@ def record_exhaustion(
         if now - parse_window_start(budget) >= WINDOWS[budget.window]:
             started = stamp_window(now)
             conn.execute(
-                "UPDATE agent_budgets SET action_used = 0, window_started_at = ?, "
-                "updated_at = datetime('now') WHERE user_id = ?",
+                "UPDATE agent_budgets SET action_used = 0, coordination_used = 0, "
+                "window_started_at = ?, updated_at = datetime('now') "
+                "WHERE user_id = ?",
                 (started, actor_id),
             )
         else:
             started = budget.window_started_at
+        verb = (
+            VERB_COORDINATION_EXHAUSTED
+            if counter == COORDINATION
+            else VERB_BUDGET_EXHAUSTED
+        )
         seen = conn.execute(
             "SELECT 1 FROM activity WHERE verb = ? AND actor_id = ? "
             "AND target_kind = 'user' AND target_id = ? AND imported_at IS NULL "
             "AND created_at >= ? LIMIT 1",
-            (VERB_BUDGET_EXHAUSTED, actor_id, actor_id, _trail_stamp(started)),
+            (verb, actor_id, actor_id, _trail_stamp(started)),
         ).fetchone()
         if seen is not None:
             return None
         return activity.record(
             conn,
             actor_id=actor_id,
-            verb=VERB_BUDGET_EXHAUSTED,
+            verb=verb,
             target_kind="user",
             target_id=actor_id,
             detail=detail,

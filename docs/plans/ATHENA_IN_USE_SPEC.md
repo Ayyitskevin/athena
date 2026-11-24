@@ -58,8 +58,8 @@ them. Nothing has been re-graded since.
 
 **Known issues, most serious first.**
 
-1. A seat that renews without progress leaves the operator and its
-   conductor nothing to read: the rest of Wave 5 (C7).
+1. A learning recorded on one slice does not reach its parent or its
+   siblings: the last of Wave 5 (W5).
 2. `IssueOut.parent_id` gives the id of a parent issue the caller cannot see
    (found by F6's property test; older than this specification).
 3. The project brief and `/desk/since` without a cursor still grow with
@@ -106,12 +106,15 @@ idempotency fence scoped to the issue a key names, a key that survives a
 restart with replays marked for the agent, the leases of a stopped
 account named and released on request, a spent budget that names the
 leases to yield and tells who answers for the work, a HOLD or BLOCKED report
-that asks whoever answers for it, and each agent's last refusal readable by
-the operator. "Wave 5 results" says the same for
+that asks whoever answers for it, each agent's last refusal readable by
+the operator, a claim renewed with no recorded work raised, a second budget
+counter for comments, claims and delegations, the boot block, guide and
+glossary as MCP resources, a HOLD answer that asks for a rule, and a read of
+an idempotency key's state. "Wave 5 results" says the same for
 each.
 
 **Next step.** Nothing built is waiting. Build the rest of Wave 5 in the order
-its row gives (C7, A11, A14, W4, W5). Then the rest of Wave 6 (H6, H5, H7, H9), of Wave 7
+its row gives (W5). Then the rest of Wave 6 (H6, H5, H7, H9), of Wave 7
 (H13 to H17, H19, H20) and of Wave 8 (U2, U4, U5, U8, U10 to U15, C10), and
 Wave 9. Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
@@ -848,6 +851,93 @@ Found and not fixed:
   seat that reads the desk and never calls pickup leaves no "nothing ready"
   time. The trace costs one extra write for each refused request of an agent,
   after the write token resolution already makes.
+
+### Wave 5 results (third lanes)
+
+This is C7 with its decision D6, A14, W4 and A11 (PR #479), one commit each;
+C7 is two commits, the signal and the counter. The lead built C7, D6, W4 and
+A11, test first. A build agent built A14 from a six-part brief; it had no
+independent review, and the lead read the patch, corrected one glossary row and
+re-ran its tests on the integrated tree. One build agent ran beside the lead.
+
+| Measure | Before | After |
+|---|---|---|
+| A holder that renews with no recorded work | Read as `pinging`; never raised | Each renewal's answer carries `renewals_without_progress`; the renewal that reaches `ATHENA_NO_PROGRESS_RENEWALS` (3) records `no_progress` once and tells the assignee and the delegating account; the live claim carries the reason in attention (C7) |
+| A budget of 3 an hour and 5 comments | All 5 applied | With `coordination_limit` 3, the fourth is refused 429 `agent_coordination_budget_exhausted`; without one, as before (C7, D6) |
+| What an MCP-only agent can read of the boot block, the guide and the glossary | Nothing: no resource is served, and prompts are advertised with none behind them | Three resources in every profile; no prompts advertised (A14) |
+| Words in tool names with a glossary row | None of desk, office, floor, inbox, watch, yield, claim-next | Every word that is not a plain verb or connective, each with a "Not the same as" cell, held by a test (A14) |
+| The answer to a HOLD or BLOCKED report | The same sentence as any completion | Names `record_run_learning` in `next` (W4) |
+| What a caller can learn about a key it sent | Only by retrying and reading the refusal | `GET /idempotency/{key}` and `get_idempotency_key`: one of five states, the request's method and path, and what a retry would meet; nothing is changed (A11) |
+| Contract agent, two seats | 55 calls and 110,671 bytes | 55 calls and 110,701 bytes: C7's count on the one renewal |
+| Fleet trial | 88 calls and 233,740 bytes | 88 calls and 233,853 bytes: W4's sentence on the reviewer's one HOLD |
+| MCP tools: seat, with knowledge, conductor, all | 26, 37, 39, 142 | 27, 38, 40, 143: `get_idempotency_key` (A11) |
+
+The product gate's receipt is in PR #479.
+
+Decisions the lead took while building, each reversible by the owner:
+
+- **Progress is the holder's own recorded work on that issue.** Another
+  account's comment does not start the count again, and work recorded
+  elsewhere is not seen: the holder says where it is in a comment. The
+  threshold is 3 renewals, at most 90 minutes with the default lease, and
+  `0` turns the signal off.
+- **`no_progress` is told to who answers for the work, not to watchers**, and
+  ranks `medium` when a missed heartbeat is the only other trouble. Nothing is
+  refused or released.
+- **The coordination ceiling is optional, shares the budget's window, and has
+  its own refusal code and its own once-per-window event.** Nobody is told on
+  the account's behalf when it is spent, because the account can still do,
+  renew, complete or yield what it holds. Comment edits, labels, links and
+  watches stay unmetered.
+- **A budget is replaced whole.** Setting one without `coordination_limit`
+  removes a ceiling set earlier.
+- **The three documents ship as copies** under `mcp/documents`, held identical
+  to `docs/` by a test, as the field guide ships. Moving the source of truth
+  would have touched every test and link that pins `docs/`.
+- **`get_idempotency_key` is in the seat profile.** A seat makes keyed writes,
+  so it is the seat that has to be able to ask. It is the first tool added to
+  that profile since it was fixed.
+- **The read of a key is not a `next`.** The registry's rule is that a `next`
+  makes progress or waits; a read that restates a refusal does neither. The
+  two refusals name the read in their meaning instead.
+- **The read of a key changes nothing**: an expired receipt reads `unused` and
+  is not deleted, and a fenced one keeps its stored answer until a real retry
+  purges it.
+
+Found while building, and fixed before each was committed:
+
+- **C7.** The first version guarded a case that cannot happen (a count of
+  zero after a renewal); it was removed. Thirteen mutants are each caught.
+- **D6.** One mutant survived the first tests: changing the ceiling of a
+  budget that already existed. A test covers it; sixteen are now caught. A
+  sentence in the budget document called a yield "a coordination write", which
+  D6 made a metered term; it now says a yield is never metered.
+- **A14.** The Budget row described one counter; it describes two.
+- **W4.** A first wording added 190 bytes to the answer; it was cut to 113.
+- **A11.** A declared response budget below the default is refused by the
+  tool registry; the tool uses the default. Ten mutants are each caught.
+
+Found and not fixed:
+
+- **C7.** A holder whose work is all outside the issue (a long build in a
+  repository) is raised at the threshold unless it comments. The count is
+  read once per row of the active-work projection, up to 200 rows.
+- **D6.** A seat out of coordination budget cannot comment to say so; it can
+  still edit the issue. The operator learns of a spent coordination ceiling
+  from the card and from the agent's last refusal, and the conductor from
+  neither.
+- **A14.** `SERVER_INSTRUCTIONS` does not mention the resources, because every
+  session pays for that text. Copying `docs/` into the package is a manual
+  `cp`, which the failing test names. The glossary test checks that a row
+  exists and is filled, not that it is right. `OFFICE.md` says "at most one
+  chair" where the code says it is guidance; the Office row follows the code
+  and the document is not corrected.
+- **W4.** `record_run_learning` is not in the `seat` or `conductor` profile:
+  a reviewer on `seat+knowledge` can follow the `next`, a reviewer on `seat`
+  cannot.
+- **A11.** The read cannot say whether a retry would be refused
+  `idempotency_mismatch`, which depends on the request. H14's operator view of
+  a key is not built.
 
 ## Priorities
 

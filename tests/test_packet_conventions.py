@@ -82,6 +82,7 @@ PACKET_READS: dict[str, tuple[str, str]] = {
 }
 #: The narrow profiles' reads that answer a resource's own representation.
 RESOURCE_READS: dict[str, str] = {
+    "get_idempotency_key": "one key's state; it carries no time and no expiry",
     "get_issue": "the issue; its ETag covers exactly this representation",
     "search_work": "issues, each its own representation",
     "list_subtasks": "issues, each its own representation",

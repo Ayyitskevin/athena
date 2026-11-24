@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Any
+from urllib.parse import quote
 import re
 
 import httpx
@@ -1013,6 +1014,10 @@ class AthenaClient:
         all, so an auth failure afterwards is attributable to the token."""
         return self._result(self._client.get("/healthz"))
 
+    def get_idempotency_key(self, key: str) -> Any:
+        """Read the state of an idempotency key this credential used."""
+        return self._result(self._client.get(f"/idempotency/{quote(key, safe='')}"))
+
     def whoami(self) -> Any:
         """Read the authenticated identity: id, email, role, agent flag, and the
         acting token's effective scopes (null when the auth is not scope-limited)."""
@@ -2011,13 +2016,18 @@ class AthenaClient:
         *,
         window: str,
         action_limit: int,
+        coordination_limit: int | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
         """Admin: cap how many metered writes a user may make per fixed window."""
         return self._mutate(
             self._client.put,
             f"/users/{user_id}/budget",
-            json={"window": window, "action_limit": action_limit},
+            json={
+                "window": window,
+                "action_limit": action_limit,
+                "coordination_limit": coordination_limit,
+            },
             idempotency_key=idempotency_key,
         )
 

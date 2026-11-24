@@ -133,6 +133,10 @@ class UserPasswordReset(RequestBody):
 class BudgetUpdate(RequestBody):
     window: Literal["hour", "day"]
     action_limit: int
+    # The second ceiling (D6): comments, claims and delegations per window.
+    # Omitted or null: coordination is not limited. A budget is replaced whole,
+    # so omitting it removes a coordination ceiling set earlier.
+    coordination_limit: int | None = None
 
 
 class BudgetOut(BaseModel):
@@ -142,6 +146,10 @@ class BudgetOut(BaseModel):
     action_used: int
     remaining: int
     window_started_at: str
+    # The coordination counter (D6): null limit and remaining mean not limited.
+    coordination_limit: int | None = None
+    coordination_used: int = 0
+    coordination_remaining: int | None = None
 
 
 class UserOut(BaseModel):
@@ -557,7 +565,11 @@ def set_budget(
     that starts bounding an agent. Changing an existing ceiling preserves the
     current consumption and window — raising a limit releases the agent at once
     without gifting a fresh window. `action_limit: 0` is legitimate and freezes
-    metered writes while leaving reads working."""
+    metered writes while leaving reads working.
+
+    `coordination_limit` is a second ceiling, counted apart, on comments, claims
+    and delegations in the same window; omitted or null leaves them unlimited.
+    Lease renewals, yields and completions are never metered."""
     if users.get_user(conn, user_id) is None:
         raise Refusal(status_code=404, detail="no such user", code="not_found")
     try:
@@ -567,6 +579,7 @@ def set_budget(
             target_user_id=user_id,
             window=payload.window,
             action_limit=payload.action_limit,
+            coordination_limit=payload.coordination_limit,
         )
     except budget_commands.BudgetCommandError as exc:
         raise Refusal(

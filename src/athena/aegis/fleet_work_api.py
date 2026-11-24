@@ -69,6 +69,12 @@ class ActiveWorkLeaseOut(_StrictModel):
     expires_at: str
     generation: str
     claim_state: Literal["active", "expired"]
+    renewals_without_progress: int = Field(
+        description=(
+            "the holder's renewals of this possession since its newest "
+            "recorded work on the issue (C7)"
+        )
+    )
 
 
 class ActiveWorkRunOut(_StrictModel):
@@ -131,6 +137,7 @@ AttentionReason = Literal[
     "no_live_issue_write_token",
     "checkin_missing",
     "checkin_stale",
+    "no_progress",
     "visible_open_blockers",
     "open_claim_handoff",
 ]

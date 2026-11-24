@@ -29,7 +29,13 @@ from typing import Annotated, Any, Final, Literal, NamedTuple, NoReturn
 
 import httpx
 from mcp.server.fastmcp import FastMCP
-from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from mcp.types import (
+    CallToolResult,
+    GetPromptRequest,
+    ListPromptsRequest,
+    TextContent,
+    ToolAnnotations,
+)
 from pydantic import AfterValidator, Field, ValidationError
 
 from athena.aegis import (
@@ -53,7 +59,7 @@ from athena.core import (
     tokens,
 )
 from athena.mcp.client import AthenaClient, AthenaError
-from athena.mcp import config as mcp_config, results
+from athena.mcp import config as mcp_config, resources, results
 from athena.mcp.results import ListResult, ListShape, ObjectShape
 from athena.workflows import workspace_search
 
@@ -1078,6 +1084,10 @@ def build_server(
 
     _register_all(*_decorators(register), client)
     _answer_refusals_as_one_object(mcp)
+    # The boot block, the loop guide and the glossary, in every profile: an
+    # agent that has only this server can read them (A14).
+    resources.register_resources(mcp)
+    _advertise_no_prompts(mcp)
     return mcp
 
 
@@ -1234,6 +1244,19 @@ def _answer_refusals_as_one_object(mcp: FastMCP) -> None:
 
     # The same registration FastMCP makes for its own call_tool, replaced.
     mcp._mcp_server.call_tool(validate_input=False)(call_tool)  # noqa: SLF001
+
+
+def _advertise_no_prompts(mcp: FastMCP) -> None:
+    """Serve no prompts, and so do not say there are any.
+
+    FastMCP registers prompt handlers on every server, and the SDK advertises a
+    capability for each registered handler, so a client was told to list
+    prompts that do not exist. Removing the two handlers drops the capability
+    from the handshake; a client that asks anyway is told the method is not
+    found."""
+    handlers = mcp._mcp_server.request_handlers  # noqa: SLF001
+    handlers.pop(ListPromptsRequest, None)
+    handlers.pop(GetPromptRequest, None)
 
 
 def main() -> None:

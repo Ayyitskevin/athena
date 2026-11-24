@@ -26,8 +26,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.aegis import issue_activity, leases
-from athena.core import access, db, notifications, users
+from athena.aegis import accountable, issue_activity, leases
+from athena.core import db, notifications, users
 
 #: A seat holds one lease by the pickup rule and a handful at most by direct
 #: claims; the bound keeps one refusal's answer and writes small whatever an
@@ -48,29 +48,6 @@ def held_leases(conn: sqlite3.Connection, holder_id: int) -> list[dict]:
         ),
         key=lambda lease: lease["issue_id"],
     )
-
-
-def _recipients(conn: sqlite3.Connection, holder_id: int, issue_id: int) -> list[int]:
-    """The accounts that answer for the holder's work on this issue and may
-    still see it: the assignee and the account that delegated it to the
-    holder. Never the holder."""
-    row = conn.execute(
-        "SELECT i.project_id, i.assignee_id, "
-        "(SELECT c.added_by FROM issue_contributors c "
-        "WHERE c.issue_id = i.id AND c.user_id = ?) AS delegated_by "
-        "FROM issues i WHERE i.id = ?",
-        (holder_id, issue_id),
-    ).fetchone()
-    if row is None:
-        return []
-    recipients = []
-    for user_id in {row["assignee_id"], row["delegated_by"]} - {None, holder_id}:
-        user = users.get_user(conn, int(user_id))
-        if user is None or user.get("removed_at") is not None:
-            continue
-        if access.can_see_project_or_backlog(conn, user, row["project_id"]):
-            recipients.append(int(user_id))
-    return sorted(recipients)
 
 
 def tell_accountable(
@@ -100,7 +77,9 @@ def tell_accountable(
             notifications.notify_users(
                 conn,
                 event_id=event["id"],
-                user_ids=_recipients(conn, holder_id, lease["issue_id"]),
+                user_ids=accountable.answering_for(
+                    conn, holder_id=holder_id, issue_id=lease["issue_id"]
+                ),
             )
             events.append(event)
         return events

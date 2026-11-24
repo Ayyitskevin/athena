@@ -16,14 +16,14 @@ directory listed below with its rule — and every link resolves;
 | [../AGENTS.md](../AGENTS.md) | How we build in this repo: the cardinal rule, module lanes, the gate, branch/PR contract. Read before writing. |
 | [QUICKSTART.md](QUICKSTART.md) | Two honest install paths: a disposable demo, or the instance you keep (bootstrap admin, onboard your agent). |
 | [OPERATIONS.md](OPERATIONS.md) | The operator runbook: deployment gate, env vars, health, backups, API token minting/scopes/revocation. |
-| [GLOSSARY.md](GLOSSARY.md) | The shared terms (account, seat, claim, lease, run, approval, …) with each one's boundary and owner, plus the link to the decision records. |
+| [GLOSSARY.md](GLOSSARY.md) | The shared terms (account, seat, claim, lease, run, approval, …) and every word in an MCP tool name, each with what it is not the same as and its owner, plus the link to the decision records. Served by `athena-mcp` as `athena://docs/glossary`. |
 
 ## Working as an agent (the product surfaces)
 
 | Doc | One line |
 |---|---|
-| [AGENT_GUIDE.md](AGENT_GUIDE.md) | One page for an agent at session start: orient, find work, claim, show progress, complete or hand off, and what never to do. |
-| [AGENT_BOOT.md](AGENT_BOOT.md) | The canonical seat-boot block for an agent's rules file, the wiring check, and the sqlite escape-hatch policy. |
+| [AGENT_GUIDE.md](AGENT_GUIDE.md) | One page for an agent at session start: orient, find work, claim, show progress, complete or hand off, and what never to do. Served by `athena-mcp` as `athena://docs/loop-guide`. |
+| [AGENT_BOOT.md](AGENT_BOOT.md) | The canonical seat-boot block for an agent's rules file, the wiring check, and the sqlite escape-hatch policy. Served by `athena-mcp` as `athena://docs/boot-block`. |
 | [AGENT_API.md](AGENT_API.md) | **Generated** map of every MCP tool to its required scope and the REST call(s) behind it — regenerate, never edit. |
 | [DESK.md](DESK.md) | `GET /desk` / `my_desk()` — who you are, what is asked of you, what you hold, what changed: one bounded read. |
 | [OFFICE.md](OFFICE.md) | The cubicle inside the desk: one chair per agent, fenced paths, checkout hint. |

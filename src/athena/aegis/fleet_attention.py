@@ -180,8 +180,8 @@ def needs_you(
     budget_exhaustions = int(
         conn.execute(
             "SELECT COUNT(*) AS n FROM activity "
-            "WHERE verb = ? AND created_at >= ? AND imported_at IS NULL",
-            (budgets.VERB_BUDGET_EXHAUSTED, since),
+            "WHERE verb IN (?, ?) AND created_at >= ? AND imported_at IS NULL",
+            (*budgets.EXHAUSTION_VERBS, since),
         ).fetchone()["n"]
     )
 
@@ -367,6 +367,10 @@ RANKING_SIGNALS: tuple[AttentionSignal, ...] = (
 #: The claim reasons that only say a heartbeat is overdue. A claim with no
 #: other reason is ranked ``medium``: below a pending decision (U7).
 HEARTBEAT_REASONS = frozenset({"checkin_missing", "checkin_stale", "run_untagged"})
+#: Reasons that are not yet a decision. A claim whose only trouble is among
+#: these ranks ``medium``: a missed heartbeat, or a holder that keeps renewing
+#: with no recorded work (C7), which is alive and may only be quiet.
+QUIET_REASONS = HEARTBEAT_REASONS | {"no_progress"}
 
 #: How an answered question's reason opens: it waits on the agent now (U7).
 ANSWERED_WAITING = "answered, waiting on the agent"
@@ -608,7 +612,7 @@ def _collect_claims_needing_attention(
                 # decision: it ranks under every pending approval and question.
                 # Any other reason (a lapsed lease, a paused holder, ...) keeps
                 # it ``high`` (U7).
-                severity="medium" if set(reasons) <= HEARTBEAT_REASONS else "high",
+                severity="medium" if set(reasons) <= QUIET_REASONS else "high",
                 source_kind="issue",
                 source_id=issue["id"],
                 owner_id=holder_id,
@@ -796,11 +800,11 @@ def _collect_budget_exhaustions(
         return [], 0, 0
     since = _since_text(window_hours=window_hours, now=now)
     rows = conn.execute(
-        "SELECT id, actor_id, target_kind, target_id, created_at, detail "
+        "SELECT id, actor_id, verb, target_kind, target_id, created_at, detail "
         "FROM activity "
-        "WHERE verb = ? AND created_at >= ? AND imported_at IS NULL "
+        "WHERE verb IN (?, ?) AND created_at >= ? AND imported_at IS NULL "
         "ORDER BY id DESC LIMIT 200",
-        (budgets.VERB_BUDGET_EXHAUSTED, since),
+        (*budgets.EXHAUSTION_VERBS, since),
     ).fetchall()
     items: list[AttentionRankItem] = []
     examined = len(rows)
@@ -808,7 +812,7 @@ def _collect_budget_exhaustions(
         source_query = urlencode(
             {
                 "actor": row["actor_id"],
-                "verb": budgets.VERB_BUDGET_EXHAUSTED,
+                "verb": row["verb"],
                 "kind": row["target_kind"],
                 "target": row["target_id"],
             }
@@ -996,6 +1000,7 @@ CLAIM_REASON_WORDS: dict[str, str] = {
     "holder_ineligible": "the holder may not work this issue",
     "no_live_issue_write_token": "the holder has no live token that can write issues",
     "lease_expired": "the lease expired",
+    "no_progress": "keeps renewing with no work of its own recorded on the issue",
     "run_untagged": "never tagged with a run, so it cannot check in",
     "checkin_missing": "missed its check-in: nothing heard since the claim",
     "checkin_stale": "missed its check-in: the last one is overdue",

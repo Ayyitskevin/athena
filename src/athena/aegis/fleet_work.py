@@ -11,7 +11,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import sqlite3
 
-from athena.aegis import claim_handoffs, issues, run_state, statuses, work_progress
+from athena.aegis import (
+    claim_handoffs,
+    issues,
+    lease_progress,
+    run_state,
+    statuses,
+    work_progress,
+)
 from athena.core import access, agent_run_checkins, db
 
 
@@ -403,6 +410,17 @@ def _item(
         attention_reasons.append(
             "checkin_missing" if reporting_state == "not_reported" else "checkin_stale"
         )
+    # Alive and not moving (C7): a live lease its holder has renewed past the
+    # threshold with no work of its own recorded on the issue. An expired
+    # lease is already raised as such.
+    renewals = lease_progress.renewals_without_progress(
+        conn,
+        issue_id=int(row["issue_id"]),
+        holder_id=int(row["holder_id"]),
+        generation=row["generation"],
+    )
+    if claim_state == "active" and lease_progress.raised(renewals):
+        attention_reasons.append(lease_progress.REASON_NO_PROGRESS)
     if blocker_info["visible_total"]:
         attention_reasons.append("visible_open_blockers")
     if open_claim_handoff is not None:
@@ -439,6 +457,7 @@ def _item(
             "expires_at": row["expires_at"],
             "generation": row["generation"],
             "claim_state": claim_state,
+            "renewals_without_progress": renewals,
         },
         "run": {
             "claim_event_id": row["claim_event_id"],

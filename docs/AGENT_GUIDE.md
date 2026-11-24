@@ -9,6 +9,13 @@ Calls are shown two ways: the MCP tool (what your client calls) and the REST req
 (what it sends). Both need `Authorization: Bearer <token>`. Send `X-Athena-Run: <run id>`
 on every write that belongs to one execution, so the trail groups them.
 
+An agent that reaches Athena only through `athena-mcp` reads three documents as MCP
+resources, in every profile: this guide at `athena://docs/loop-guide`, the boot block
+([AGENT_BOOT.md](AGENT_BOOT.md)) at `athena://docs/boot-block`, and the glossary
+([GLOSSARY.md](GLOSSARY.md)), which defines every word in a tool name, at
+`athena://docs/glossary`. A resource costs nothing until it is read. The server offers
+no prompts.
+
 Every refusal (any 4xx or 5xx JSON body) carries a `code` beside its `detail`, from
 one registry. Branch on `code`, never on the `detail` text. Over MCP a refused call
 returns that same object with `isError` true, and `next` names the call that resolves
@@ -17,6 +24,7 @@ it where one exists. These codes carry their facts as fields beside the prose:
 to the lease's holder (`generation`), `fence_overlap` (`fence`), `rate_limited`
 (`rate_limit`), `payload_too_large` (`limit_bytes`), `capacity_reached` (`limit`),
 `agent_budget_exhausted` (`budget`, `held_leases`, `retry_after_seconds`),
+`agent_coordination_budget_exhausted` (`budget`, `retry_after_seconds`),
 `cursor_ahead` (`latest_visible_event_id`),
 `approval_required` (`approval`, `events_after`) and
 `idempotency_authorization_changed` (`issue_id`, when the keyed write named an
@@ -37,7 +45,23 @@ call with the same key and arguments and you get the first answer, whatever run
 id the new session has. A tool answer that is a stored one carries
 `_replayed: true`: it is what the first call was told, as it was then, so a
 lease in it may have lapsed since, and a new intent (a new poll) needs a new
-key. The codes are listed in
+key.
+
+A keyed write that timed out leaves you with a key and no answer. Ask before
+you guess: `get_idempotency_key(key=...)` (REST `GET /idempotency/{key}`) says
+what a retry under that key would meet and changes nothing. Only the credential
+that sent a key can read it; anyone else's reads `unused`.
+
+| `state` | What it means | What to do |
+|---|---|---|
+| `unused` | No request under this key is on record, or its receipt expired. | Send the write; it runs. |
+| `in_progress` | The first request is still running. A retry now is refused 409 `idempotency_in_progress` with `Retry-After`. | Wait that long and read the key again. |
+| `completed` | The write finished; `status_code` is its answer's status. | Repeat the same call with the same key to get that answer, marked `_replayed`. |
+| `indeterminate` | The first request ended and nothing recorded how: its owner went away, or its answer could not be kept. A retry is refused 409 `idempotency_indeterminate`. | Read the target that `method` and `path` name. If the write is not there and is still needed, send it under a new key. |
+| `authorization_changed` | What you may do changed since the key was used, so its answer is withheld. A retry is refused 409 `idempotency_authorization_changed`. | Read the target, then use a new key if the write is still needed. |
+
+A different request under a key that is on record is refused 409
+`idempotency_mismatch`, whatever its state. The codes are listed in
 [AGENT_API.md](AGENT_API.md#refusal-codes).
 `GET /openapi-agent.json` is the REST surface your token can call, without the browser
 routes `/openapi.json` also lists, and it declares per operation the bearer scheme,
@@ -216,7 +240,12 @@ Content-Type: application/json
 
 HTTP 201. The generation is unchanged on renewal. The answer also carries the issue's current
 `issue_etag`, so a holder that only renews sees when the issue changed (closed,
-archived, re-scoped) without another read; it is not part of the lease.
+archived, re-scoped) without another read; it is not part of the lease. A
+renewal's answer also carries `renewals_without_progress`: your renewals of this
+possession since your newest recorded work on the issue. At the operator's
+threshold (3 unless set) the claim is raised, once, to the issue's assignee and
+the account that delegated it. If the work is moving somewhere this issue's
+trail does not show, say where in a comment; that starts the count again.
 
 Claim again without the generation, and the server refuses:
 

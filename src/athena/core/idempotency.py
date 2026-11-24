@@ -127,7 +127,7 @@ import secrets
 import sqlite3
 import time
 
-from athena.core import db
+from athena.core import db, tokens
 
 
 LEGACY_FINGERPRINT = "legacy-fingerprint-unavailable"
@@ -595,6 +595,90 @@ def mark_indeterminate(
             (failure_code, key, identity, owner_token),
         )
         return cur.rowcount == 1
+
+
+#: Keys are 1 to 255 visible ASCII characters, as the header is validated.
+MAX_KEY_BYTES = 255
+
+#: What a key's owner can read about it (A11), each with what a retry of the
+#: same request would meet.
+KEY_STATES = (
+    "unused",
+    "in_progress",
+    "completed",
+    "indeterminate",
+    "authorization_changed",
+)
+
+
+def token_identity(raw_token: str) -> str:
+    """The identity a bearer token's keys are stored under: the credential,
+    not the account, so one account's tokens never read each other's keys."""
+    return "tok:" + tokens._hash(raw_token)
+
+
+def actor_identity(actor_id: int) -> str:
+    """The identity of the trusted actor-header path."""
+    return f"actor:{actor_id}"
+
+
+def is_valid_key(key: str) -> bool:
+    """Whether ``key`` could be an Idempotency-Key at all."""
+    return (
+        isinstance(key, str)
+        and 0 < len(key) <= MAX_KEY_BYTES
+        and all(0x21 <= ord(char) <= 0x7E for char in key)
+    )
+
+
+def key_state(
+    conn: sqlite3.Connection, *, key: str, identity: str, now: int | None = None
+) -> dict:
+    """What a retry under ``key`` by ``identity`` would meet, read without
+    changing anything (A11).
+
+    The same decisions ``claim_or_read`` makes, in the same order, with none
+    of its writes: an expired receipt reads ``unused`` and is not deleted, and
+    a receipt whose authorization has changed reads ``authorization_changed``
+    and keeps its stored answer until a real retry purges it. Whether a retry
+    carries the same request cannot be known from the key alone, so a
+    ``completed`` or ``in_progress`` key says what an identical retry would
+    meet; a different request under it is refused ``idempotency_mismatch``.
+
+    Only the key's own identity can ask: another credential's key under the
+    same text is a different row and reads ``unused``.
+    """
+    current = _now(now)
+    record = _record(conn, key=key, identity=identity)
+    legacy = record is not None and record["request_fingerprint"] == LEGACY_FINGERPRINT
+    if record is not None and not legacy and _expired(record, current):
+        record = None
+    if record is None:
+        return {"state": "unused", "method": None, "path": None, "status_code": None}
+    if legacy:
+        state = "indeterminate"
+    elif record["state"] == "indeterminate":
+        state = (
+            "authorization_changed"
+            if record["failure_code"] == "authorization_changed"
+            else "indeterminate"
+        )
+    elif _fenced(conn, record):
+        state = "authorization_changed"
+    elif record["state"] == "executing":
+        state = (
+            "in_progress"
+            if int(record["lease_expires_at"]) > current
+            else "indeterminate"
+        )
+    else:
+        state = "completed"
+    return {
+        "state": state,
+        "method": record["method"],
+        "path": record["path"],
+        "status_code": record["status_code"] if state == "completed" else None,
+    }
 
 
 def get_record(conn: sqlite3.Connection, *, key: str, identity: str) -> dict | None:

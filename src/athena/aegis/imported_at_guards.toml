@@ -152,6 +152,17 @@ why = """\
     completion; an imported one is another instance's history and must not \
     raise an attention row here, and an imported claim must not close one"""
 
+# --- lease_progress.py -------------------------------------------------------
+
+[[guarded]]
+module = "lease_progress.py"
+function = "renewals_without_progress"
+pattern = 'r\.imported_at IS NULL'
+why = """\
+    the count of renewals with no recorded work reads this instance's own \
+    lease events and the holder's own work; an imported renewal must not \
+    raise a claim here and imported work must not reset the count"""
+
 # --- leases.py ---------------------------------------------------------------
 
 [[guarded]]

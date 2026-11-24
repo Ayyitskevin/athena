@@ -534,10 +534,12 @@ def set_agent_budget(
     user_id: int,
     action_limit: str = Form(""),
     window: str = Form("day"),
+    coordination_limit: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Set an agent's durable action ceiling from the cockpit — the same command
-    the REST endpoint and MCP tool call, so the three cannot drift."""
+    the REST endpoint and MCP tool call, so the three cannot drift. The
+    coordination ceiling is optional: left empty, coordination is not limited."""
     user = getattr(request.state, "user", None)
     err = admin_required(user)
     if err is not None:
@@ -549,6 +551,12 @@ def set_agent_budget(
             "/admin/agents?error=Action+limit+must+be+a+whole+number.",
             status_code=303,
         )
+    coordination_raw = coordination_limit.strip()
+    if coordination_raw and not coordination_raw.isdigit():
+        return RedirectResponse(
+            "/admin/agents?error=Coordination+limit+must+be+a+whole+number+or+empty.",
+            status_code=303,
+        )
     try:
         budget_commands.set_budget(
             conn,
@@ -556,6 +564,7 @@ def set_agent_budget(
             target_user_id=user_id,
             window=window,
             action_limit=int(raw),
+            coordination_limit=int(coordination_raw) if coordination_raw else None,
         )
     except budget_commands.BudgetCommandError as exc:
         return _agents_redirect(error=exc.detail)

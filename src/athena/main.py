@@ -78,6 +78,7 @@ from athena.core import (
     search_api,
     security_api,
     sessions,
+    idempotency_api,
     tokens_api,
     undo,
     users,
@@ -552,10 +553,48 @@ def create_app(
     # tells the accounts that answer for each issue the refused account holds; a
     # later one records nothing. Every refusal names those leases, so the seat
     # can yield them with reason `capacity`, which is not metered.
+    def _coordination_exhausted(
+        request: Request, exc: budgets.BudgetExhausted
+    ) -> JSONResponse:
+        # The coordination counter (D6). The seat cannot comment, claim or
+        # delegate until the window ends, and it can still do, complete or
+        # yield what it holds, so nobody is told on its behalf: the exhaustion
+        # is recorded once per window for the operator, under its own verb.
+        try:
+            conn = db.connect(request.app.state.db_path)
+            try:
+                budget_commands.record_exhaustion(
+                    conn,
+                    actor_id=exc.budget.user_id,
+                    counter=budgets.COORDINATION,
+                    detail=(
+                        f"{exc.budget.coordination_used}/"
+                        f"{exc.budget.coordination_limit} coordination writes "
+                        f"this {exc.budget.window}; first refused: "
+                        f"{request.method} {request.url.path}"
+                    ),
+                )
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001 — the 429 must go out regardless
+            _logger.exception("could not record coordination budget exhaustion")
+        return JSONResponse(
+            status_code=429,
+            content={
+                "detail": str(exc),
+                "code": budgets.COORDINATION_EXHAUSTED_CODE,
+                "budget": exc.budget.public(),
+                "retry_after_seconds": exc.retry_after_seconds,
+            },
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        )
+
     def _budget_exhausted(request: Request, exc: Exception) -> JSONResponse:
         if not isinstance(exc, budgets.BudgetExhausted):
             raise exc
         holder_id = exc.budget.user_id
+        if exc.counter == budgets.COORDINATION:
+            return _coordination_exhausted(request, exc)
         held: list[dict] = []
         try:
             conn = db.connect(request.app.state.db_path)
@@ -913,6 +952,7 @@ def create_app(
     app.include_router(aegis_embeds_api.router)
     app.include_router(aegis_forge_api.router)
     app.include_router(tokens_api.router)
+    app.include_router(idempotency_api.router)
     app.include_router(agent_runs_api.router)
     app.include_router(run_controls_api.router)
     app.include_router(answerability_api.router)
