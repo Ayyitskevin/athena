@@ -27,6 +27,7 @@ from starlette._utils import get_route_path
 
 from athena import __version__ as athena_version
 from athena import background
+from athena.request_log import RequestLogMiddleware
 from athena import config
 from athena.aegis import api as aegis_api
 from athena.aegis import budget_exhaustion_commands
@@ -877,6 +878,9 @@ def create_app(
         allowed_authorities=resolved_authorities,
         expected_server=expected_server,
     )
+    # Outside even the boundary: every request gets an id and one log line,
+    # a refused Host included (H15). It does no work but that.
+    app.add_middleware(RequestLogMiddleware)
 
     # Mount web foundation (static + Jinja templates + page router).
     # This is the only place the web layer is wired. Do not change /healthz or lifespan.

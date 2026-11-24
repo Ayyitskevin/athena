@@ -79,6 +79,8 @@ def current_actor(
         # Who a refusal of this request is answered to (F15): set before the
         # limiter and the pause check, so those refusals are attributed too.
         request.state.refusal_actor_id = int(actor["id"])
+        # Who the request log names (H15).
+        request.state.actor_id = int(actor["id"])
         _enforce_token_rate_limit(request, actor)
         # Bearer requests are bounded by the per-token limiter above, so the
         # paused-refusal recording is already flood-bounded here.
@@ -100,6 +102,7 @@ def current_actor(
             raise Refusal(
                 status_code=401, detail="unknown actor", code="unauthenticated"
             )
+        request.state.actor_id = int(actor["id"])
         # The header path carries no token, so nothing bounds it — gate the
         # paused-refusal recording behind the anon limiter (non-raising) so a
         # paused claimed id can't flood the trail. The 403 is unchanged either way.

@@ -85,9 +85,9 @@ _DECLARED: tuple[Setting, ...] = (
         "ATHENA_LOG_LEVEL",
         "INFO",
         "Level for Athena's own logs (`athena.*`). At `INFO` startup logs the "
-        "migrations it applied and which background loops started, and the loops "
-        "log any swallowed error. Set `WARNING` for a quieter server or `DEBUG` "
-        "when diagnosing.",
+        "migrations it applied and which background loops started, every request "
+        "logs one line, and the loops log any swallowed error. Set `WARNING` for "
+        "a quieter server (no request lines) or `DEBUG` when diagnosing.",
         "server",
     ),
     Setting(

@@ -1228,6 +1228,7 @@ def test_run_server_builds_a_fresh_app_pinned_to_the_preflighted_listener(
         "lifespan": "on",
         "proxy_headers": False,
         "server_header": False,
+        "access_log": False,
         "limit_concurrency": 100,
         "timeout_graceful_shutdown": 30,
     }

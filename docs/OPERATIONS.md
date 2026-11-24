@@ -53,7 +53,7 @@ athena-serve: warning: ATHENA_ANONYMOUS_READ is set but is not an Athena setting
 | `ATHENA_DB` | `athena.db` | no | SQLite database path. Use an absolute path for a long-running service. |
 | `ATHENA_NETWORK_MODE` | `local` | no | Supported listener policy: `local` permits only loopback; `tailnet` additionally permits exact numeric addresses in Tailscale's `100.64.0.0/10` and `fd7a:115c:a1e0::/48` ranges. There is no `public` value. |
 | `ATHENA_ALLOWED_AUTHORITIES` | *(derived for local; required for tailnet)* | no | Comma-separated exact HTTP `Host` authorities, each with the listener's port, such as `athena.tailnet.example:8000` or `[::1]:8000`. A numeric authority must equal the numeric bind; a DNS authority is an operator assertion. No wildcard, suffix, userinfo, path, browser-numeric final label, internationalized/punycode label, or port range is accepted. |
-| `ATHENA_LOG_LEVEL` | `INFO` | no | Level for Athena's own logs (`athena.*`). At `INFO` startup logs the migrations it applied and which background loops started, and the loops log any swallowed error. Set `WARNING` for a quieter server or `DEBUG` when diagnosing. |
+| `ATHENA_LOG_LEVEL` | `INFO` | no | Level for Athena's own logs (`athena.*`). At `INFO` startup logs the migrations it applied and which background loops started, every request logs one line, and the loops log any swallowed error. Set `WARNING` for a quieter server (no request lines) or `DEBUG` when diagnosing. |
 | `ATHENA_BOOTSTRAP_TOKEN` | *(empty; bootstrap disabled)* | yes | One-time credential for the first `POST /users`. Generate 32 random bytes as URL-safe text, present it in `X-Athena-Bootstrap-Token`, then remove it and restart. Values must be 32–255 visible ASCII characters. |
 | `ATHENA_TRUST_ACTOR_HEADER` | `false` | no | Legacy application-factory identity fallback. The supported `athena-serve` launcher refuses to start when this is enabled; use password/OIDC login or a bearer token. |
 | `ATHENA_COOKIE_SECURE` | `false` | no | Adds the HTTPS-only `Secure` flag to browser cookies for retained raw-factory HTTPS experiments. The current direct-HTTP `athena-serve` contract refuses `true`; no supported TLS/proxy mode exists yet. |
@@ -253,6 +253,41 @@ original loss sat hidden behind the new file. Restore the file
 ([Restore a matched pair](#restore-a-matched-pair)) and the instance recovers
 without a restart. `athena-serve` already refuses to start on a missing
 database unless `--bootstrap` is given.
+
+## Logs
+
+Athena writes its log to standard error; the process manager keeps it
+(`journalctl -u athena`, `docker compose logs athena`). Every line starts with
+the time, the level and the logger.
+
+Each request leaves one line on `athena.request`, at `INFO`:
+
+```text
+2026-11-24 19:40:41,929 INFO athena.request: request id=5f0c2a9be41d7c33 actor=7 method=POST route=/issues/{issue_id}/claim status=409 code=lease_held ms=3.1
+```
+
+| Field | What it is |
+|---|---|
+| `id` | The request's id. The response carries it as `X-Request-Id`. A caller may send its own `X-Request-Id` (1 to 64 of `A-Z a-z 0-9 . _ -`) and it is kept; anything else is replaced. |
+| `actor` | The id of the account a token or a browser session resolved to. |
+| `method`, `route` | The method and the route's template. Never the raw path or the query string, so no title, search term or token reaches the log. A request no route matched has no route. |
+| `status`, `code` | The status, and the registered refusal code of a 4xx or 5xx JSON answer. |
+| `ms` | Time to the last byte, in milliseconds. |
+
+A field with nothing to say is `-`. To see what one agent did, filter on its
+account id (`actor=7 `); to see what it was refused, add `status=4`. `athena-serve`
+turns off the web server's own access line, which this one replaces.
+
+An unhandled error is logged once, at `ERROR`, as `unhandled error id=... method=...
+route=...` followed by one traceback. The caller's 500 carries the same id in
+`X-Request-Id`, so a report of a failed request names the line to look for.
+
+A webhook delivery that fails is logged once per attempt, at `WARNING`, on
+`athena.core.webhooks`: `webhook delivery failed: webhook=3 event=812 failures=2
+error=http 503`. The webhook's URL is not logged; its row keeps the same error.
+
+`ATHENA_LOG_LEVEL=WARNING` drops the request lines and keeps refusals to start,
+slow requests, failed deliveries and errors.
 
 ## Background Loops (Webhooks and Automation)
 

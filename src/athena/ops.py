@@ -6,6 +6,7 @@ import argparse
 import contextlib
 from dataclasses import dataclass
 import json
+import logging
 import os
 from pathlib import Path
 import shlex
@@ -1158,6 +1159,10 @@ def _answer_without_delay(fd: int) -> None:
         listener.close()
 
 
+def _not_an_app_error(record: logging.LogRecord) -> bool:
+    return not record.getMessage().startswith("Exception in ASGI application")
+
+
 def _serve_bound(application, **options) -> None:
     """Run ``application`` under uvicorn, starting its background loops only
     once the listener is bound (H13).
@@ -1175,6 +1180,9 @@ def _serve_bound(application, **options) -> None:
             await super().startup(sockets=sockets)
             await application.state.background.start()
 
+    # Athena's request log has already logged an unhandled error, once and
+    # with its request id (H15); the server's own copy of it is dropped.
+    logging.getLogger("uvicorn.error").addFilter(_not_an_app_error)
     server = Server(uvicorn.Config(application, **options))
     try:
         server.run()
@@ -1202,6 +1210,8 @@ def _run_server(*, host: str, port: int, fd: int | None) -> None:
         "lifespan": "on",
         "proxy_headers": False,
         "server_header": False,
+        # One line per request, and it is Athena's own (H15).
+        "access_log": False,
         "limit_concurrency": 100,
         "timeout_graceful_shutdown": 30,
     }

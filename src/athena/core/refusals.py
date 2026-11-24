@@ -104,9 +104,10 @@ def _request_validation(request: Request, exc: Exception) -> JSONResponse:
     )
 
 
-def _unhandled(request: Request, exc: Exception) -> JSONResponse:
-    # Starlette's ServerErrorMiddleware calls this, then re-raises the exception
-    # so it is still logged and still fails a test client; only the body changes.
+def internal_error() -> JSONResponse:
+    """The answer to a request whose handling raised. The request log sends it
+    (H15), so it carries the request's id like every other answer; the error is
+    then raised on, so it still fails a test client."""
     return JSONResponse(
         status_code=500,
         content={"detail": INTERNAL_ERROR_DETAIL, "code": INTERNAL_ERROR_CODE},
@@ -164,4 +165,3 @@ def install(app: FastAPI) -> None:
     app.add_exception_handler(sqlite3.OperationalError, _database_busy)
     app.add_exception_handler(StarletteHTTPException, _http_exception)
     app.add_exception_handler(RequestValidationError, _request_validation)
-    app.add_exception_handler(Exception, _unhandled)

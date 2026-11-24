@@ -123,7 +123,12 @@ def test_a_second_process_serves_without_the_loops_and_says_so_once(
             f"background loops: not started, another process holds "
             f"{database}.loops.lock; this process serves requests only"
         ]
-        assert caplog.records[-1].levelno == logging.WARNING
+        (said,) = [
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("background loops:")
+        ]
+        assert said.levelno == logging.WARNING
         # Stopping the second took nothing from the first.
         assert not any(probe.stopped.is_set() for probe in probes)
         assert first.get("/readyz").json()["background_loops"] == "running"
