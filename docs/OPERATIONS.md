@@ -1166,6 +1166,16 @@ for the first, for up to five seconds.
   rebuilds a table (see the note on migration 0090 below), or another process
   holding the database file.
 
+**The write-ahead log.** The database runs in WAL mode, which is a property
+of the file: Athena sets it once, on the first connection to a new database,
+and afterwards reads two bytes of the file's header instead of asking SQLite
+again on every connection. `athena.db-wal` grows with a burst of writes and
+is cut back to at most 32 MiB by the next write after a checkpoint
+(`journal_size_limit`); before, it kept the size of the largest burst it had
+ever held. SQLite checkpoints on its own every 1,000 pages, so in ordinary
+use the file stays near 4 MB. A `-wal` file that stays large means a reader
+holding a snapshot open is keeping checkpoints from finishing.
+
 ## Token Scopes
 
 Token scopes narrow a bearer token below the user's role. They never expand a

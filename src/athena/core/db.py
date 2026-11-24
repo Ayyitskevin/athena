@@ -51,6 +51,43 @@ class _Migration:
 BUSY_TIMEOUT_MS = 5000
 
 
+#: The write-ahead log is cut back to at most this many bytes after a
+#: checkpoint (H9). Without a limit the file keeps the size of the largest
+#: burst of writes it ever held: 59.8 MB was measured after a sustained run.
+#: 32 MiB is far above what a checkpoint leaves in ordinary use (SQLite
+#: checkpoints every 1,000 pages, about 4 MB), so it only ever trims a spike.
+JOURNAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024
+
+# Bytes 18 and 19 of a SQLite database file are its write and read format
+# versions: 2 and 2 in WAL mode, 1 and 1 with a rollback journal.
+_WAL_FORMAT = b"\x02\x02"
+
+
+def _is_wal(db_path: str | Path) -> bool:
+    """Whether the database file says, in its own header, that it is in WAL
+    mode. False for anything that cannot be read as a file (an in-memory
+    database, a file not yet written)."""
+    try:
+        with open(db_path, "rb") as handle:
+            handle.seek(18)
+            return handle.read(2) == _WAL_FORMAT
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _ensure_wal(conn: sqlite3.Connection, db_path: str | Path) -> None:
+    """Put the database in WAL mode unless its file already is.
+
+    WAL is a property of the file, stored in its header, so asking SQLite for
+    it on every connection only re-established what was already true, and
+    that was most of the cost of opening a connection (H9). Two bytes of the
+    header answer the same question for a few microseconds. The file is
+    asked every time, never a cache: a database replaced at the same path,
+    by a restore or by another tool, is read for what it is."""
+    if not _is_wal(db_path):
+        conn.execute("PRAGMA journal_mode = WAL")
+
+
 def connect(db_path: str | Path) -> sqlite3.Connection:
     """Open a connection with the settings Athena always wants."""
     # FastAPI may enter a synchronous yield dependency and run its endpoint/exit
@@ -59,7 +96,11 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     # into a production-only 500 (TestClient does not reproduce the scheduler hop).
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row  # rows act like dicts: row["email"]
-    conn.execute("PRAGMA journal_mode = WAL")  # readers don't block the writer
+    _ensure_wal(conn, db_path)  # readers don't block the writer
+    # Per connection, and free: after a checkpoint the next write cuts the
+    # write-ahead log back to this size instead of leaving it at its high-water
+    # mark for good (H9).
+    conn.execute(f"PRAGMA journal_size_limit = {JOURNAL_SIZE_LIMIT_BYTES}")
     conn.execute("PRAGMA foreign_keys = ON")  # actually enforce REFERENCES
     # WAL lets readers and ONE writer coexist, but a second writer still needs the
     # write lock — and without a busy timeout SQLite gives up instantly with
