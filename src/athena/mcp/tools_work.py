@@ -129,10 +129,10 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         read the issue, check the text you are replacing, and call again with
         its `_etag` as if_match. A 412 precondition_failed means the issue moved:
         read it again, merge your change into the current text, retry with the
-        fresh tag. The text an edit replaces is kept: the issue history lists the
-        edit and get_issue_prior_text reads the old text. For status and
-        priority alone if_match is optional; omitted, the update applies to the
-        current revision.
+        fresh tag. The text an edit replaces is kept: the issue's history lists
+        the edit, a conductor session can read the old text, and undo restores
+        it. For status and priority alone if_match is optional; omitted, the
+        update applies to the current revision.
 
         A successful transition into a done category may return held_lease for
         your own row. It describes the row at that transition, not current
