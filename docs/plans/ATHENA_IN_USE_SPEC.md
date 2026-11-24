@@ -946,7 +946,7 @@ commit each, both built by the lead, test first.
 
 | Measure | Before | After |
 |---|---|---|
-| A learning recorded on one slice of an outcome | Reaches the next agent through that issue's backlinks only | The work-context packet of the issue, of its siblings and of its parent's other children lists it: `learnings`, newest first, at most five, each with `authored_by` and `advisory_untrusted` (W5, D22) |
+| A learning recorded on one slice of an outcome | Reaches the next agent through that issue's backlinks only | The work-context packet of that issue and of each sibling under the same parent lists it, and a parent's learning reaches every child: `learnings`, newest first, at most five, each with `authored_by` and `advisory_untrusted` (W5, D22) |
 | A bearer-authenticated read while another writer holds the database | Waits up to five seconds to stamp the token's last use, then 500 | Answers at once; the stamp is written at most once a minute and a due one is skipped after a quarter of a second (H7) |
 | A write that waits five seconds for the lock | Unhandled error, 500 | 503 `busy` with `Retry-After` (H7) |
 | Contract agent, two seats | 55 calls and 110,701 bytes | 55 calls and 110,771 bytes: the `learnings` lane on two work-context reads |
