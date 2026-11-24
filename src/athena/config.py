@@ -170,6 +170,13 @@ _DECLARED: tuple[Setting, ...] = (
         "server",
     ),
     Setting(
+        "ATHENA_NO_PROGRESS_RENEWALS",
+        3,
+        "Renewals of one lease with no recorded work by its holder before the "
+        "claim is raised as `no_progress`. `0` never raises it.",
+        "server",
+    ),
+    Setting(
         "ATHENA_AGENT_RUN_MAX_CHECKINS_PER_AGENT",
         1000,
         "Durable check-in row ceiling per agent. Existing ids remain refreshable "
@@ -713,6 +720,12 @@ TOKEN_RATE_LIMIT_PER_MINUTE = _int_env("ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE", min
 # older rows are ``stale``. This is cooperative presence, not OS-process liveness:
 # expiry never completes, revokes, kills, or transfers a run.
 AGENT_RUN_STALE_SECONDS = _int_env("ATHENA_AGENT_RUN_STALE_SECONDS", minimum=1)
+
+# A lease renewed this many times with no recorded work by its holder is raised
+# as `no_progress` (C7): the holder is alive and the work is not moving. A
+# renewal with the default lease is at most 30 minutes after the one before, so
+# 3 is at most 90 minutes of holding an issue with nothing to show. 0 disables.
+NO_PROGRESS_RENEWALS = _int_env("ATHENA_NO_PROGRESS_RENEWALS", minimum=0)
 
 # Cooperative check-ins are operational state, not an unbounded run archive. A
 # compromised or looping token may refresh existing ids indefinitely, but cannot

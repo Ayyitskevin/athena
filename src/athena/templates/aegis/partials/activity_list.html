@@ -17,6 +17,9 @@
         {% elif e.verb == "lease_released" %}
             {# U3: an admin ended another account's lease. A release, not work done. #}
             released another account's lease <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "no_progress" %}
+            {# C7: the holder keeps renewing with no work of its own recorded here. #}
+            keeps renewing this lease with no recorded work <span class="activity-detail">{{ e.detail }}</span>
         {% elif e.verb == "holder_budget_exhausted" %}
             {# F13: the holder's budget refused a write. Nothing was released. #}
             ran out of budget while holding this lease <span class="activity-detail">{{ e.detail }}</span>

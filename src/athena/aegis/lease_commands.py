@@ -24,12 +24,14 @@ from typing import Literal
 
 from athena import config
 from athena.aegis import (
+    accountable,
     claim_handoffs,
     contributors as contributors_data,
     issue_activity,
     issue_etags,
     issues,
     lease_lapse_commands,
+    lease_progress,
     leases,
     report_credentials,
     review_commands,
@@ -47,6 +49,7 @@ from athena.core import (
     coordination_roots,
     db,
     identity,
+    notifications,
     packet_time,
     reported_usage,
 )
@@ -614,6 +617,8 @@ def claim_issue(
             path_fence=lease["path_fence"],
             commit=False,
         )
+        if renewed:
+            _count_renewal(conn, actor=actor, issue_id=issue_id, lease=lease)
         lease["open_claim_handoff"] = claim_handoffs.get_open_handoff(conn, issue_id)
         # The issue's current ETag, read in this transaction, so a holder that
         # only renews (no If-Match, A12) still sees that the issue changed:
@@ -623,6 +628,46 @@ def claim_issue(
         assert current is not None
         lease["issue_etag"] = issue_etags.current_etag(conn, current)
         return lease
+
+
+def _count_renewal(
+    conn: sqlite3.Connection, *, actor: dict, issue_id: int, lease: dict
+) -> None:
+    """Put on a renewal's answer how many times this possession has been
+    renewed with no work of the holder's recorded on the issue, and raise it
+    once, on the renewal that reaches the threshold (C7).
+
+    The count includes the renewal just recorded. It reaches the threshold on
+    exactly one renewal of an unbroken run, so the event is recorded once; work
+    by the holder starts the count again, and a later run can raise it again.
+    The event goes to the accounts that answer for the work, never the holder,
+    who reads the count on this answer. Nothing is released or refused: the
+    renewal succeeds."""
+    count = lease_progress.renewals_without_progress(
+        conn,
+        issue_id=issue_id,
+        holder_id=int(actor["id"]),
+        generation=lease["generation"],
+    )
+    lease["renewals_without_progress"] = count
+    if count != lease_progress.threshold():
+        return
+    event = issue_activity.record_no_progress(
+        conn,
+        holder_id=int(actor["id"]),
+        holder_name=str(actor["name"]),
+        issue_id=issue_id,
+        generation=lease["generation"],
+        renewals=count,
+        commit=False,
+    )
+    notifications.notify_users(
+        conn,
+        event_id=event["id"],
+        user_ids=accountable.answering_for(
+            conn, holder_id=int(actor["id"]), issue_id=issue_id
+        ),
+    )
 
 
 def _normalize_claim_yield(reason: str, note: str | None) -> tuple[str, str | None]:

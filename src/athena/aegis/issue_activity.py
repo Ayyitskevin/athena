@@ -901,6 +901,41 @@ def record_lease_lapsed(
     )
 
 
+def record_no_progress(
+    conn: sqlite3.Connection,
+    *,
+    holder_id: int,
+    holder_name: str,
+    issue_id: int,
+    generation: str,
+    renewals: int,
+    commit: bool,
+) -> dict:
+    """Record that the holder renewed this possession ``renewals`` times with
+    no work of its own recorded on the issue (C7).
+
+    The holder is the actor: its renewal is the act that crossed the line. The
+    detail opens with ``generation <token>;`` like every lease event, then the
+    holder's id and the count, and the holder's display name last (a name may
+    hold any character, so nothing is parsed after it). ``commit=False`` folds
+    it into the renewal's transaction. The caller tells who answers for the
+    work; watchers are not told, as for a renewal (D18)."""
+    return activity.record(
+        conn,
+        actor_id=holder_id,
+        verb="no_progress",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=(
+            f"generation {generation}; holder_id {holder_id}; "
+            f"renewals {renewals}; holder {holder_name}"
+        ),
+        facts={"generation": generation},
+        commit=commit,
+        notify=False,
+    )
+
+
 def record_holder_budget_exhausted(
     conn: sqlite3.Connection,
     *,

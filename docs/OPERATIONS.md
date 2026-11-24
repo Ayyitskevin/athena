@@ -65,6 +65,7 @@ athena-serve: warning: ATHENA_ANONYMOUS_READ is set but is not an Athena setting
 | `ATHENA_IDEMPOTENCY_MAX_RESPONSE_BYTES` | `1048576` | no | Largest successful response Athena will retain for safe replay. An overflow is fail-closed and becomes indeterminate. |
 | `ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE` | `120` | no | Per-bearer-token request ceiling for API/agent traffic. `0` disables it and is refused in tailnet mode. |
 | `ATHENA_AGENT_RUN_STALE_SECONDS` | `90` | no | Maximum check-in age still labeled `reporting_recently`; older reports are `stale`. |
+| `ATHENA_NO_PROGRESS_RENEWALS` | `3` | no | Renewals of one lease with no recorded work by its holder before the claim is raised as `no_progress`. `0` never raises it. |
 | `ATHENA_AGENT_RUN_MAX_CHECKINS_PER_AGENT` | `1000` | no | Durable check-in row ceiling per agent. Existing ids remain refreshable at the ceiling; new ids receive `409`. |
 | `ATHENA_WORKER_STALE_SECONDS` | `90` | no | Maximum worker-heartbeat age still labeled `reporting_recently`; older workers are `stale`. Cooperative presence, never process liveness. |
 | `ATHENA_WORKER_MAX_PER_AGENT` | `50` | no | Worker-registry ceiling per agent. Existing workers stay refreshable at the ceiling; a new one is refused. |

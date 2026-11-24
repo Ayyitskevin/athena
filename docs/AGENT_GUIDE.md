@@ -216,7 +216,12 @@ Content-Type: application/json
 
 HTTP 201. The generation is unchanged on renewal. The answer also carries the issue's current
 `issue_etag`, so a holder that only renews sees when the issue changed (closed,
-archived, re-scoped) without another read; it is not part of the lease.
+archived, re-scoped) without another read; it is not part of the lease. A
+renewal's answer also carries `renewals_without_progress`: your renewals of this
+possession since your newest recorded work on the issue. At the operator's
+threshold (3 unless set) the claim is raised, once, to the issue's assignee and
+the account that delegated it. If the work is moving somewhere this issue's
+trail does not show, say where in a comment; that starts the count again.
 
 Claim again without the generation, and the server refuses:
 

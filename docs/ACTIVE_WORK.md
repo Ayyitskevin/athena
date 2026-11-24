@@ -150,10 +150,29 @@ Each row keeps independent facts independent:
 `attention_state=needs_attention` is set when any recorded reason applies:
 `issue_archived`, `issue_done`, `holder_paused`, `holder_read_only`, `holder_ineligible`,
 `no_live_issue_write_token`, `lease_expired`, `run_untagged`,
-`checkin_missing`, `checkin_stale`, `visible_open_blockers`, or
+`checkin_missing`, `checkin_stale`, `no_progress`, `visible_open_blockers`, or
 `open_claim_handoff`.
 `observed` means only that none of those known reasons applied at the snapshot.
 It is intentionally not called healthy or running.
+
+`no_progress` applies to a live lease its holder has renewed
+`ATHENA_NO_PROGRESS_RENEWALS` times (3 by default; `0` never raises it) with no
+work of its own recorded on the issue since its newest. The count is
+`lease.renewals_without_progress`: the holder's native `lease_renewed` events
+for the lease's generation that are newer than the holder's newest recorded work
+on the issue (the closed work-verb list `progress.last_work_at` reads). The
+holder's own work starts it again; another account's comment does not, and a new
+possession starts from nothing. Each renewal's answer carries the count as
+`renewals_without_progress`, so the holder reads it first. The renewal that
+reaches the threshold records one `no_progress` event on the issue, by the
+holder, whose `detail` is `generation <g>; holder_id <n>; renewals <n>; holder
+<name>`, and puts it in the inbox of the issue's assignee and of the account
+that delegated it to the holder, when they can still see the issue; the holder
+and the issue's watchers are not told. A later run of renewals after recorded
+work can raise it again. Nothing is refused or released: the renewal succeeds.
+The count sees only this issue's trail, so a holder working somewhere else says
+so with a comment. In the ranked queue a claim whose only reasons are this and a
+missed heartbeat is `medium`.
 
 `checkin_missing` and `checkin_stale` apply only once a tagged claim's heartbeat
 is overdue: more than `ATHENA_AGENT_RUN_STALE_SECONDS` (90 by default) since the

@@ -154,6 +154,16 @@ class ClaimOut(LeaseOut):
     issue_etag: str
 
 
+class RenewOut(ClaimOut):
+    """A renewal's answer: the claim's, and how many times this possession has
+    been renewed with no work of the holder's recorded on the issue since its
+    newest (C7). At ``ATHENA_NO_PROGRESS_RENEWALS`` the claim is raised to the
+    accounts that answer for it. Recording work on the issue (a comment, an
+    edit, a status change) starts the count again."""
+
+    renewals_without_progress: int
+
+
 class ClaimIn(RequestBody):
     # How long the lease should hold before it must be renewed. Omitted → the server
     # default. Bounded by the command to [MIN, MAX] lease seconds.
@@ -593,7 +603,8 @@ def get_issue_lease(
 
 @router.post(
     "/{issue_id}/claim",
-    response_model=ClaimOut,
+    # A renewal's answer carries one more field; RenewOut is tried first.
+    response_model=RenewOut | ClaimOut,
     status_code=201,
     openapi_extra=CLAIM_IF_MATCH_OPENAPI,
 )

@@ -273,7 +273,12 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         generation alone renews, with no if_match, unless the renewal also
         passes paths or coordination_root. lease_seconds defaults to 30 minutes.
         The answer carries the issue's current `issue_etag` beside the lease, so a
-        renewal shows whether the issue changed since you read it.
+        renewal shows whether the issue changed since you read it. A renewal's
+        answer also carries `renewals_without_progress`: your renewals of this
+        possession since your newest recorded work on the issue. At the
+        operator's threshold (3 unless set) the claim is raised to whoever
+        answers for it; a comment saying where the work stands starts the
+        count again.
 
         Optional `paths` declares relative POSIX files (`..` and absolute paths
         refuse). my_desk's `office.fence` says how they are compared. With no
