@@ -9,7 +9,8 @@ disagreement principle 10 forbids. The rollup's total
 (``docs/EXCEPTION_SURFACES.md``: everything asking for a human) is the number;
 ``fleet_attention.needs_you`` computes it, the badge and the card both show it,
 the card's live refresh carries the badge with it, and the unread inbox is
-shown beside it, never added to it.
+shown beside it, never added to it. An unanswered question is the ranked
+queue's only ``critical`` kind, so it is in the number.
 """
 
 from __future__ import annotations
@@ -24,9 +25,11 @@ from support import (
     ADMIN,
     add_user,
     as_user,
+    bearer,
     bootstrap,
     login,
     make_app,
+    onboard_agent,
 )
 
 BROWSER = {"Accept": "text/html"}
@@ -176,6 +179,55 @@ def test_a_live_refresh_moves_the_badge_with_the_card(tmp_path):
         # The full page renders the nav itself, so it carries no second copy.
         page = client.get(DASHBOARD, headers=BROWSER).text
         assert 'hx-swap-oob="true"' not in page
+
+
+def test_an_open_question_counts_in_needs_you(tmp_path):
+    """One unanswered blocking question and nothing else: the queue lists it as
+    critical, so the badge and the card must not say nothing needs you."""
+    app, db_file = make_app(tmp_path)
+    with TestClient(app) as client:
+        bootstrap(client)
+        agent = onboard_agent(client)
+        issue = client.post("/issues", json={"title": "Retention"}, headers=ADMIN)
+        issue_id = issue.json()["id"]
+        client.post(
+            f"/issues/{issue_id}/delegate",
+            json={"user_id": agent["user"]["id"]},
+            headers=ADMIN,
+        )
+        read = client.get(f"/issues/{issue_id}", headers=bearer(agent))
+        lease = client.post(
+            f"/issues/{issue_id}/claim",
+            headers={**bearer(agent, run="r1"), "If-Match": read.headers["ETag"]},
+        ).json()
+        yielded = client.post(
+            f"/issues/{issue_id}/yield",
+            json={
+                "generation": lease["generation"],
+                "reason": "needs_input",
+                "attempted_work": "Read the code.",
+                "evidence": ["notes"],
+                "blocking_question": "90 days or 365?",
+                "resume_instructions": "Pick one.",
+            },
+            headers=bearer(agent, run="r1"),
+        )
+        assert yielded.status_code == 201, yielded.text
+
+        login(client, "a@e.com")
+        page = client.get(DASHBOARD, headers=BROWSER).text
+        assert _BADGE.findall(page) == ["1"], "the badge leaves the question out"
+        assert _CARD.findall(page) == ["1"], "the card leaves the question out"
+        assert "Questions waiting on you" in page
+        assert "No attention found in the examined sources" not in page
+
+        # A person answers: it waits on the agent now, and leaves the number.
+        client.post(
+            f"/issues/{issue_id}/comments", json={"body": "365."}, headers=ADMIN
+        )
+        page = client.get(DASHBOARD, headers=BROWSER).text
+        assert _BADGE.findall(page) == []
+        assert _CARD.findall(page) == []
 
 
 def test_the_rollup_is_read_only_where_it_is_shown(tmp_path, monkeypatch):

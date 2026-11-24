@@ -16,6 +16,7 @@ On the dashboard, admin-only, above everything else:
 
 | Signal | Counts | Window |
 |---|---|---|
+| Questions waiting on you | Blocking questions from yielded claims nobody has resumed, less `needs_input` questions a person other than the asker has answered since | standing |
 | Claims needing attention | Rows the active-work projection marked `needs_attention` | the examined window |
 | Approvals waiting on you | Pending approval requests | standing |
 | Workers told to stop | Kill requests not yet confirmed | standing |
@@ -37,6 +38,20 @@ live refresh carries the badge with it, so the two never show different numbers.
 The unread inbox is not in it: an inbox row says something happened, not that a
 decision waits. It is shown beside the badge as its own labelled count. Sign-in
 lands on the dashboard, where this card is the first panel.
+
+**Silence has a grace.** A tagged claim that has not checked in counts only once
+its heartbeat is overdue (more than `ATHENA_AGENT_RUN_STALE_SECONDS` since the
+possession was acquired or since the run's last check-in), so a claim taken a
+moment ago is not counted; a renewal does not restart that grace. An untagged
+claim, which can never check in, counts at once. See
+[`ACTIVE_WORK.md`](ACTIVE_WORK.md#state-and-attention-semantics).
+
+**A question waits on whoever must act next.** A `needs_input` question that a
+person (not an agent account, not the asker) has answered since it was asked, by a
+comment, status change, assignment change or claim, waits on the agent and leaves
+the count; it stays listed, marked "answered, waiting on the agent", until the
+agent resumes. The asker commenting again restates it. Another agent's reply
+answers nothing here, and a `blocked` yield's question is never marked answered.
 
 **Every count says what it counts.** Standing state — an approval nobody answered,
 a worker that never confirmed — is *not* window-bounded, because a month-old

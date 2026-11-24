@@ -130,10 +130,11 @@ why = """\
 [[guarded]]
 module = "fleet_work.py"
 function = "build_active_work"
-pattern = 'imported_at IS NULL'
+pattern = '(?s)acquired\.imported_at IS NULL.*candidate\.imported_at IS NULL'
 why = """\
     the live-issue claim join is a native-only projection of who holds the \
-    work; foreign history must not look like a live claim"""
+    work; foreign history must not look like a live claim, nor date the \
+    possession's acquisition the heartbeat grace runs from"""
 
 [[exempt]]
 module = "fleet_work.py"
@@ -208,11 +209,21 @@ why = """\
 [[guarded]]
 module = "ready_queue.py"
 function = "awaiting_answer_sql"
-pattern = '(?s)rqs\.imported_at IS NULL.*rqe\.imported_at IS NULL.*rqk\.imported_at IS NULL.*rqa\.imported_at IS NULL'
+pattern = '(?s)answered_sql\(.*rqs\.imported_at IS NULL.*rqe\.imported_at IS NULL.*rqk\.imported_at IS NULL'
 why = """\
     the ready rule's settlement and its answer are both native acts: an \
     imported claim_completed must not hold work back from an account, and an \
-    imported comment, review request or candidate must not hand it back"""
+    imported comment, review request or candidate must not hand it back; the \
+    answer is answered_sql's, guarded below"""
+
+[[guarded]]
+module = "ready_queue.py"
+function = "answered_sql"
+pattern = 'rqa\.imported_at IS NULL'
+why = """\
+    the one definition of an answer, shared by the ready rule and the \
+    operator's open questions: an imported comment must neither hand work \
+    back nor read a question as answered"""
 
 [[guarded]]
 module = "ready_queue.py"
@@ -278,10 +289,11 @@ why = """\
 [[guarded]]
 module = "run_state.py"
 function = "open_questions"
-pattern = 'ye\.imported_at IS NULL'
+pattern = '(?s)ye\.imported_at IS NULL.*qc\.imported_at IS NULL.*answered_sql\('
 why = """\
     an open question is a native yield; an imported row must not put a \
-    question in front of the operator"""
+    question in front of the operator, nor restate one; the answer is \
+    answered_sql's, guarded in ready_queue.py"""
 
 # --- work_context.py ---------------------------------------------------------
 

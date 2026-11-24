@@ -39,21 +39,31 @@
         </p>
         {% if fleet_attention.now["items"] %}
         <h4>Now queue</h4>
-        <ol class="dashboard-list">
+        <ol class="dashboard-list now-queue">
+            {# Words, not codes (U7): what kind of thing, the issue by its key and
+               title, and what is wrong. The API keeps the codes; the read model's
+               cockpit_rows words them, row for row. #}
             {% for item in fleet_attention.now["items"] %}
+            {% set row = fleet_attention.now.rows[loop.index0] %}
             <li>
-                <strong>{{ item.reason }}</strong>
+                <strong>{{ row.kind }}</strong>
+                {% if row.subject %}
+                <a href="{{ row.subject.href }}">{% if row.subject.key %}<span class="mono">{{ row.subject.key }}</span> · {% endif %}{{ row.subject.title }}</a>
+                {% endif %}
                 <span class="chip">{{ item.severity }}</span>
+                <span>{{ row.headline }}</span>
                 <span class="muted">
-                    <a href="{{ item.source_link }}">{{ item.source_kind | replace('_', ' ') }} #{{ item.source_id }}</a>
-                    · owner {{ item.owner_name or 'unassigned' }}
-                    · {{ item.freshness }}
+                    {% if item.source_link and (not row.subject or item.source_link != row.subject.href) %}<a href="{{ item.source_link }}">{{ "History" if item.source_link.endswith("/history") else "Source" }}</a> · {% endif %}
+                    owner {{ item.owner_name or 'unassigned' }}
+                    · {{ item.freshness }} UTC
                     · examined {{ item.examined }} of {{ item.total }} considered candidates, not a full input population
                 </span>
                 {% if item.next_action == "operator-link" and item.link %}
                 <a href="{{ item.link }}">Open owning surface</a>
                 {% elif item.next_action == "agent-command" %}
                 <code>{{ item.command }}</code>
+                {% elif item.signal == "awaiting_input" %}
+                <span class="muted">Nothing to do until the agent resumes</span>
                 {% else %}
                 <span class="muted">No safe next action</span>
                 {% endif %}
@@ -83,9 +93,12 @@
                 <strong>Oldest request waiting on you</strong>
                 {% if progress.oldest_waiting_on_operator %}
                 {% set waiting = progress.oldest_waiting_on_operator %}
-                <a href="{{ waiting.link }}">approval #{{ waiting.id }}</a>
+                {% if waiting.subject %}
+                <a href="{{ waiting.subject.href }}">{% if waiting.subject.key %}<span class="mono">{{ waiting.subject.key }}</span> · {% endif %}{{ waiting.subject.title }}</a>
+                {% endif %}
+                <span>{{ waiting.headline or "An approval" }}</span>
                 <span class="muted">
-                    {{ waiting.action_kind }} on {{ waiting.target_kind }} #{{ waiting.target_id }}
+                    <a href="{{ waiting.link }}">Approvals</a>
                     · asked {{ waiting.created_at }} UTC ({{ waiting.age }} ago)
                     · {{ waiting.pending_total }} pending in all
                 </span>

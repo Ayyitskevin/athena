@@ -112,6 +112,9 @@ def awaiting_answer_sql(conn: sqlite3.Connection, actor: dict) -> tuple[str, lis
     candidate_gate, candidate_params = access.event_visibility_clause(
         conn, actor, alias="rqk"
     )
+    answered, answered_params = answered_sql(
+        issue_ref="i.id", after_ref="rqw.id", settler_ref="rqw.actor_id"
+    )
     sql = (
         "EXISTS (SELECT 1 FROM activity rqw WHERE rqw.id = ("
         "SELECT rqs.id FROM activity rqs "
@@ -135,20 +138,50 @@ def awaiting_answer_sql(conn: sqlite3.Connection, actor: dict) -> tuple[str, lis
         f"{f' AND ({candidate_gate})' if candidate_gate else ''}) "
         "ELSE EXISTS (SELECT 1 FROM issue_claim_handoffs rqh "
         "WHERE rqh.yield_event_id = rqw.id AND rqh.reason = 'needs_input') END "
-        "AND NOT EXISTS (SELECT 1 FROM activity rqa "
-        "WHERE rqa.target_kind = 'issue' AND rqa.target_id = i.id "
-        "AND rqa.id > rqw.id AND rqa.imported_at IS NULL "
-        f"AND rqa.verb IN ({_ANSWER_LIST}) "
-        "AND rqa.actor_id != rqw.actor_id "
-        "AND rqa.actor_id NOT IN (SELECT rqu.id FROM users rqu "
-        "WHERE rqu.email = ? AND rqu.is_agent = 1)))"
+        f"AND NOT {answered})"
     )
     return sql, [
         int(actor["id"]),
         *request_params,
         *candidate_params,
-        AUTOMATION_ACTOR_EMAIL,
+        *answered_params,
     ]
+
+
+def answered_sql(
+    *,
+    issue_ref: str,
+    after_ref: str,
+    settler_ref: str,
+    humans_only: bool = False,
+) -> tuple[str, list]:
+    """True when a settlement has been answered: a native act in
+    ``ANSWER_VERBS`` on the issue ``issue_ref``, newer than the event
+    ``after_ref``, by an account other than ``settler_ref`` and not the
+    Automation actor.
+
+    The ready rule lifts its hold with exactly this (``humans_only`` off; its SQL
+    and parameters are unchanged by U7). The operator's open questions narrow it
+    with ``humans_only``: there only a non-agent account's act answers, so
+    another agent's "+1", or an agent's second account, cannot read a question
+    to the operator as answered (U7). Ordered by activity id, never by
+    timestamp. The ``*_ref`` arguments are SQL expressions from the caller's
+    query."""
+    humans = (
+        " AND rqa.actor_id IN (SELECT rqh.id FROM users rqh WHERE rqh.is_agent = 0)"
+        if humans_only
+        else ""
+    )
+    return (
+        "EXISTS (SELECT 1 FROM activity rqa "
+        f"WHERE rqa.target_kind = 'issue' AND rqa.target_id = {issue_ref} "
+        f"AND rqa.id > {after_ref} AND rqa.imported_at IS NULL "
+        f"AND rqa.verb IN ({_ANSWER_LIST}) "
+        f"AND rqa.actor_id != {settler_ref} "
+        "AND rqa.actor_id NOT IN (SELECT rqu.id FROM users rqu "
+        f"WHERE rqu.email = ? AND rqu.is_agent = 1){humans})",
+        [AUTOMATION_ACTOR_EMAIL],
+    )
 
 
 def _claimable_clauses(

@@ -221,7 +221,18 @@ def build_active_work(
             "THEN 1 ELSE 0 END "
             "AS holder_eligible, "
             "claim_event.id AS claim_event_id, claim_event.run_id, "
-            "claim_event.created_at AS claim_event_at "
+            "claim_event.created_at AS claim_event_at, "
+            # When this possession was acquired: the holder's newest native
+            # `claimed` event for the lease's generation. Not `lease_renewed`,
+            # and not `l.claimed_at`, which a renewal moves (U7).
+            "(SELECT acquired.created_at FROM activity acquired "
+            "WHERE acquired.target_kind = 'issue' "
+            "AND acquired.target_id = l.issue_id "
+            "AND acquired.actor_id = l.holder_id "
+            "AND acquired.verb = 'claimed' "
+            "AND acquired.imported_at IS NULL "
+            "AND acquired.detail GLOB ('generation ' || l.generation || '; *') "
+            "ORDER BY acquired.id DESC LIMIT 1) AS acquired_at "
             "FROM issue_leases l "
             "JOIN users u ON u.id = l.holder_id "
             "JOIN issues i ON i.id = l.issue_id "
@@ -373,12 +384,25 @@ def _item(
         attention_reasons.append("no_live_issue_write_token")
     if claim_state == "expired":
         attention_reasons.append("lease_expired")
+    # An untagged claim cannot check in at all: a configuration fact, raised at
+    # once. A tagged run's silence is only a reason once its heartbeat is overdue
+    # (U7): the stale threshold has passed since this possession was acquired
+    # (its ``claimed`` event; a renewal does not restart it) or since the run's
+    # last check-in, whichever is later. ``reporting_state`` above still says
+    # what is true now (``not_reported``); only the attention reason waits.
     if reporting_state == "untagged":
         attention_reasons.append("run_untagged")
-    elif reporting_state == "not_reported":
-        attention_reasons.append("checkin_missing")
-    elif reporting_state == agent_run_checkins.STALE:
-        attention_reasons.append("checkin_stale")
+    elif reporting_state in (
+        "not_reported",
+        agent_run_checkins.STALE,
+    ) and agent_run_checkins.heartbeat_overdue(
+        claimed_at=row["acquired_at"] or row["claimed_at"],
+        last_seen_at=None if checkin is None else checkin["last_seen_at"],
+        now=observed_at,
+    ):
+        attention_reasons.append(
+            "checkin_missing" if reporting_state == "not_reported" else "checkin_stale"
+        )
     if blocker_info["visible_total"]:
         attention_reasons.append("visible_open_blockers")
     if open_claim_handoff is not None:

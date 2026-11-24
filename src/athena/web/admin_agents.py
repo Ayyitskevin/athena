@@ -161,7 +161,10 @@ def _build_agents_context(
         "pending_approvals": pending,
         # Beside the approvals: blocking questions from yielded claims nobody has
         # resumed. The page is admin-only; the reader still applies visibility.
-        "open_questions": run_state.open_questions(conn, actor=viewer),
+        # Each marked answered or not by the ready lane's rule (U7).
+        "open_questions": run_state.open_questions(
+            conn, actor=viewer, with_answers=True
+        ),
         "notice": None,
         "error": None,
         **extra,

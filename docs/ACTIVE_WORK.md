@@ -155,6 +155,22 @@ Each row keeps independent facts independent:
 `observed` means only that none of those known reasons applied at the snapshot.
 It is intentionally not called healthy or running.
 
+`checkin_missing` and `checkin_stale` apply only once a tagged claim's heartbeat
+is overdue: more than `ATHENA_AGENT_RUN_STALE_SECONDS` (90 by default) since the
+possession was acquired, or since the run's last check-in, whichever is later. The
+acquisition is the holder's native `claimed` event for the lease's generation,
+not `lease.claimed_at`, which a renewal moves: renewing never restarts the grace,
+while a new possession (a re-claim after a lapse, a claim after a yield) does. A
+claim taken a moment ago has not had time to check in, so it is not attention yet,
+though `run.reporting_state` already says `not_reported`. The two stay independent
+facts: `reporting_state` is the check-in's own age, so a new possession under a run
+whose last check-in is old reads `stale` while its heartbeat is not yet overdue.
+`run_untagged` is not a late heartbeat but a claim that can never report, and it
+applies at once, like every other reason. In the ranked attention queue
+(`GET /attention/ranking`), a claim whose only reasons are those three ranks
+`medium`: below every pending approval and every unanswered question, above an
+answered one (`low`). A claim with any other reason stays `high`.
+
 ### A lapsed lease is an event
 
 `lease_expired` is the clock's verdict, and the clock tells nobody. So the first

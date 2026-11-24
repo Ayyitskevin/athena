@@ -177,6 +177,35 @@ def checkin_agent_ids(conn: sqlite3.Connection, run_id: str) -> list[int]:
     return [int(row["agent_id"]) for row in rows]
 
 
+def heartbeat_overdue(
+    *,
+    claimed_at: str,
+    last_seen_at: str | None,
+    now: datetime | None = None,
+    stale_seconds: int | None = None,
+) -> bool:
+    """Whether a tagged claim's heartbeat is overdue (U7).
+
+    True once more than the stale threshold has passed since the possession was
+    acquired (``claimed_at``: the possession's ``claimed`` event, which a renewal
+    does not move) or since the run's last check-in, whichever is later. A claim
+    taken a moment ago has not had time to check in, and an old check-in under
+    the same run does not make a new possession overdue. A renewal is not an
+    acquisition: a holder that keeps renewing and never checks in becomes overdue
+    all the same.
+
+    This is a separate fact from a check-in's ``reporting_state``, which measures
+    only the check-in's age. They use the same threshold, so for a possession
+    acquired before its run's last check-in they agree; for a fresh possession
+    under a run whose last check-in is old, ``reporting_state`` reads ``stale``
+    while the heartbeat is not yet overdue.
+    """
+    started = claimed_at if last_seen_at is None else max(claimed_at, last_seen_at)
+    since = datetime.strptime(started, _TS_FORMAT).replace(tzinfo=UTC)
+    elapsed = (_utc_now(now) - since).total_seconds()
+    return elapsed > _stale_after_seconds(stale_seconds)
+
+
 def _bounded_limit(limit: int) -> int:
     if isinstance(limit, bool) or not isinstance(limit, int):
         raise ValueError("limit must be an integer")

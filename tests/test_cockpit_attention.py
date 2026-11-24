@@ -40,6 +40,20 @@ def test_nav_disclosures_have_a_viewport_bound_and_internal_scroll(tmp_path):
         assert "overflow-y: auto;" in menu
 
 
+def _heartbeat_overdue(db_file):
+    """Every claim was taken long ago: past the stale threshold, so a claim that
+    never checked in has missed its check-in (U7). The app has no injectable
+    clock, and a test never sleeps."""
+    conn = db.connect(db_file)
+    conn.execute(
+        "UPDATE activity SET created_at = datetime('now', '-1 hour') "
+        "WHERE verb = 'claimed' AND target_kind = 'issue'"
+    )
+    conn.execute("UPDATE issue_leases SET claimed_at = datetime('now', '-1 hour')")
+    conn.commit()
+    conn.close()
+
+
 def _app(tmp_path, name="cockpit.db"):
     return create_app(tmp_path / name), tmp_path / name
 
@@ -379,7 +393,7 @@ def test_the_rollup_counts_every_exception_surface(tmp_path):
 
 
 def test_the_dashboard_shows_the_rollup_to_admins_only(tmp_path):
-    app, _ = _app(tmp_path)
+    app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         c.post("/users", json={"email": "a@e.com", "name": "Ann", "password": "pw"})
         c.post(
@@ -390,13 +404,17 @@ def test_the_dashboard_shows_the_rollup_to_admins_only(tmp_path):
         c.headers["X-CSRF-Token"] = c.cookies.get("athena_csrf", "")
         agent = _agent(c)
         urgent = _claimed_issue(c, agent, title="urgent", reporting=False)
+        _heartbeat_overdue(db_file)
 
         page = c.get("/aegis/dashboard")
         assert "Fleet attention" in page.text
         assert "Claims needing attention" in page.text
         assert "Now queue" in page.text
-        assert f"issue #{urgent['id']}" in page.text
+        # The row names the issue by its title and links it (U7), in words,
+        # and still links the issue's history.
+        assert f'<a href="/aegis/issues/{urgent["id"]}">urgent</a>' in page.text
         assert f"/aegis/issues/{urgent['id']}/history" in page.text
+        assert "Held by Sol: missed its check-in" in page.text
         assert "owner Sol" in page.text
         assert "Open owning surface" in page.text
         assert "heartbeat_agent_run" not in page.text
@@ -522,6 +540,7 @@ def test_pending_input_bounds_are_visible_on_both_surfaces(tmp_path, count):
         assert pending["count"] == min(count, 200)
         assert pending["href"] == "/admin/agents"
         assert [s["key"] for s in signals] == [
+            "open_questions",
             "claims_needing_attention",
             "pending_approvals",
             "unanswered_kills",

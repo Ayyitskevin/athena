@@ -1718,6 +1718,9 @@ pre.prose { white-space: pre-wrap; overflow-wrap: anywhere; }
 .dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; align-items: start; }
 .dashboard-list, .dashboard-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
 .dashboard-list li { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; font-size: 0.9rem; }
+/* A Now-queue row carries a kind, an issue key and title, a severity and a
+   sentence: it wraps as a line of text instead of squeezing into columns. */
+.now-queue li { flex-wrap: wrap; justify-content: flex-start; align-items: baseline; column-gap: 0.5rem; row-gap: 0.15rem; }
 .dashboard-bars li { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; font-size: 0.9rem; }
 .bar-count { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text-2); }
 .dashboard-activity { grid-column: 1 / -1; }
