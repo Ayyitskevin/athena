@@ -43,8 +43,13 @@ def mint_token(
     actor_id: int,
     name: str,
     scopes: Iterable[str] | None = None,
+    via: str | None = None,
 ) -> dict:
     """Mint a token for the acting user and record a 'minted_token' event atomically.
+
+    ``via`` says how it was minted when the account did not ask through its own
+    session: the host command names itself, so the trail does not read as
+    though the account minted a credential it was in fact handed.
 
     The one-time raw secret rides back in the returned dict but is NEVER written to
     the audit log — the detail records the token's name and its granted scopes only,
@@ -63,7 +68,8 @@ def mint_token(
             verb=VERB_MINTED_TOKEN,
             target_kind="token",
             target_id=created["id"],
-            detail=f"{created['name']} [{' '.join(created['scopes'])}]",
+            detail=f"{created['name']} [{' '.join(created['scopes'])}]"
+            + ("" if via is None else f"; via {via}"),
             commit=False,
         )
         return created

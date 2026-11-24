@@ -18,7 +18,15 @@ import time
 from typing import Any, Callable, Iterator, TextIO
 from datetime import datetime, timezone
 
-from athena.core import activity_chain, attachments, db, deployment
+from athena.core import (
+    activity_chain,
+    attachments,
+    db,
+    deployment,
+    token_commands,
+    tokens,
+    users,
+)
 from athena.core.backup import (
     backup_database,
     prune_backup_directory,
@@ -2549,6 +2557,84 @@ def _print_import_result(result: dict) -> None:
         print("warnings:")
         for item in result["warnings"]:
             print(f"  - {item['code']}: {item['message']}")
+
+
+def mint_host_token(db_path: Path, email: str, *, name: str, scopes: list[str]) -> dict:
+    """Mint a token for the account with ``email`` in the database at
+    ``db_path``, from the host. Returns the created token with its one-time
+    raw secret.
+
+    The database must be this release's (checked as ``athena-doctor`` checks
+    it; nothing is migrated). The account must exist and be able to use a
+    token: not paused. A removed account no longer has its email, so it is
+    not found. The mint is the same audited command the
+    browser form and the REST route call, with the host command named in the
+    event, so the trail says a credential appeared and that it was handed out
+    on the host, not asked for in a session."""
+    _check_database(db_path, migrate=False, require_writable=True)
+    conn = db.connect(db_path)
+    try:
+        account = users.get_user_by_email(conn, email)
+        if account is None:
+            raise ValueError(f"no account has the email {email}")
+        if account.get("paused_at"):
+            raise ValueError(
+                f"the account {email} is paused; resume it before minting a token"
+            )
+        try:
+            return token_commands.mint_token(
+                conn,
+                actor_id=int(account["id"]),
+                name=name,
+                scopes=scopes,
+                via="athena-token on the host",
+            )
+        except token_commands.TokenCommandError as exc:
+            raise ValueError(str(exc)) from exc
+    finally:
+        conn.close()
+
+
+def token_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="athena-token",
+        description=(
+            "Mint an API token for an existing account and print it once. For "
+            "the first token of an instance, or an agent's, when no browser is "
+            "at hand. Anyone who can run this can already read the database."
+        ),
+    )
+    parser.add_argument("db_path", type=Path, help="Athena SQLite database path")
+    parser.add_argument("email", help="email of the account the token is for")
+    parser.add_argument(
+        "--name", required=True, help="a label for the token, shown in its lists"
+    )
+    parser.add_argument(
+        "--scope",
+        action="append",
+        required=True,
+        choices=tokens.SCOPES,
+        help="a scope to grant; repeat for more. Give the narrowest that fits",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        created = mint_host_token(
+            args.db_path, args.email, name=args.name, scopes=args.scope
+        )
+    except (FileNotFoundError, OSError, sqlite3.Error, ValueError) as exc:
+        print(f"athena-token: {exc}", file=sys.stderr)
+        return 1
+
+    # The secret alone on stdout, so it can be captured; everything else on
+    # stderr. It is stored only as a hash and cannot be shown again.
+    print(
+        f"Minted token {created['id']} ({created['name']}) for {args.email} with "
+        f"scopes: {' '.join(created['scopes'])}. Shown once:",
+        file=sys.stderr,
+    )
+    print(created["token"])
+    return 0
 
 
 def restore_main(argv: list[str] | None = None) -> int:

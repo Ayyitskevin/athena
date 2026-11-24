@@ -1661,6 +1661,27 @@ Sign in with the first administrator's bootstrap password, open
 immediately; it is shown once. The supported launcher does not provide the old
 headless `X-Athena-Actor` shortcut because that header proves no identity.
 
+With no browser at hand, mint it on the host:
+
+```bash
+athena-token /var/lib/athena/athena.db operator@example.com \
+  --name first --scope read --scope issue:write
+```
+
+- The account must already exist (the bootstrap creates the first one) and
+  must not be paused. `--name` and at least one `--scope` (`read`,
+  `issue:write`, `docs:write`, `admin`) are required: give the narrowest that
+  fits.
+- The token is printed once, alone on standard output, so it can be captured
+  (`TOKEN=$(athena-token ...)`); what it is goes to standard error. Athena
+  stores only its hash.
+- It is the same audited mint as the form: a `minted_token` event by that
+  account, whose detail ends `via athena-token on the host`, so the trail
+  shows the credential was handed out on the machine and not asked for in a
+  session. It works while Athena is running.
+- Anyone who can run it can already read and write the database file. It
+  grants nothing the host did not have.
+
 ## AI Agent Access (MCP)
 
 Athena ships an optional **MCP server** so an AI agent can drive it through the
