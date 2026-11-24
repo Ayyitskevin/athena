@@ -256,6 +256,7 @@ src/athena/
   guide.py   seeds the Field Guide as a space
   demo.py    athena-demo: a disposable, seeded review workspace
   ops.py     athena-serve and the retained operator CLIs
+  exposure.py  what an instance answers without a credential (athena-doctor, first start)
 tests/       pytest; support.py is where a new test starts
 docs/        INDEX.md — one-line map of every doc · ARCHITECTURE.md — the design of record
 ```

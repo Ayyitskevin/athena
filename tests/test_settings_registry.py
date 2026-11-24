@@ -55,6 +55,12 @@ NOT_SETTINGS = {
         "set by scripts/field_exercise.py for examples/icarus_executor.py, the "
         "stand-in executor it launches; Athena itself never reads it"
     ),
+    # Client-side shell names the documents use, listed in
+    # config.CLIENT_VARIABLES so athena-serve does not call them misspellings.
+    "ATHENA_ADMIN_PASSWORD": "OPERATIONS.md bootstrap block; config.CLIENT_VARIABLES",
+    "ATHENA_ADMIN_TOKEN": "the documents' curl examples; config.CLIENT_VARIABLES",
+    "ATHENA_AGENT_TOKEN": "the documents' curl examples; config.CLIENT_VARIABLES",
+    "ATHENA_ISSUE_ETAG": "OPERATIONS.md If-Match example; config.CLIENT_VARIABLES",
 }
 
 
@@ -318,6 +324,7 @@ def test_every_athena_name_in_the_code_is_a_setting_or_a_stated_exception():
     stale = sorted(set(NOT_SETTINGS) - set(name_literals()))
     assert stale == [], f"exceptions that no longer match any literal: {stale}"
     assert not set(NOT_SETTINGS) & set(config.SETTINGS)
+    assert set(config.CLIENT_VARIABLES) <= set(NOT_SETTINGS)
 
 
 def test_the_scan_finds_the_reads_it_must(scanned):

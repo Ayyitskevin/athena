@@ -251,7 +251,11 @@ _DECLARED: tuple[Setting, ...] = (
         "switch cannot lock out the operator. Bearer and trusted-header "
         "credentials remain REST/MCP-only and never satisfy the browser gate. "
         "Swagger UI and ReDoc follow that browser rule; OpenAPI, liveness, "
-        "readiness, and build identity remain public metadata.",
+        "readiness, and build identity remain public metadata. Tailnet mode "
+        "refuses to start until this is set explicitly, either way. "
+        "`athena-doctor` prints the state, how many GET routes the credential "
+        "gate lets a caller with none past, the public projects and spaces, and "
+        "the reads no container scopes.",
         "server",
     ),
     Setting(
@@ -500,6 +504,40 @@ if any(setting.group not in SETTING_GROUPS for setting in _DECLARED):
     raise ValueError("athena.config declares a setting in an unknown group")
 
 
+#: ``ATHENA_`` names that no Athena process reads but the documents and
+#: examples tell an operator to set in their own shell (a token for curl, the
+#: example executor's URL), so one may well be exported where athena-serve
+#: runs. They are not misspellings and are never reported.
+#: ``tests/test_startup_notices.py`` holds this set to the documents.
+CLIENT_VARIABLES: Mapping[str, str] = MappingProxyType(
+    {
+        "ATHENA_ADMIN_PASSWORD": "docs/OPERATIONS.md bootstrap block, one command",
+        "ATHENA_ADMIN_TOKEN": "admin bearer token in the documents' curl examples",
+        "ATHENA_AGENT_TOKEN": "agent bearer token in the documents' curl examples",
+        "ATHENA_ISSUE_ETAG": "ETag in docs/OPERATIONS.md's If-Match example",
+        "ATHENA_URL": "examples/icarus_executor.py's Athena base URL",
+    }
+)
+
+
+def undeclared_variables(environ: Mapping[str, str]) -> list[str]:
+    """The ``ATHENA_*`` names in ``environ`` that ``SETTINGS`` does not declare.
+
+    Nothing reads such a variable, so a misspelled setting would otherwise be
+    ignored silently and the instance run on the default the operator meant to
+    change. ``SETTINGS`` declares every variable Athena's code reads, including
+    the ones the MCP server and the seat doctor read outside this module
+    (``tests/test_settings_registry.py`` holds the code to that), so none of
+    those is ever reported. Only names are returned, never a value."""
+    return sorted(
+        name
+        for name in environ
+        if name.startswith("ATHENA_")
+        and name not in SETTINGS
+        and name not in CLIENT_VARIABLES
+    )
+
+
 def _env(name: str) -> str | None:
     """The raw value of a declared setting, or None when it is unset.
 
@@ -640,6 +678,11 @@ if BOOTSTRAP_TOKEN:
 # hatch: a supported first administrator must have a credential that still works
 # after the one-time bootstrap token is removed.
 BOOTSTRAP_PASSWORD_REQUIRED = False
+
+# Set by athena-serve (and nothing else) once its preflight passed, so a start
+# says what is true of athena-serve only when athena-serve is the one starting
+# (athena-demo also pins its app to a listener and may serve Secure cookies).
+SERVED_BY_ATHENA_SERVE = False
 
 # Maximum accepted request body size. This keeps accidental huge posts from
 # tying up the app process. Set to 0 to disable here when a trusted reverse proxy
@@ -835,6 +878,10 @@ LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE = _int_env(
 # changing them for existing deployments would silently break the loopback setup the
 # product is documented around.
 ANONYMOUS_READS = _bool_env("ATHENA_ANONYMOUS_READS")
+# Whether the operator chose the value rather than inheriting the default. Tailnet
+# mode refuses to start without a choice (decision D7): an instance other machines
+# can reach must not be readable without a credential by omission.
+ANONYMOUS_READS_EXPLICIT = _env("ATHENA_ANONYMOUS_READS") is not None
 
 _VISIBILITIES = frozenset({"public", "private"})
 
@@ -897,8 +944,10 @@ LIVE_REFRESH_SECONDS = _refresh_env("ATHENA_LIVE_REFRESH_SECONDS")
 
 
 # Browser session lifetime, and whether the session cookie carries the Secure
-# flag (HTTPS-only). Secure defaults OFF so login works over plain http in local
-# dev — turn it ON (ATHENA_COOKIE_SECURE=1) whenever Athena is served over HTTPS.
+# flag (HTTPS-only). Secure defaults OFF: athena-serve serves direct HTTP and
+# refuses it. A cookie set on a request that arrives over HTTPS gets the flag
+# anyway, so the setting only matters for a raw-factory deployment behind a
+# TLS-terminating proxy, which is outside the supported deployment contract.
 SESSION_TTL_DAYS = _int_env("ATHENA_SESSION_TTL_DAYS", minimum=1)
 COOKIE_SECURE = _bool_env("ATHENA_COOKIE_SECURE")
 SESSION_COOKIE = "athena_session"

@@ -485,6 +485,7 @@ def validate_static_configuration(
     anon_rate_limit_per_minute: int,
     login_rate_limit_per_minute: int,
     login_account_rate_limit_per_minute: int,
+    anonymous_reads_explicit: bool,
 ) -> tuple[Authority, ...]:
     """Validate static deployment policy before SQLite or accepted traffic."""
     if not db_path.is_absolute():
@@ -526,6 +527,12 @@ def validate_static_configuration(
             raise ValueError(
                 "tailnet network mode requires positive request limits: "
                 + ", ".join(disabled)
+            )
+        if not anonymous_reads_explicit:
+            raise ValueError(
+                "tailnet network mode requires ATHENA_ANONYMOUS_READS to be set "
+                "explicitly: true lets a caller with no credential read public "
+                "projects and spaces, false requires a credential for every read"
             )
     authorities = validate_authorities(
         allowed_authorities,

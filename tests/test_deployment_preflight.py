@@ -1116,6 +1116,11 @@ def test_tailnet_launcher_requires_exact_authority_and_positive_limits(
     assert launched == []
 
     monkeypatch.setattr(config, "ANON_RATE_LIMIT_PER_MINUTE", 120)
+    assert ops.serve_main(["--host", "100.64.1.2", "--port", "8443"]) == 1
+    assert "ATHENA_ANONYMOUS_READS" in capsys.readouterr().err
+    assert launched == []
+
+    monkeypatch.setattr(config, "ANONYMOUS_READS_EXPLICIT", True)
     assert ops.serve_main(["--host", "100.64.1.2", "--port", "8443"]) == 0
     assert launched == [{"host": "100.64.1.2", "port": 8443, "fd": None}]
 

@@ -33,7 +33,19 @@ loops everywhere else, but that remains outside the supported deployment shape.
 Athena reads configuration from environment variables at process start.
 Every table of variables in this document is generated from the one registry
 in `src/athena/config.py` (`SETTINGS`); `tests/test_settings_registry.py` fails
-when the code reads a variable the registry does not declare.
+when the code reads a variable the registry does not declare. No Athena process
+reads any other `ATHENA_` variable. `athena-serve` and `athena-doctor` name, in
+a single warning on standard error and without printing its value, every one in
+their environment except the client-side names these documents and the examples
+tell you to set in your own shell (`ATHENA_URL`, `ATHENA_ADMIN_TOKEN`,
+`ATHENA_AGENT_TOKEN`, `ATHENA_ADMIN_PASSWORD`, `ATHENA_ISSUE_ETAG`). It comes
+once the settings have loaded, before any other refusal of the start; an invalid
+value of a declared setting is refused while they load, so that refusal comes
+first and the warning does not:
+
+```text
+athena-serve: warning: ATHENA_ANONYMOUS_READ is set but is not an Athena setting, so it has no effect; check the spelling against the settings tables in docs/OPERATIONS.md
+```
 
 <!-- BEGIN GENERATED settings:server (scripts/generate_settings_doc.py; do not edit by hand) -->
 | Variable | Default | Secret | Use |
@@ -62,7 +74,7 @@ when the code reads a variable the registry does not declare.
 | `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | no | Per-client-IP ceiling used by optional-identity REST reads and each signed-inbound attempt (forge and Icarus callbacks). It is not a global browser-request ceiling. Keyed by the accepted direct peer, never forwarding headers. Tailnet mode requires a positive value. |
 | `ATHENA_LOGIN_RATE_LIMIT_PER_MINUTE` | `10` | no | Per-client-IP cap on `POST /login` attempts, checked before the password hash (bounds brute force and pbkdf2 CPU). Over the limit returns `429` with `Retry-After`. Keyed by the accepted direct peer, never forwarding headers. `0` disables it and is refused in tailnet mode. |
 | `ATHENA_LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE` | `5` | no | Per-**account** cap on `POST /login` attempts, keyed by the submitted email address rather than the resolved user, so a real address and an unknown one are throttled identically and the limiter cannot be used to test whether an account exists. Closes the axis the per-IP limit above leaves open: credential stuffing is distributed by construction. `0` disables it. See SECURITY.md for the denial-of-service trade. |
-| `ATHENA_ANONYMOUS_READS` | `true` | no | When `false`, REST reads require an authenticated REST actor and browser routes require a resolved browser session, regardless of container visibility. Signing in and first-user creation stay reachable so the switch cannot lock out the operator. Bearer and trusted-header credentials remain REST/MCP-only and never satisfy the browser gate. Swagger UI and ReDoc follow that browser rule; OpenAPI, liveness, readiness, and build identity remain public metadata. |
+| `ATHENA_ANONYMOUS_READS` | `true` | no | When `false`, REST reads require an authenticated REST actor and browser routes require a resolved browser session, regardless of container visibility. Signing in and first-user creation stay reachable so the switch cannot lock out the operator. Bearer and trusted-header credentials remain REST/MCP-only and never satisfy the browser gate. Swagger UI and ReDoc follow that browser rule; OpenAPI, liveness, readiness, and build identity remain public metadata. Tailnet mode refuses to start until this is set explicitly, either way. `athena-doctor` prints the state, how many GET routes the credential gate lets a caller with none past, the public projects and spaces, and the reads no container scopes. |
 | `ATHENA_DEFAULT_VISIBILITY` | `public` | no | Visibility new projects and spaces are born with (`public` or `private`). Ergonomics, not enforcement: it does nothing for containers that already exist, and nothing at all when `ATHENA_ANONYMOUS_READS=false` has already closed reads. |
 | `ATHENA_LIVE_REFRESH_SECONDS` | `10` | no | How often the three self-refreshing cockpit panels (fleet attention, active claimed work, run controls) re-ask the server for their own markup. `0` turns polling off — the pages still render and say so, they just stop updating themselves. Any other value must be 5–3600; the floor is a load bound, since each polling admin costs roughly `0.5 ms / interval` of server time. |
 | `ATHENA_EGRESS_PRIVATE_HOSTS` | *(empty)* | no | Exact hostnames (comma-separated, case-insensitive, no wildcards) outbound webhook/dispatch POSTs may reach even though they resolve to private, loopback, or link-local addresses. Empty keeps the SSRF policy absolute. Set it when your webhook receiver or execution fleet legitimately lives on your own machine, LAN, or tailnet — e.g. `127.0.0.1` — and name only hosts you operate. Delivery still pins the connection to the resolved address. |
@@ -393,6 +405,46 @@ migration, start `athena-serve` with the same listener values, and follow it wit
 the service-level `/readyz` check. For a first install, use the dedicated
 [First User Bootstrap](#first-user-bootstrap) flow instead.
 
+### What the instance answers without a credential
+
+Plain and deployment modes of `athena-doctor` also print one line of this shape
+(here with anonymous reads on):
+
+```text
+anonymous reads in this environment: on (ATHENA_ANONYMOUS_READS is not set; the default is on); N of M GET routes let a caller with no credential past the credential gate (R of RM REST routes, B of BM browser routes, D OpenAPI documents); past the gate a route may still ask the viewer to sign in, or answer 404 for a hidden or absent row or for single sign-on that is not configured; public containers: P of PM projects (KEY, ...), S of SM spaces (KEY, #ID, ...); readable whatever a container's visibility: issues with no project: K; labels, the activity feed and its CSV export, and fleet metrics; set ATHENA_ANONYMOUS_READS=false to require a credential for every read
+```
+
+The setting is the one in the environment the doctor runs in, which is why the
+line says so: run it with the service's environment to learn the service's.
+It says whether the variable was set or left at its default, which stays on.
+
+The route count comes from the application's own routes, each asked the way
+its identity dependency decides: a REST route that requires a credential never
+counts, one with an optional identity counts while anonymous reads are on, and
+one with no identity dependency (health, readiness, version, the OpenAPI
+documents) always counts; a browser route (a page, its JSON and CSV helpers,
+the sign-in routes) counts when the browser-session gate lets a signed-out
+request through. It is what the credential gate admits, not what answers: past
+the gate a page may still answer a signed-out viewer with its own sign-in
+prompt, and a route may answer 404 for a hidden or absent row or for single
+sign-on that is not configured, so fewer routes answer than the count. The
+doctor prints the count stored with the release (`athena.exposure`), so it does
+not build the application; the test suite recomputes it from the routes and
+fails when a route changes it.
+
+Public projects and spaces are named by key when the key has a project key's
+shape (a letter, then up to nine letters or digits), and as `#<id>` otherwise,
+at most ten of each; a private one is never named. Some reads are scoped to no
+container, so they answer a caller with no credential while anonymous reads are
+on even when every project and space is private: issues with no project (the
+line counts them), labels, the activity feed and its CSV export, and fleet
+metrics.
+
+The first start, `athena-serve --bootstrap`, prints one line saying what
+anonymous reads are. In tailnet mode `athena-serve` refuses to start, and
+`athena-doctor --deployment` refuses, until `ATHENA_ANONYMOUS_READS` is set
+explicitly to `true` or `false`.
+
 ### The seat doctor — proving one agent's wiring
 
 `athena-doctor` checks the server's side of the world; `athena-seat-doctor`
@@ -413,6 +465,69 @@ narrower token silently breaks the seat, a wider one is authority nobody
 reviewed. Run it after onboarding an agent, after any token rotation, and
 after a deploy move; [`AGENT_BOOT.md`](AGENT_BOOT.md) names it as the
 wire-first proof a seat must pass before its rules file adopts the boot block.
+
+## Startup Refusals
+
+`athena-serve` refuses to start, and `athena-doctor` fails, rather than serve a
+database it cannot trust. Each refusal is one line on standard error that
+states the condition, names the database file and the object it is about (a
+migration file, a schema object), and ends with what to do. Every refusal
+still refuses. The line is printed with control characters escaped, so nothing
+a database or a path holds reaches the terminal raw.
+
+A command is printed only where it runs exactly as printed and does what its
+line says, in the state the line is printed for; otherwise the line states the
+condition and names the section of this runbook to follow, and prints no
+command. So a path holding a control character gets no command, a start
+command carries the `--host` and `--port` of the start that was refused (and
+none is printed for an inherited `--fd` listener, or by `athena-doctor`), and a
+`chmod` names only the file or directory a write would fail on.
+`tests/test_startup_refusals.py` runs every printed command in a scratch copy
+of each state it is printed for. For example:
+
+```text
+athena-serve: database is missing migrations: 0084_title_link_bindings.sql, 0085_desk_cursor_repair.sql (database /var/lib/athena/athena.db); this Athena release has migrations the database has not applied; stop Athena first, then keep a copy of the database with its -wal and -shm files: `mkdir -m 700 /var/lib/athena/athena.db.kept && for f in /var/lib/athena/athena.db /var/lib/athena/athena.db-wal /var/lib/athena/athena.db-shm; do if [ -e "$f" ]; then cp -p "$f" /var/lib/athena/athena.db.kept/; fi; done`, then apply them: `athena-doctor /var/lib/athena/athena.db --migrate`
+```
+
+No remedy restores over the database in one step. Where the answer is a
+restore, the line first says to stop Athena and keep a copy of the database
+with its `-wal` and `-shm` files (a plain file copy: `athena-backup` opens the
+database through SQLite, which fails on a damaged file), then points at
+[Restore a matched pair](#restore-a-matched-pair). `mkdir` refuses an existing
+copy, so the keep command never overwrites one.
+
+| The line says | What it means | What to do |
+|---|---|---|
+| `database does not exist` | `ATHENA_DB` names no file. Normal start never creates a database. | If `ATHENA_DB` is wrong, set it to the existing database. For a new instance at that path, in one shell run the export and the bootstrap start below, then create the first user from that shell as [First User Bootstrap](#first-user-bootstrap) shows; the token lives in that shell, which is what lets it create the user |
+| `database is not migrated: schema_migrations is missing`, `file is not a database`, `bootstrap refuses an existing database that is not recognized as Athena`, `bootstrap refuses an existing database without an applied Athena schema` | The file is not an Athena database. Bootstrap never takes over a file that holds other data. | `ATHENA_DB` is likely wrong: set it to the Athena database. For a new instance, choose a path in a directory of its own and follow [First User Bootstrap](#first-user-bootstrap); no path is printed |
+| `database is missing migrations` | This release has migrations the database has not applied. Normal start never migrates. | Stop Athena, keep a copy, then apply them with the migrate command below (see [Deploy Preflight](#deploy-preflight)) |
+| `schema_migrations checksum metadata is missing` | An older Athena wrote the migration ledger without checksums. The migration runner adds them. | Stop Athena, keep a copy, then the migrate command |
+| `database has future migration`, `applied migration is not packaged`, `database has unknown applied migration` | A newer Athena release migrated this database. | Run that release; or stop Athena, keep a copy, and restore a backup taken with this release |
+| `migration checksum mismatch` | The database applied different SQL under that file name than this release ships. | Run the release that applied it; or stop Athena, keep a copy, and restore |
+| `database schema does not match the packaged Athena schema` | The schema was changed outside Athena's migrations; the line names each `missing`, `unexpected` or `changed` table, index, trigger or view. | Stop Athena, keep a copy, and restore a backup taken with this release |
+| `... is not part of this release's schema` (when every difference is `unexpected`) | Something added a table, index, trigger or view that Athena does not make; nothing Athena needs is missing. | If you or a tool added it, stop Athena, keep a copy, and remove it; no restore is needed |
+| `database integrity check failed`, `database foreign key check failed`, `database disk image is malformed` | SQLite reports the file damaged, or rows point at rows that do not exist. | Stop Athena, keep a copy, and restore a verified backup |
+| any other line naming `schema_migrations` | The migration ledger is damaged (an invalid, duplicate or non-contiguous row). | Stop Athena, keep a copy, and restore |
+| `invalid migration inventory entry`, `duplicate migration sequence`, `migration inventory is missing`, `migration is not valid UTF-8`, `no Athena migrations were found` | The installed package's own migration files are damaged. | Reinstall this Athena release from the wheel or checkout it came from |
+| `... : database ... cannot be written` (`database file is not writable`, `data directory is not writable`, `attempt to write a readonly database`, `unable to open database file`) | Athena must write the database and create `athena.db-wal` and `athena.db-shm` beside it. `athena-serve` checks, before starting, whether the account it runs as could write them (what a write would meet, not the mode bits, so a root-run instance with a 0400 file still starts); `athena-doctor --deployment` only warns, since the account running it may be an operator account. | The line names only what a write would fail on: the file, `chmod u+w /var/lib/athena/athena.db`, or the directory, `chmod u+w /var/lib/athena`, printed when the account may run it (it owns the path, or is root). It prints no command when the path belongs to another account, the directory is shared (sticky or world-writable: give the database a directory of its own), the filesystem is mounted read-only (remount it read-write), or the modes already allow the write (an immutable attribute or a missing capability) |
+| `... is a directory, not a database file` | `ATHENA_DB` names a directory. | Set `ATHENA_DB` to the database file itself |
+| `... does not exist, so the data directory ... cannot be created` (from `--bootstrap` or `athena-doctor --migrate`) | Athena creates only the database's own directory. | Create it and the data directory as [First User Bootstrap](#first-user-bootstrap) does, or set `ATHENA_DB` to the existing database |
+| `... is a symbolic link to ..., whose directory ... does not exist` | `ATHENA_DB` is a link into a directory that is missing. | Create that directory, or point the link or `ATHENA_DB` at the database |
+| `a part of ... is a file, not a directory` | A component of the path is a file. | Set `ATHENA_DB` to a path inside a directory |
+| `migration NNNN_name.sql failed` (from `--bootstrap` or `athena-doctor --migrate`) | That migration met a schema it does not expect. It was rehearsed on a private copy first and was not applied. | Stop Athena, keep a copy, restore a backup taken before the drift, then apply migrations as [Deploy Preflight](#deploy-preflight) shows. No migrate command is printed: in this state it would fail again |
+| `bootstrap startup requires a database with zero users` | The database already has users. | Start it normally, without `--bootstrap` and without the token, with the same `--host` and `--port` the line carries |
+
+The commands, with this runbook's path, for a start without `--host` or
+`--port` (a refusal prints them with its own path and listener arguments):
+
+- keep a copy (stop Athena first): `mkdir -m 700 /var/lib/athena/athena.db.kept && for f in /var/lib/athena/athena.db /var/lib/athena/athena.db-wal /var/lib/athena/athena.db-shm; do if [ -e "$f" ]; then cp -p "$f" /var/lib/athena/athena.db.kept/; fi; done`
+  It never overwrites a copy: where `athena.db.kept` is there from an earlier
+  refusal, the refusal names it and prints no command until it is moved
+  elsewhere.
+- migrate: `athena-doctor /var/lib/athena/athena.db --migrate`
+- bootstrap, in one shell: `export ATHENA_BOOTSTRAP_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"`, then `athena-serve --bootstrap`
+- start normally after bootstrap: `env -u ATHENA_BOOTSTRAP_TOKEN athena-serve`
+- write access: `chmod u+w /var/lib/athena/athena.db` for the file, `chmod u+w /var/lib/athena` for the directory
 
 ## Attachment Storage Integrity
 
@@ -722,7 +837,7 @@ password manager before continuing.
 (
   set -euo pipefail
 
-  install -d -m 700 /var/lib/athena/attachments
+  install -d -m 700 /var/lib/athena /var/lib/athena/attachments
   export ATHENA_DB=/var/lib/athena/athena.db
   export ATHENA_ATTACH_DIR=/var/lib/athena/attachments
   athena_bootstrap_token="$(
@@ -808,6 +923,31 @@ password manager before continuing.
   unset ATHENA_BOOTSTRAP_TOKEN athena_bootstrap_token athena_admin_password
 )
 ```
+
+The data directory and the database are private to the service user: the
+database holds password hashes, CSRF tokens and webhook secrets in the clear.
+The block creates `/var/lib/athena` and its `attachments` directory `0700`
+(naming both, since `install -d` gives a parent it creates on the way the
+umask's mode). `athena-serve --bootstrap` (and `athena-doctor --migrate`)
+creates a missing database file `0600`, and a missing data directory `0700`,
+whatever the process umask; SQLite creates `athena.db-wal` and
+`athena.db-shm` with the database file's own mode. A directory or file that
+already exists keeps its mode. A dangling symbolic link at the database path
+gets its target created `0600` too. `athena-doctor` warns on a data directory,
+database, `-wal` or `-shm` file open to group or others. It prints a command
+only where running it as written is safe and does what the line says:
+`chmod 600 /var/lib/athena/athena.db` for a regular file the account running the
+doctor owns, in a directory of that account that is neither sticky nor
+world-writable, when the file is not writable by its group or others; and
+`chmod 700 /var/lib/athena` for that directory when it is not writable by its
+group or others and holds nothing but Athena's entries (the database, its
+`-wal`, `-shm` and `-journal` files, `athena.db.kept`, and the configured
+attachment directory). Otherwise it states the condition and prints no command:
+a shared directory such as `/tmp`, another account's directory or file, a
+group-writable mode a service account may rely on, a directory holding other
+entries (`lost+found`, backups, another application's files), a database path
+that is a directory, or a path holding a control character. Paths in its lines
+are printed with control characters escaped.
 
 `--bootstrap` is refused outside local mode. Static policy, a read-only
 recognition check, and a complete in-memory migration/schema rehearsal run
@@ -1477,6 +1617,12 @@ Before leaving laptop-only development:
 - Leave `ATHENA_COOKIE_SECURE` off; the current direct-HTTP launcher refuses it.
   Do not add TLS termination or a proxy without defining and reviewing a new
   supported deployment contract.
+- Decide `ATHENA_ANONYMOUS_READS`: `false` requires a credential for every read;
+  the default, on, lets anyone who reaches the listener read every public
+  project and space. Tailnet mode refuses to start until it is set either way.
+  `athena-doctor` prints the state, the GET routes the credential gate lets a
+  caller with none past, the public containers and the reads no container
+  scopes.
 - Set `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` (e.g. `120`) when optional-identity
   REST reads or signed-inbound endpoints need a direct-peer-IP ceiling. It does
   not globally limit anonymous browser pages.

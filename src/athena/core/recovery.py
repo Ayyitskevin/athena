@@ -302,6 +302,24 @@ def recovery_bundle_root_for_database(db_path: str | Path) -> Path | None:
             os.close(root_descriptor)
 
 
+class SchemaMismatchError(ValueError):
+    """The database's schema differs from the packaged one; each list names
+    objects as "<type> <name>" (never SQL text)."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        missing: tuple[str, ...] = (),
+        unexpected: tuple[str, ...] = (),
+        changed: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.missing = missing
+        self.unexpected = unexpected
+        self.changed = changed
+
+
 def validate_current_database(conn: sqlite3.Connection) -> db.MigrationStatus:
     """Validate a connection as an exact, current Athena database.
 
@@ -327,9 +345,45 @@ def validate_current_database(conn: sqlite3.Connection) -> db.MigrationStatus:
         expected_schema = _application_schema(expected)
     finally:
         expected.close()
-    if _application_schema(conn) != expected_schema:
-        raise ValueError("database schema does not match the packaged Athena schema")
+    actual_schema = _application_schema(conn)
+    if actual_schema != expected_schema:
+        raise _schema_mismatch(actual_schema, expected_schema)
     return status
+
+
+def _schema_mismatch(
+    actual: tuple[tuple[object, ...], ...],
+    expected: tuple[tuple[object, ...], ...],
+) -> SchemaMismatchError:
+    """Name the schema objects that differ (type and name only, never SQL text),
+    so an operator can see what changed: missing, unexpected or changed."""
+    actual_by_name = {(str(row[0]), str(row[1])): row for row in actual}
+    expected_by_name = {(str(row[0]), str(row[1])): row for row in expected}
+    missing = tuple(
+        f"{kind} {name}"
+        for kind, name in sorted(expected_by_name.keys() - actual_by_name.keys())
+    )
+    unexpected = tuple(
+        f"{kind} {name}"
+        for kind, name in sorted(actual_by_name.keys() - expected_by_name.keys())
+    )
+    changed = tuple(
+        f"{kind} {name}"
+        for kind, name in sorted(actual_by_name.keys() & expected_by_name.keys())
+        if actual_by_name[(kind, name)] != expected_by_name[(kind, name)]
+    )
+    found = [f"missing {item}" for item in missing]
+    found += [f"unexpected {item}" for item in unexpected]
+    found += [f"changed {item}" for item in changed]
+    shown = ", ".join(found[:5])
+    if len(found) > 5:
+        shown += f" and {len(found) - 5} more"
+    return SchemaMismatchError(
+        "database schema does not match the packaged Athena schema: " + shown,
+        missing=missing,
+        unexpected=unexpected,
+        changed=changed,
+    )
 
 
 def create_recovery_bundle(
