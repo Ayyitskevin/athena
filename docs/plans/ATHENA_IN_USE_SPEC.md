@@ -58,9 +58,8 @@ them. Nothing has been re-graded since.
 
 **Known issues, most serious first.**
 
-1. A seat that renews without progress, runs out of budget or is refused
-   leaves the operator and its conductor nothing to read: the rest of Wave 5
-   (C7, F13, F15).
+1. A seat that renews without progress or is refused leaves the operator
+   and its conductor nothing to read: the rest of Wave 5 (C7, F15).
 2. `IssueOut.parent_id` gives the id of a parent issue the caller cannot see
    (found by F6's property test; older than this specification).
 3. The project brief and `/desk/since` without a cursor still grow with
@@ -104,12 +103,13 @@ approval row, the one report partial and undo on the issue page. "Wave 8
 results" says the same for each. From Wave 5: the prior text of an edit, its
 read and its undo, `If-Match` for a bearer edit of a title or body, and the
 idempotency fence scoped to the issue a key names, a key that survives a
-restart with replays marked for the agent, and the leases of a stopped
-account named and released on request. "Wave 5 results" says the same for
+restart with replays marked for the agent, the leases of a stopped
+account named and released on request, and a spent budget that names the
+leases to yield and tells who answers for the work. "Wave 5 results" says the same for
 each.
 
 **Next step.** Nothing built is waiting. Build the rest of Wave 5 in the order
-its row gives (C7, F13, F15, A11, A14, W4, W5). Then the rest of Wave 6 (H6, H5, H7, H9), of Wave 7
+its row gives (C7, F15, A11, A14, W4, W5). Then the rest of Wave 6 (H6, H5, H7, H9), of Wave 7
 (H13 to H17, H19, H20) and of Wave 8 (U2, U4, U5, U8, U10 to U15, C10), and
 Wave 9. Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
@@ -726,11 +726,11 @@ Found and not fixed:
 
 ### Wave 5 results (second lanes)
 
-This is F14 and C8 (PR #478), one commit each. The lead built F14, test
-first. A build agent built C8 from a six-part brief; it had no independent
-review, and the lead read it, re-ran its tests on the integrated tree and
-probed it against a throwaway instance. Running two build agents beside the
-lead had exhausted a usage window, so one ran at a time.
+This is F14, C8 and F13 (PR #478), one commit each. The lead built F14 and
+F13, test first. A build agent built C8 from a six-part brief; it had no
+independent review, and the lead read it, re-ran its tests on the integrated
+tree and probed it against a throwaway instance. Running two build agents
+beside the lead had exhausted a usage window, so one ran at a time.
 
 | Measure | Before | After |
 |---|---|---|
@@ -738,6 +738,9 @@ lead had exhausted a usage window, so one ran at a time.
 | An MCP answer that is a stored one | Not marked | Carries `_replayed: true`, as REST sends `Idempotent-Replay` (F14) |
 | Pause, token revocation, offboarding and removal | Leave the account's leases and fences active and say nothing | Each answers with `active_leases`; `release_leases` releases each in the same transaction, one `lease_released` per lease (C8, D12) |
 | An admin settling a dead agent's expired lease | Refused `claim_required`; the admin had to claim it first | Settled with its exact generation: `lease_lapsed` once, then `lease_released` (C8) |
+| A seat refused for budget while holding a lease | 429 with no `next`; the issue stays out of reach until the lease lapses | 429 with `held_leases`, `retry_after_seconds` and `next` = `yield_claim` with reason `capacity`; the yield is not metered (F13) |
+| Who is told that a holder ran out of budget | Nobody | The issue's assignee and the account that delegated it, once per budget window, by one `holder_budget_exhausted` event per held issue (F13) |
+| `agent_budget_exhausted` rows for 20 refused requests in one window | 20 | 1, saying what was spent, how many leases are held and the first request refused (F13) |
 
 The product gate's receipt is in PR #478.
 
@@ -752,6 +755,14 @@ Decisions the lead took while building, each reversible by the owner:
   and not answered from history. The marker replaces it.
 - **`release_leases` is never a default**, is refused on a resume and on the
   acting admin's own account, and a failed release rolls the whole act back.
+- **A spent budget releases nothing.** The refusal names the yield; the seat
+  makes it, or the lease lapses and says so. An automatic release would end
+  work a seat could still report on.
+- **"Once per window" is the stored budget window.** A raised limit inside a
+  window does not open a new one, so a second exhaustion after a raise in the
+  same window records nothing and tells nobody.
+- **The holder's own refusal is not sent to the holder**, also when the
+  holder is the issue's assignee.
 
 Found while building, and fixed before each was committed:
 
@@ -763,6 +774,15 @@ Found while building, and fixed before each was committed:
 - **C8.** One older test encoded the rule C8 reverses for an admin. A first
   wording of the desk's text added bytes to every desk answer; it was
   reworded to the same length, so the trial's ceilings did not move.
+- **F13.** A refused charge stored no budget window, so an account whose
+  limit refuses the first write of a new window (a limit of zero, a frozen
+  account) would have had every refusal open its own window and record
+  again; the recorder stores the rolled window. Three mutants survived the
+  first tests (the frozen window, the holder told of its own refusal, a
+  stored inbox row for an account that cannot see the issue); the tests were
+  strengthened until each was caught. The new read of
+  the trail was undeclared to the imported-history check and is declared
+  native-only.
 
 What the lead ran against C8 on a live instance: a pause with no option
 named two leases and released neither; the option on a resume was refused
@@ -791,6 +811,10 @@ Found and not fixed:
   sees every project. An admin settling a lapsed lease leaves two events,
   the lapse and the release. The lister reads every live lease in the
   instance to find one account's.
+- **F13.** The refusal names at most 20 held leases and the events cover the
+  same 20. A seat that ignores the `next` keeps its leases until they lapse.
+  A delegating account that can no longer see the issue is not told, and
+  nothing tells the operator that it was skipped.
 
 ## Priorities
 
