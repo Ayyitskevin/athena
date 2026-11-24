@@ -180,9 +180,16 @@ def test_mcp_surfaces_the_cursor_ahead_refusal(tmp_path):
 
 def _baseline(tmp_path, monkeypatch, migration_inventory_through):
     """Point the runner at the inventory before the repair; return the full one."""
-    full = db.MIGRATIONS_DIR
+    packaged = db.MIGRATIONS_DIR
     migration_inventory_through("0084_title_link_bindings.sql")
     assert not (db.MIGRATIONS_DIR / REPAIR).exists()
+    # Through the repair, not every packaged migration: a later one is not this
+    # test's business, and the repair need not be the newest.
+    full = db.MIGRATIONS_DIR.parent / "through-repair"
+    full.mkdir()
+    for migration in sorted(packaged.glob("*.sql")):
+        if migration.name <= REPAIR:
+            (full / migration.name).write_bytes(migration.read_bytes())
     assert (full / REPAIR).exists()
     return full
 

@@ -11,6 +11,8 @@ from athena.core import activity, db, portability
 from test_review_queue import board as _board, issue, submit
 from test_review_requests_command import request, setup_request
 
+from support import index_search_without_entry_keys
+
 board = _board
 
 
@@ -163,6 +165,8 @@ def test_populated_0082_upgrade_and_restored_snapshot(
         if migration.name < "0083":
             shutil.copy2(migration, baseline / migration.name)
     monkeypatch.setattr(db, "MIGRATIONS_DIR", baseline)
+    # Neither inventory has the search entry map (H2); index as that schema did.
+    index_search_without_entry_keys(monkeypatch)
     with (
         closing(db.connect(tmp_path / "upgrade.db")) as conn,
         closing(db.connect(tmp_path / "before.db")) as before,

@@ -21,6 +21,8 @@ from athena.aegis import (
 from athena.core import activity, db
 from athena.main import create_app
 
+from support import index_search_without_entry_keys
+
 
 def _migrated_conn(db_file):
     conn = db.connect(db_file)
@@ -139,6 +141,8 @@ def test_upgrade_from_0056_preserves_leases_and_enforces_generations(
         shutil.copy(migration, staged_migrations / migration.name)
 
     monkeypatch.setattr(db, "MIGRATIONS_DIR", staged_migrations)
+    # The baseline has no search entry map (H2); index as that schema did.
+    index_search_without_entry_keys(monkeypatch)
     conn = db.connect(tmp_path / "upgrade.db")
     assert db.migrate(conn)[-1] == "0056_api_tokens_live_user_index.sql"
     _seed_users(conn)

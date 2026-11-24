@@ -17,6 +17,8 @@ from athena.aegis import issue_activity, issues
 from athena.core import access, activity, db, notifications, users
 from athena.main import create_app
 
+from support import index_search_without_entry_keys
+
 H_ADMIN = {"X-Athena-Actor": "1"}
 H_CREATOR = {"X-Athena-Actor": "2"}
 H_OUTSIDER = {"X-Athena-Actor": "3"}
@@ -765,10 +767,12 @@ def test_activity_scope_and_event_roll_back_together(tmp_path, monkeypatch):
     conn.close()
 
 
-def test_migration_keeps_preexisting_issue_events_restricted(tmp_path):
+def test_migration_keeps_preexisting_issue_events_restricted(tmp_path, monkeypatch):
     # Migration 0042 cannot reconstruct the project at which an old event happened.
     # Existing rows therefore retain the column's fail-closed default; only events
     # recorded after scope capture exists are released to non-admin readers.
+    # The legacy issue is written before the search entry map exists (H2).
+    index_search_without_entry_keys(monkeypatch)
     conn = db.connect(tmp_path / "legacy-migration.db")
     migration = None
     for path in sorted(db.MIGRATIONS_DIR.glob("*.sql")):
