@@ -239,6 +239,21 @@ the configured `ATHENA_DB` path or its migration ledger does not match this
 build. `/readyz` does not run SQLite's full integrity check and does not inspect
 attachment blobs; use `athena-doctor` for those checks.
 
+Why it fails is in the log, not in the probe's answer: one line,
+`database unavailable: <reason>`, when the reason first appears or changes,
+and one, `database is available again`, when it clears. A probe every few
+seconds does not repeat it.
+
+**A database file that disappears is not recreated.** Once an instance has
+started, a connection that finds its database file gone refuses: `/readyz`
+and every request answer `503 unavailable`, and the log names the missing
+path. SQLite would otherwise create an empty file there, and the instance
+would look alive while every request failed on a missing table and the
+original loss sat hidden behind the new file. Restore the file
+([Restore a matched pair](#restore-a-matched-pair)) and the instance recovers
+without a restart. `athena-serve` already refuses to start on a missing
+database unless `--bootstrap` is given.
+
 ## Background Loops (Webhooks and Automation)
 
 Athena runs two in-process background loops: webhook delivery (pushes new

@@ -444,9 +444,13 @@ def create_app(
             "started" if delivery_task else "disabled",
             "started" if automation_task else "disabled",
         )
+        # From here the file exists and is this release's: a connection that
+        # finds it gone refuses, where SQLite would create an empty one (H16).
+        db.begin_serving(resolved_db)
         try:
             yield
         finally:
+            db.end_serving(resolved_db)
             # Shutdown: stop the background loops cleanly.
             tasks = tuple(
                 task for task in (delivery_task, automation_task) if task is not None
@@ -1059,11 +1063,15 @@ def create_app(
                 db.migration_status(conn)
             finally:
                 conn.close()
-        except (OSError, sqlite3.Error, db.MigrationIntegrityError):
+        except (OSError, sqlite3.Error, db.MigrationIntegrityError) as exc:
+            # The probe's caller is told only that it is unavailable; why goes
+            # to the operator's log, once per change of reason (H16).
+            refusals.note_database(request.app, f"{type(exc).__name__}: {exc}")
             return JSONResponse(
                 {"status": "error", "database": "unavailable", "code": "unavailable"},
                 status_code=503,
             )
+        refusals.note_database(request.app, None)
         return {"status": "ok", "database": "ok"}
 
     return app

@@ -10,9 +10,11 @@ from __future__ import annotations
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 import hashlib
+import os
 from pathlib import Path
 import re
 import sqlite3
+import threading
 from typing import Iterator
 
 # The .sql migration files live next to this module, in migrations/.
@@ -88,8 +90,47 @@ def _ensure_wal(conn: sqlite3.Connection, db_path: str | Path) -> None:
         conn.execute("PRAGMA journal_mode = WAL")
 
 
+class DatabaseMissing(FileNotFoundError):
+    """The database file a running app serves is no longer there."""
+
+
+# The database files running apps are serving, by absolute path, counted so
+# two apps on one file (a test suite's) do not end each other's claim.
+_SERVED: dict[str, int] = {}
+_SERVED_LOCK = threading.Lock()
+
+
+def begin_serving(db_path: str | Path) -> None:
+    """Mark ``db_path`` as served by a running app, after its startup has
+    created and migrated it. From here a connection to it never creates the
+    file (H16): SQLite would make an empty database at a path whose file was
+    deleted or unmounted, and every request after that would fail on a
+    missing table while the instance looked alive."""
+    key = os.path.abspath(db_path)
+    with _SERVED_LOCK:
+        _SERVED[key] = _SERVED.get(key, 0) + 1
+
+
+def end_serving(db_path: str | Path) -> None:
+    """Undo one :func:`begin_serving`, at the app's shutdown."""
+    key = os.path.abspath(db_path)
+    with _SERVED_LOCK:
+        remaining = _SERVED.get(key, 0) - 1
+        if remaining > 0:
+            _SERVED[key] = remaining
+        else:
+            _SERVED.pop(key, None)
+
+
 def connect(db_path: str | Path) -> sqlite3.Connection:
-    """Open a connection with the settings Athena always wants."""
+    """Open a connection with the settings Athena always wants.
+
+    Creates the file when it does not exist, except for a database a running
+    app serves, whose absence is :class:`DatabaseMissing`."""
+    if _SERVED and db_path != ":memory:":
+        key = os.path.abspath(db_path)
+        if key in _SERVED and not os.path.exists(key):
+            raise DatabaseMissing(f"database file is missing: {db_path}")
     # FastAPI may enter a synchronous yield dependency and run its endpoint/exit
     # on different worker threads. A request still uses this connection serially,
     # but SQLite's default creator-thread affinity would turn that legitimate handoff
