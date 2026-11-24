@@ -112,6 +112,9 @@ where = ["src"]
 athena = [
     "core/migrations/*.sql",
     "field_guide/*.md",
+    # The boot block, loop guide and glossary athena-mcp serves as resources:
+    # copies of docs/, which the wheel does not carry (tests/test_mcp_resources.py).
+    "mcp/documents/*.md",
     "static/*",
     "static/**/*",
     "templates/*.html",

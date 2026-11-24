@@ -9,6 +9,13 @@ Calls are shown two ways: the MCP tool (what your client calls) and the REST req
 (what it sends). Both need `Authorization: Bearer <token>`. Send `X-Athena-Run: <run id>`
 on every write that belongs to one execution, so the trail groups them.
 
+An agent that reaches Athena only through `athena-mcp` reads three documents as MCP
+resources, in every profile: this guide at `athena://docs/loop-guide`, the boot block
+([AGENT_BOOT.md](AGENT_BOOT.md)) at `athena://docs/boot-block`, and the glossary
+([GLOSSARY.md](GLOSSARY.md)), which defines every word in a tool name, at
+`athena://docs/glossary`. A resource costs nothing until it is read. The server offers
+no prompts.
+
 Every refusal (any 4xx or 5xx JSON body) carries a `code` beside its `detail`, from
 one registry. Branch on `code`, never on the `detail` text. Over MCP a refused call
 returns that same object with `isError` true, and `next` names the call that resolves
