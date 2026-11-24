@@ -186,6 +186,15 @@ TEST_MAP = (
         "MCP tools, which call the REST API",
     ),
     MapEntry(
+        "src/athena/aegis/budget_exhaustion_commands.py",
+        (
+            "tests/test_budget_exhaustion_signals.py",
+            "tests/test_agent_budgets.py",
+            "tests/test_refusal_next.py",
+        ),
+        "called only by the app's handler for a refused budget",
+    ),
+    MapEntry(
         "src/athena/field_guide/**",
         ("tests/test_field_guide.py",),
         "field guide pages, read by the guide",
