@@ -26,7 +26,7 @@ from athena.aegis import (
 from athena.core import access
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
-from athena.web.browsing import attach_labels, statuses_in_use
+from athena.web.browsing import attach_claims, attach_labels, statuses_in_use
 from athena.web.router import get_templates
 
 router = APIRouter()
@@ -62,12 +62,23 @@ def _board_scope(
     return project_id, backlog, sprint_id
 
 
+#: ``?group=claim``: one lane per account holding a live claim. Anything else
+#: is the default grouping, by who is working a card.
+GROUP_BY_CLAIM = "claim"
+UNCLAIMED_LANE = "unclaimed"
+
+
+def _group(value: str | None) -> str:
+    return GROUP_BY_CLAIM if (value or "").strip() == GROUP_BY_CLAIM else ""
+
+
 def _board_url(
     *,
     search: str,
     status: str,
     project: str,
     sprint: str,
+    group: str = "",
     move_conflict: str | None = None,
 ) -> str:
     """Build the board URL shared by successful and refused native moves."""
@@ -77,6 +88,8 @@ def _board_url(
         "project": project,
         "sprint": sprint,
     }
+    if group:
+        query["group"] = group
     if move_conflict is not None:
         query["move_conflict"] = move_conflict
     return f"/aegis/boards?{urlencode(query)}"
@@ -90,6 +103,7 @@ def _render_board(
     status_filter: str,
     project_filter: str,
     sprint_filter: str,
+    group: str = "",
     move_conflict: str | None = None,
 ):
     """Render one visibility-safe, placement-filtered fleet board.
@@ -148,9 +162,23 @@ def _render_board(
     # therefore still has somewhere to drag an open card.
     from collections import defaultdict
 
+    # Agents work by claim, not by assignment (U2): a card says who holds its
+    # live lease as well as who it is assigned to, and its lane follows whoever
+    # is working it: the holder when there is one, else the assignee.
+    attach_claims(conn, filtered)
     grouped: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+    holders: dict[int, str] = {}
     for issue in filtered:
-        if issue.get("assignee_id") is None:
+        claim = issue["claim"]
+        if group == GROUP_BY_CLAIM:
+            if claim is None:
+                lane = UNCLAIMED_LANE
+            else:
+                lane = f"holder-{claim['holder_id']}"
+                holders[claim["holder_id"]] = claim["holder_name"]
+        elif claim is not None:
+            lane = "agent" if claim["holder_is_agent"] else "human"
+        elif issue.get("assignee_id") is None:
             lane = "unassigned"
         elif issue.get("assignee_is_agent"):
             lane = "agent"
@@ -177,12 +205,22 @@ def _render_board(
         | {issue.get("status", "") for issue in filtered},
         key=_sort_key,
     )
+    if group == GROUP_BY_CLAIM:
+        # One lane per account holding a live claim, by name, then the rest.
+        lane_order = [
+            (f"holder-{holder_id}", f"Claimed by {name}")
+            for holder_id, name in sorted(
+                holders.items(), key=lambda held: (held[1].casefold(), held[0])
+            )
+        ] + [(UNCLAIMED_LANE, "No live claim")]
+    else:
+        lane_order = [
+            ("agent", "Agent work"),
+            ("human", "Human work"),
+            ("unassigned", "Unassigned and unclaimed"),
+        ]
     board_lanes = []
-    for key, label in (
-        ("agent", "Agent work"),
-        ("human", "Human work"),
-        ("unassigned", "Unassigned"),
-    ):
+    for key, label in lane_order:
         lane_issues = grouped[key]
         board_lanes.append(
             {
@@ -239,6 +277,7 @@ def _render_board(
             "project_filter": project_filter,
             "all_sprints": all_sprints,
             "sprint_filter": sprint_filter,
+            "group": group,
             "move_conflict": move_conflict,
         },
     )
@@ -251,6 +290,7 @@ def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     status_filter = (request.query_params.get("status") or "").strip()
     project_filter = (request.query_params.get("project") or "").strip()
     sprint_filter = (request.query_params.get("sprint") or "").strip()
+    group = _group(request.query_params.get("group"))
     requested_conflict = request.query_params.get("move_conflict")
     move_conflict = (
         requested_conflict if requested_conflict in {"stale", "policy"} else None
@@ -262,6 +302,7 @@ def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         status_filter=status_filter,
         project_filter=project_filter,
         sprint_filter=sprint_filter,
+        group=group,
         move_conflict=move_conflict,
     )
 
@@ -280,6 +321,7 @@ def board_move_issue(
     status: str = Form(""),
     project: str = Form(""),
     sprint: str = Form(""),
+    group: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Change an issue's status from the board, then show the board with the card in
@@ -304,6 +346,7 @@ def board_move_issue(
     focused issue view."""
     search, status = search.strip(), status.strip()
     project, sprint = project.strip(), sprint.strip()
+    group = _group(group)
     # Validate before the write: a forged, malformed filter must not mutate an issue
     # and only then fail while re-rendering its response.
     if _board_scope(project, sprint, strict_sprint=True) is None:
@@ -335,6 +378,7 @@ def board_move_issue(
                 status=status,
                 project=project,
                 sprint=sprint,
+                group=group,
                 move_conflict="stale",
             )
             if request.headers.get("HX-Request"):
@@ -353,6 +397,7 @@ def board_move_issue(
                 status=status,
                 project=project,
                 sprint=sprint,
+                group=group,
                 move_conflict="policy",
             )
             if request.headers.get("HX-Request"):
@@ -373,6 +418,7 @@ def board_move_issue(
             status_filter=status,
             project_filter=project,
             sprint_filter=sprint,
+            group=group,
         )
     # No-JS keyboard form: redirect to the board (preserving filters) so the URL is a
     # GET and a refresh re-reads rather than re-submitting the move.
@@ -382,6 +428,7 @@ def board_move_issue(
             status=status,
             project=project,
             sprint=sprint,
+            group=group,
         ),
         status_code=303,
     )

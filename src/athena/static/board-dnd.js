@@ -57,6 +57,7 @@
     copyFilter(form, "status");
     copyFilter(form, "project");
     copyFilter(form, "sprint");
+    copyFilter(form, "group");
     var values = {};
     new FormData(form).forEach(function (value, name) {
       values[name] = value;

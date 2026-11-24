@@ -54,7 +54,11 @@
                         </div>
                         {% endif %}
                         <div class="board-card-actor">
+                            {# Claim, not assignment: say which one each is. #}
                             <span class="name">{{ issue.assignee_name or "Unassigned" }}</span>
+                            {% if issue.claim %}
+                            <span class="chip" data-tone="info" title="Holds the live claim until {{ issue.claim.expires_at }} UTC">claimed by {{ issue.claim.holder_name }}</span>
+                            {% endif %}
                             {% if issue.labels %}
                             <div class="label-list">
                                 {% for l in issue.labels %}
@@ -75,6 +79,7 @@
                             <input type="hidden" name="status" value="{{ status_filter }}">
                             <input type="hidden" name="project" value="{{ project_filter }}">
                             <input type="hidden" name="sprint" value="{{ sprint_filter }}">
+                            <input type="hidden" name="group" value="{{ group }}">
                             <label class="visually-hidden" for="move-{{ issue.id }}">Move {{ issue.key or "#" ~ issue.id }} to status</label>
                             <select id="move-{{ issue.id }}" name="new_status" class="board-move-select">
                                 {% for s in issue.status_options %}

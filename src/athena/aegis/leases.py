@@ -16,6 +16,7 @@ row, the command owns the policy + event).
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
 import json
 import re
@@ -104,6 +105,43 @@ def live_lease_sql(issue_ref: str) -> str:
         "EXISTS (SELECT 1 FROM issue_leases qlz "
         f"WHERE qlz.issue_id = {issue_ref} AND qlz.expires_at > ?)"
     )
+
+
+def live_holders(
+    conn: sqlite3.Connection,
+    issue_ids: Iterable[int],
+    *,
+    now: datetime | None = None,
+) -> dict[int, dict]:
+    """Who holds a live lease on each of ``issue_ids``, for a view that shows
+    many issues at once (U2): ``{issue_id: {holder_id, holder_name,
+    holder_is_agent, expires_at}}``. An issue with no lease, or one that has
+    lapsed, is absent. Reading never touches a lapsed row."""
+    ids = list(issue_ids)
+    stamp = _clock_stamp(now)
+    found: dict[int, dict] = {}
+    for start in range(0, len(ids), _HOLDER_BATCH):
+        batch = ids[start : start + _HOLDER_BATCH]
+        rows = conn.execute(
+            "SELECT l.issue_id, l.holder_id, u.name AS holder_name, "
+            "u.is_agent AS holder_is_agent, l.expires_at "
+            "FROM issue_leases l JOIN users u ON u.id = l.holder_id "
+            f"WHERE l.issue_id IN ({', '.join('?' * len(batch))}) "
+            "AND l.expires_at > ?",
+            (*batch, stamp),
+        ).fetchall()
+        for row in rows:
+            found[int(row["issue_id"])] = {
+                "holder_id": int(row["holder_id"]),
+                "holder_name": row["holder_name"],
+                "holder_is_agent": bool(row["holder_is_agent"]),
+                "expires_at": row["expires_at"],
+            }
+    return found
+
+
+# Bound parameters per statement stay well under SQLite's limit.
+_HOLDER_BATCH = 500
 
 
 def clock_stamp(now: datetime | None) -> str:

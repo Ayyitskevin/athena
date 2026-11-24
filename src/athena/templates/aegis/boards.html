@@ -83,6 +83,19 @@
             <option value="{{ s.id }}" {% if sprint_filter == s.id|string %}selected{% endif %}>{{ s.project_key }} · {{ s.name }}</option>
             {% endfor %}
         </select>
+        <label class="visually-hidden" for="board-group">Group lanes by</label>
+        <select
+            id="board-group"
+            class="filter-select"
+            name="group"
+            hx-get="/aegis/boards"
+            hx-target=".board"
+            hx-swap="outerHTML"
+            hx-include="closest form"
+            hx-replace-url="true">
+            <option value="">Lanes: who is working</option>
+            <option value="claim" {% if group == "claim" %}selected{% endif %}>Lanes: claim holder</option>
+        </select>
         <button
             type="submit"
             class="button secondary"

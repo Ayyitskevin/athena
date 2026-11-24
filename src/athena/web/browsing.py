@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi.responses import HTMLResponse
 
-from athena.aegis import issues, statuses
+from athena.aegis import issues, leases, statuses
 from athena.core import labels
 
 # Attachment-command refusal codes the browser adapters answer with.
@@ -30,6 +30,17 @@ def attach_labels(conn, rows: list[dict]) -> list[dict]:
     by_issue = labels.labels_for_issues(conn, [r["id"] for r in rows])
     for row in rows:
         row["labels"] = by_issue.get(row["id"], [])
+    return rows
+
+
+def attach_claims(conn, rows: list[dict]) -> list[dict]:
+    """Put each issue's live claim on it under a "claim" key, in one bulk read
+    (U2): the holder's id, name and kind and when the lease expires, or None
+    where nobody holds a live lease. A list or a board that names the assignee
+    names the holder beside it, because agents work by claim."""
+    held = leases.live_holders(conn, [row["id"] for row in rows])
+    for row in rows:
+        row["claim"] = held.get(row["id"])
     return rows
 
 

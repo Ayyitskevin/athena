@@ -102,7 +102,12 @@ that shows an agent, show these — the data already exists:
 - **Run, not age.** Prefer the run id (`iris-run-0417`) over "created 2 days ago".
   Runs are how the work actually decomposes.
 - **Claim, not assignment.** Leases, heartbeats and handoffs are distinct from a
-  human assignment. Say which one you mean.
+  human assignment. Say which one you mean. Wherever a view names an issue's
+  assignee it names the holder of its live lease beside it (`attach_claims` in
+  `web/browsing.py` reads them for a whole list at once): a board card says
+  "claimed by Sol", the issue list has a Claim column, and a board lane follows
+  whoever is working the card, the holder when there is one. A lapsed lease
+  is not a claim.
 - **The trail is a ledger.** Show the hash-chain sequence number (`#2846`) and
   render a compensating event as `undoes #2841`. History is append-only.
 - **Say what a number counts.** Every aggregate states its window and its
