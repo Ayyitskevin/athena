@@ -347,6 +347,10 @@ code, kbd, pre, samp { font-family: var(--font-mono); }
 .nav-menu a .route { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-3); }
 
 /* The exception count lives in the nav, not only on the dashboard. */
+/* The Intervene summary's counts: one swappable box (the card's live refresh
+   replaces it out of band), laid out like the summary around it. */
+.nav-counts { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.nav-counts:empty { display: none; }
 .nav-count {
   display: inline-grid;
   place-items: center;
@@ -1205,6 +1209,40 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 }
 .supervision dd, .supervision .v { margin: 0; font-family: var(--font-mono); font-size: var(--fs-xl); font-weight: 600; letter-spacing: -.02em; }
 .supervision .sub { margin-top: var(--sp-1); font-size: var(--fs-xs); color: var(--text-3); }
+/* The admin's release control sits under the lease it ends (U3). */
+.supervision .lease-release { margin-top: var(--sp-2); }
+
+/* A completion report (U9): text an agent wrote, rendered by one partial on
+   every surface. It takes a whole row of a flex list and wraps any value, so a
+   report can never widen the page. Neutral rail: the author may be a human. */
+.report {
+  flex-basis: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: var(--sp-1) 0 var(--sp-2);
+  padding: var(--sp-1) 0 var(--sp-1) var(--sp-3);
+  border-left: 2px solid var(--border-strong);
+  font-size: var(--fs-md);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.report > summary { cursor: pointer; color: var(--text); }
+.report h4 { margin: var(--sp-3) 0 var(--sp-1); font-size: var(--fs-sm); color: var(--text); }
+.report ul { margin: 0; padding-left: var(--sp-5); }
+/* A list row the report sits in (the inbox) must not restyle the report's own. */
+.report ul > li { display: list-item; padding: 0; border: 0; }
+.report p { margin: var(--sp-1) 0; }
+.report-fields { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--sp-1) var(--sp-3); margin: 0; }
+.report-fields dt { font-family: var(--font-mono); color: var(--text-3); }
+.report-fields dd { margin: 0; min-width: 0; }
+/* An excerpt of recorded text keeps its line breaks but wraps long lines. */
+pre.prose { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The approval queue's target title: a human-written name. The column keeps
+   room for ordinary words (12ch: no spacing token measures text), and only a
+   word longer than that breaks, so a hostile title cannot widen the table. */
+.approval-target-title { min-width: 12ch; overflow-wrap: anywhere; }
+/* A verdict chip reads as one word: it never splits across lines. */
+.approval-verdict .chip { white-space: nowrap; }
 
 .meta-rail { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
 .meta-grid { display: grid; grid-template-columns: 78px 1fr; gap: 9px var(--sp-3); align-items: center; font-size: var(--fs-md); }
@@ -1428,6 +1466,8 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
   font-size: var(--fs-md);
   line-height: 1.6;
   color: var(--text-2);
+  /* A message can carry a long unbroken value; it wraps, never widens the page. */
+  overflow-wrap: anywhere;
 }
 .alert strong { display: block; margin-bottom: 3px; color: var(--text); }
 .alert[data-tone="danger"]  { --tone: var(--danger);  --tone-soft: var(--danger-soft);  --tone-line: var(--danger-line); }
@@ -1600,7 +1640,7 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 .member-list li { display: flex; align-items: center; justify-content: space-between; padding: 0.35rem 0; border-bottom: 1px solid var(--border); }
 .member-add { display: flex; gap: 0.5rem; margin-top: 0.6rem; flex-wrap: wrap; }
 .inbox-list { list-style: none; padding: 0; margin: 0; }
-.inbox-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--border); }
+.inbox-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--border); }
 .inbox-list li.unread { background: var(--info-soft); }
 .inbox-list li a { flex: 1; }
 .child-list { list-style: none; padding: 0; margin: 0; }
@@ -1636,7 +1676,7 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 .activity-list { list-style: none; padding: 0; margin: 0.5rem 0 0; }
 .activity-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem; padding: 0.3rem 0; border-bottom: 1px solid var(--surface-2); font-size: 0.92rem; }
 .activity-actor { font-weight: 600; }
-.activity-detail { color: var(--text-2); }
+.activity-detail { color: var(--text-2); min-width: 0; overflow-wrap: anywhere; }
 .activity-time { margin-left: auto; font-size: 0.82rem; white-space: nowrap; }
 .activity-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem; margin: 1rem 0; }
 .activity-filters label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.8rem; color: var(--text-3); }
@@ -1678,6 +1718,9 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 .dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; align-items: start; }
 .dashboard-list, .dashboard-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
 .dashboard-list li { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; font-size: 0.9rem; }
+/* A Now-queue row carries a kind, an issue key and title, a severity and a
+   sentence: it wraps as a line of text instead of squeezing into columns. */
+.now-queue li { flex-wrap: wrap; justify-content: flex-start; align-items: baseline; column-gap: 0.5rem; row-gap: 0.15rem; }
 .dashboard-bars li { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; font-size: 0.9rem; }
 .bar-count { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text-2); }
 .dashboard-activity { grid-column: 1 / -1; }
@@ -1747,6 +1790,9 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 }
 
 @media (max-width: 560px) {
+  /* The unread count is also in the Intervene menu's Inbox link; on a phone it
+     stays there rather than widening a nav that already overflows. */
+  .nav-unread { display: none; }
   .stat-row { grid-template-columns: 1fr; }
   .stat { padding-left: 0; border-left: 0; border-top: 1px solid var(--border); }
   .stat:first-child { border-top: 0; }

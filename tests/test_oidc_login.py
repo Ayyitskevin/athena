@@ -126,7 +126,9 @@ def test_callback_provisions_user_and_mints_session(tmp_path, monkeypatch):
         done = client.get(
             f"/auth/callback?code=abc&state={state}", follow_redirects=False
         )
-        assert done.status_code == 303 and done.headers["location"] == "/aegis"
+        assert (
+            done.status_code == 303 and done.headers["location"] == "/aegis/dashboard"
+        )
         assert done.cookies.get("athena_session")  # a real session was minted
 
         # The user exists and the IdP identity is linked.

@@ -31,7 +31,7 @@ the inverses, and `main.py` — the composition root — wires them together.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import sqlite3
 
@@ -69,6 +69,15 @@ COMMAND_REFUSED_CODE = "undo_refused_by_command"
 #: that command raises when the actor may not perform it; it returns nothing,
 #: because the *evidence* of success is the reversal event the command recorded.
 Compensator = Callable[[sqlite3.Connection, dict | None, dict], None]
+#: A precheck answers, WITHOUT writing, whether the compensator would accept
+#: ``event`` from ``actor`` now: it raises :class:`UndoRefused` with the refusal
+#: the undo would get (the inverse command's write gate, an effect no longer in
+#: force) and returns nothing otherwise. Registered by the layer that owns the
+#: compensator, which uses the same checks, so an offer and the act agree.
+Precheck = Callable[[sqlite3.Connection, dict | None, dict], None]
+
+#: What :func:`undo` says when the compensating command recorded nothing.
+NO_EFFECT_DETAIL = "nothing to undo: this action's effect is no longer in force"
 
 
 @dataclass(frozen=True)
@@ -81,6 +90,9 @@ class Reversal:
     #: One line the operator reads when undo is refused — why this verb is one-way
     #: or a trapdoor. Empty for two-way verbs, which need no excuse.
     reason: str = ""
+    #: How a surface asks, read-only, whether this undo would be accepted now.
+    #: None: nobody taught the engine, so no surface may promise it (see offer).
+    precheck: Precheck | None = None
 
 
 _REGISTRY: dict[str, Reversal] = {}
@@ -109,6 +121,7 @@ def register(
     action_class: str,
     compensator: Compensator | None = None,
     reason: str = "",
+    precheck: Precheck | None = None,
 ) -> None:
     """Teach the engine how one verb is reversed.
 
@@ -118,8 +131,14 @@ def register(
     raises, because a verb with two inverses is a bug, not a configuration."""
     if (action_class == TWO_WAY) != (compensator is not None):
         raise ValueError("exactly the two-way verbs carry a compensator")
+    if precheck is not None and compensator is None:
+        raise ValueError("only a verb with a compensator carries a precheck")
     entry = Reversal(
-        verb=verb, action_class=action_class, compensator=compensator, reason=reason
+        verb=verb,
+        action_class=action_class,
+        compensator=compensator,
+        reason=reason,
+        precheck=precheck,
     )
     existing = _REGISTRY.get(verb)
     if existing is not None and existing != entry:
@@ -175,6 +194,43 @@ def is_undoable(event: dict) -> bool:
     )
 
 
+def offer(
+    conn: sqlite3.Connection, actor: dict | None, events: Sequence[dict]
+) -> dict | None:
+    """The newest undoable event of ``events`` (newest first, as
+    ``activity.list_activity`` returns them, already gated by the actor's
+    visibility), when :func:`undo` would accept it from ``actor`` right now;
+    otherwise None.
+
+    Stronger than :func:`is_undoable`, for a surface that offers ONE undo where
+    the operator looks (the issue page, U9). The candidate is the newest event
+    whose shape is two-way and native and which is not already reversed. It is
+    offered when its verb's registered precheck (the same write gate and
+    still-in-force checks its compensator applies) passes. When that precheck
+    refuses, or the verb has none, nothing is offered: the offer never moves
+    down to an older event, so one Undo always means the last change that can
+    be reversed. An older event is still undone from the activity page.
+    Read-only; :func:`undo` still decides under its own transaction, so a race
+    between render and click is refused there, not here."""
+    if actor is None:
+        return None
+    shaped = [event for event in events if is_undoable(event)]
+    if not shaped:
+        return None
+    already = activity.reversed_event_ids(conn, [event["id"] for event in shaped])
+    candidate = next((event for event in shaped if event["id"] not in already), None)
+    if candidate is None:
+        return None
+    precheck = reversal_for(candidate["verb"]).precheck
+    if precheck is None:
+        return None
+    try:
+        precheck(conn, actor, candidate)
+    except UndoRefused:
+        return None
+    return candidate
+
+
 def undo(conn: sqlite3.Connection, actor: dict | None, *, event_id: int) -> dict:
     """Reverse one event as ``actor``, returning the reversal event.
 
@@ -224,7 +280,7 @@ def undo(conn: sqlite3.Connection, actor: dict | None, *, event_id: int) -> dict
             # rules mean exactly one thing: the effect is not in force any more.
             # Rolls back — a "successful" undo that changed nothing is a lie.
             raise UndoRefused(
-                "nothing to undo: this action's effect is no longer in force",
+                NO_EFFECT_DETAIL,
                 code=NO_EFFECT_CODE,
                 status_code=409,
             )

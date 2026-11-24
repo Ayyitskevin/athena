@@ -3,13 +3,21 @@
    each row must say WHICH issue it happened to and link to it; false on an
    issue's own detail page, where the target is already the page you're on.
    Presentation only — the audit facts (who/verb/detail) come straight from the
-   API's data layer, never reshaped here. #}
+   API's data layer, never reshaped here. A claim_completed row renders its
+   report through the one report partial (U9), never as its raw payload. #}
+{% from "aegis/partials/completion_report.html" import show_report %}
 {% if events %}
 <ul class="activity-list">
     {% for e in events %}
+    {% set completion = e | completion_parts if e.verb == "claim_completed" else none %}
     <li class="activity-item">
         <span class="activity-actor">{{ e.actor_name }}</span>
-        {% if e.verb == "created" %}
+        {% if completion is not none %}
+            completed the claim{% if completion.header %} <span class="activity-detail">{{ completion.header }}</span>{% endif %}
+        {% elif e.verb == "lease_released" %}
+            {# U3: an admin ended another account's lease. A release, not work done. #}
+            released another account's lease <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "created" %}
             created
         {% elif e.verb == "issue_edited" %}
             edited issue <span class="activity-detail">{{ e.detail }}</span>
@@ -83,9 +91,11 @@
         {% elif undoable_ids is defined and e.id in undoable_ids %}
         <form method="post" action="/aegis/activity/{{ e.id }}/undo" class="inline-form">
             {% include "partials/csrf.html" %}
+            {% if undo_return_to is defined %}<input type="hidden" name="return_to" value="{{ undo_return_to }}">{% endif %}
             <button type="submit" class="button secondary small">Undo</button>
         </form>
         {% endif %}
+        {% if completion is not none %}{{ show_report(completion.report) }}{% endif %}
     </li>
     {% endfor %}
 </ul>

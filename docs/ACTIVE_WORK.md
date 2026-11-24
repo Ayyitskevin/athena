@@ -155,6 +155,22 @@ Each row keeps independent facts independent:
 `observed` means only that none of those known reasons applied at the snapshot.
 It is intentionally not called healthy or running.
 
+`checkin_missing` and `checkin_stale` apply only once a tagged claim's heartbeat
+is overdue: more than `ATHENA_AGENT_RUN_STALE_SECONDS` (90 by default) since the
+possession was acquired, or since the run's last check-in, whichever is later. The
+acquisition is the holder's native `claimed` event for the lease's generation,
+not `lease.claimed_at`, which a renewal moves: renewing never restarts the grace,
+while a new possession (a re-claim after a lapse, a claim after a yield) does. A
+claim taken a moment ago has not had time to check in, so it is not attention yet,
+though `run.reporting_state` already says `not_reported`. The two stay independent
+facts: `reporting_state` is the check-in's own age, so a new possession under a run
+whose last check-in is old reads `stale` while its heartbeat is not yet overdue.
+`run_untagged` is not a late heartbeat but a claim that can never report, and it
+applies at once, like every other reason. In the ranked attention queue
+(`GET /attention/ranking`), a claim whose only reasons are those three ranks
+`medium`: below every pending approval and every unanswered question, above an
+answered one (`low`). A claim with any other reason stays `high`.
+
 ### A lapsed lease is an event
 
 `lease_expired` is the clock's verdict, and the clock tells nobody. So the first
@@ -192,6 +208,28 @@ For an account without admin authority, the attention ranking's
 `claim_needs_attention` rows are the claims it holds plus, on issues it can see,
 the claims it answers for; the count and the rows use the same filter. The record
 is [the lapse decision](decisions/2026-11-22-lease-lapse-events.md).
+
+### An admin's release is a release, not a completion
+
+An admin may end another account's live lease: `complete_claim` with the lease's
+current generation over REST, or "Release lease" on the issue page's Claim card,
+which posts the generation the page showed (U3). Either way the command records
+`lease_released`, not `claim_completed`. The admin is the actor and the holder
+the subject; the detail reads `generation <g>; holder_id <n>; holder <name>`,
+and the feed carries the generation as the event's `generation` field. The
+holder gets a notification. A release carries no completion report.
+
+- **Not finished work.** Nothing that reads completions counts a release: the
+  last-work clock, the project brief's latest completion, the operator's "since
+  you looked" completions, the issue narrative's outcomes, the ready rule's
+  settlement, review requests and an inbox row's "you completed this". The
+  narrative tells it as a claim signal; undo classifies it one-way.
+- **One possession.** The generation fence refuses a lease settled, lapsed or
+  reclaimed since the generation was read, even by the same holder within the
+  same second; a renewal keeps the generation and is released.
+- **Not reassignment.** Status, assignee and contributors stay as they are, so a
+  released holder that is still the assignee or a contributor may claim the issue
+  again at once. Reassign or remove the contributor to move the work.
 
 Summary counts carry `scope=returned_items`: active, expired, and attention totals
 describe only the bounded `items` window, never undisplayed claims when `clipped=true`.

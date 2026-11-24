@@ -32,6 +32,7 @@ from support import (
     bearer,
     bootstrap,
     lapse_lease,
+    lease_facts,
     make_app,
     mcp_server_for,
     onboard_agent,
@@ -169,7 +170,7 @@ def test_another_account_cannot_renew_with_the_holders_generation(tmp_path):
     try:
         issue_id = world.issue()
         held = world.held(world.sol, issue_id)
-        before = world.lease(issue_id)
+        before = lease_facts(world.lease(issue_id))
         for if_match in (None, world.etag(issue_id)):
             refused = world.claim(
                 world.terra, issue_id, if_match=if_match, generation=held["generation"]
@@ -183,7 +184,7 @@ def test_another_account_cannot_renew_with_the_holders_generation(tmp_path):
             headers=ADMIN,
         )
         assert admin.status_code == 409 and admin.json()["code"] == "claim_held"
-        assert world.lease(issue_id) == before
+        assert lease_facts(world.lease(issue_id)) == before
     finally:
         world.close()
 

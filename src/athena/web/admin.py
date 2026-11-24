@@ -22,6 +22,7 @@ from athena.core import (
     webhooks,
 )
 from athena.core.deps import get_conn
+from athena.web import redirects
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
 
@@ -131,17 +132,10 @@ def _safe_next(next_path: str) -> str:
     local path ("//host" is protocol-relative, "https://…" is absolute, and
     backslashes are authority separators in WHATWG URL parsing) falls back to
     the home page. Reject controls as well instead of relying on response-header
-    serialization to make an unsafe value inert.
+    serialization to make an unsafe value inert. The rule is
+    ``redirects.safe_local_path``, shared with the sign-in page.
     """
-    has_control = any(ord(char) < 0x20 or ord(char) == 0x7F for char in next_path)
-    if (
-        next_path.startswith("/")
-        and not next_path.startswith("//")
-        and "\\" not in next_path
-        and not has_control
-    ):
-        return next_path
-    return "/"
+    return redirects.safe_local_path(next_path) or "/"
 
 
 _THEMES = {"dark", "light", "system"}

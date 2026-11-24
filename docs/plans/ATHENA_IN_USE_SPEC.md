@@ -2,7 +2,7 @@
 
 Date: 2026-11-22. Review baseline: `0b42d40` (`main` after Waves 0, 0b, 1 and 2
 of [the agentic-use specification](AGENTIC_USE_SPEC_ATHENA.md)).
-Status: **decisions accepted by standing instruction; Waves 3 and 4 built; Waves 6 and 7 begun.**
+Status: **decisions accepted by standing instruction; Waves 3 and 4 built; Waves 6, 7 and 8 begun.**
 Evidence: [reports/repo-review-2026-11-22-round2.md](reports/repo-review-2026-11-22-round2.md).
 Finding IDs such as `FLEET-4`, `OPS-5`, `PERF-1` and `COCKPIT-2` refer to that
 report. Requirement IDs that begin A, B or C are carried from the first
@@ -32,9 +32,12 @@ as a seat answers in 34 ms at 10,000 issues and 93 ms at 50,000, where it took
 259 and 1,285. The first four requirements of Wave 7 are built in PR #475: the
 operator is told what the instance answers without a credential, a new
 database is private to the service user, and a refused start names what is
-wrong and what to do. First lanes of Wave 8, and F10 and F6 of Wave 5, are
-built and independently reviewed but not merged. Nothing has been re-graded
-since.
+wrong and what to do. The first four requirements of Wave 8 are built in PR
+#476: an admin releases a held lease from the issue page, the navigation and
+the dashboard show one "needs you" number, a fresh claim is not attention, and
+an approval row says what is being approved. F10 and F6 of Wave 5 are built
+and not merged; F6 has been independently reviewed and F10 has not. Nothing
+has been re-graded since.
 
 **Decisions in force.**
 
@@ -60,7 +63,8 @@ since.
    everything, and every bearer read takes the writer lock (H5, H6, H7, H9:
    the rest of Wave 6).
 4. The cockpit's boards and lists key on the assignee while agents work by
-   lease, and four operator steps cannot be done in the browser (Wave 8).
+   lease (U2), and three operator steps cannot be done in the browser (U5).
+   At phone width the navigation row runs off the right edge on every page.
 5. Assignment answers with the name of an account that cannot see the issue's
    project, so a member can learn that the account exists (found in Wave 4;
    the owner's question below).
@@ -88,13 +92,19 @@ and the 40 ms delay of a server started on an inherited socket. "Wave 6
 results" says the same for each. From Wave 7: the doctor's anonymous-reads
 line and the tailnet refusal, private modes for a database Athena creates,
 startup refusals that name the object and a remedy that runs as printed, and
-start-up notices that are true. "Wave 7 results" says the same for each.
+start-up notices that are true. "Wave 7 results" says the same for each. From
+Wave 8: the lease release on the issue page and its `lease_released` event,
+one "needs you" number, the heartbeat grace and the attention ranking, the
+approval row, the one report partial and undo on the issue page. "Wave 8
+results" says the same for each.
 
 **Next step.** Integrate the lanes already built and reviewed, each wave as its
-own pull request: Wave 8 (U3, U9; U6, U7), then Wave 5 in the order its row
-gives, starting with F10 and F6, which are built. The rest of Wave 6 (H6, H5,
-H7, H9) and of Wave 7 (H13 to H17, H19, H20) is not built. Each requirement
-that removes calls lowers the fleet trial's ceilings in the same commit.
+own pull request: Wave 5 in the order its row gives, starting with F10 and
+F6, which are built. F10 has not been reviewed; it needs an undo precheck for
+edits so that the issue page's offer survives one. The rest of Wave 6 (H6, H5,
+H7, H9), of Wave 7 (H13 to H17, H19, H20) and of Wave 8 (U2, U4, U5, U8, U10
+to U15, C10) is not built. Each requirement that removes calls lowers the
+fleet trial's ceilings in the same commit.
 
 **How work is done here.** One requirement, one commit, with the test that
 fails without it. Delegated build work is briefed with
@@ -176,7 +186,7 @@ loosened without a line in the wave's results.
 | The operator's priority inbox, median at 50,000 issues | 1,875 ms | 100 ms. Measured after Wave 6: 7 ms. | 6 |
 | Webhook deliveries after three duplicate starts over 30 events | 47 | 30 | 7 |
 | Routes that answer without a credential on a default instance | 74 of 156, reported nowhere | Counted and printed by `athena-doctor`; tailnet mode refuses to start without an explicit setting. After Wave 7: both hold. The doctor counts what the credential gate admits, 111 of 162 GET routes, which is more than answer. | 7 |
-| Operator steps that cannot be done in the browser | 4 | 0, or each on a declared list | 8 |
+| Operator steps that cannot be done in the browser | 4 | 0, or each on a declared list. After Wave 8's first lanes: 3 (U5 remains). | 8 |
 | Issues an agent holds by lease that the board files under "Unassigned" | 16 of 18 | 0 | 8 |
 | Capabilities on one surface only | 5 groups cockpit-only, 6 API-only | 0, or each on a declared list a gate check reads | 8 |
 | Commands that take a bare actor id; writes outside a command | 42; 23 | Lower each wave, held by a ratchet | 9 |
@@ -531,6 +541,84 @@ Found and not fixed:
 - **H18.** Only `athena-serve` and `athena-doctor` report an undeclared
   variable; the MCP server and the seat doctor do not.
 
+### Wave 8 results (first lanes)
+
+This is U3, U9, U6 and U7 (PR #476), one commit each. U2, U4, U5, U8, U10 to
+U15 and C10 are not built. Two build agents built the four from six-part
+briefs; an agent that had not built them reviewed each pair against a
+throwaway instance, and each build was corrected after its review. The lead
+then drove the pages in a browser at 1,280 and 390 px against a demo
+instance, read the screenshots, and corrected what that found.
+
+| Measure | Before | After Wave 8's first lanes |
+|---|---|---|
+| Releasing another account's live lease | REST only | A confirmed button on the issue page, through the same command (U3) |
+| How that release is recorded | `claim_completed` by the admin, read as finished work | `lease_released`, told to the holder, counted by nothing as a completion (U3) |
+| "Needs you" in the navigation and on the dashboard | Two totals that differed | One number from one read; a live refresh moves both (U6) |
+| Where sign-in lands | A page with no attention on it | The dashboard, whose first panel is the attention queue (U6) |
+| A fresh claim | "Needs attention" at once: 54 of 54 | Not attention until its heartbeat is overdue, measured from the acquisition (U7) |
+| A pending approval among missed check-ins | Row five | Outranks every missed check-in (U7) |
+| An approval row | The action and a target id | The issue key, its title and the verdict the ask rests on, with its author (U9) |
+| A completion report | Raw JSON on five surfaces | One partial, escaped text (U9) |
+| Undo | The activity page only | Also the issue page, for its newest undoable event (U9) |
+
+The product gate's receipt is in PR #476.
+
+Found by reviewing and probing the builds, and fixed before each was
+committed:
+
+- **U3.** The first build kept the recording `main` has for an admin's
+  release: the admin's own `claim_completed`, which settlement, work progress
+  and review requests read as finished work. It is its own verb. The form's fence was a timestamp, so
+  a new possession in the same second could be released by a stale page; it
+  is the lease generation.
+- **U6.** A live refresh moved the card and left the navigation number
+  stale. Open questions waiting on the operator were not in the number. The
+  sign-in page followed a `next` parameter; it lands on the dashboard
+  whatever the request carries.
+- **U7.** The grace restarted at every renewal, so a claim that renewed and
+  never reported was never attention; it runs from the acquisition. Another
+  agent's comment marked an operator's question answered; only a person's
+  act does.
+- **U9.** The lead's rule replaced the build's: the issue page offers undo
+  for its newest undoable event and nothing when that one would be refused.
+  The build moved down to an older event. Found in the browser: the approval
+  row made the agents page 66 px wider at phone width; each table of that
+  page scrolls inside its own region.
+
+Decisions the lead took while building, each reversible by the owner:
+
+- An admin ending another account's lease is `lease_released`, not a
+  completion: the issue returns to the ready lane and the holder is told.
+- One Undo on the issue page means the last change that can be reversed. An
+  older event is undone from the activity page.
+- Only a person's act answers a question in the operator's queue. Any
+  account that is not an agent counts, so a member's reply answers it until
+  the asker says it is still blocked.
+- A claim never tagged with a run is attention at once, at medium, because
+  it cannot check in.
+- An undo that would close an issue behind an approval gate is not offered;
+  a click asks for the approval and says so in the page.
+
+Found and not fixed:
+
+- **At 390 px the navigation row runs off the right edge on every page**, and
+  the "needs you" number with it; the page scrolls 100 px sideways. This is
+  on `main` before Wave 8.
+- **Every page logs one Content-Security-Policy refusal of an inline style**
+  to the browser console. Also on `main` before Wave 8.
+- **U3.** A form message returned in the URL is shown in the page, capped at
+  300 characters and escaped, as the activity page already does; a crafted
+  link can show its own sentence there.
+- **U7.** The read of each held lease's acquisition is one statement per
+  lease; its cost is left for Track H. A member's question back on an
+  agent's question reads as answered until the agent replies.
+- **U9.** The offer does not predict a durable action budget or a project's
+  blocked-close policy; the click answers for those. An edit of an issue's
+  text is not undoable until F10.
+- **Screenshots at 1,280 and 390 px were taken and read by the lead**; the
+  tools at hand cannot attach an image to a pull request.
+
 ## Priorities
 
 - **P0.** A written statement is false, or a fleet following the recipe is
@@ -715,7 +803,7 @@ one change with its own commit, in the order given.
 | 8. The cockpit | U2, U3, U4, U6, U7, U9, U14, U5, U8, U10, U11, U12, U13, U15, C10 | D12, D27 |
 | 9. Debts | G1 to G10, B6b, B11 | D9, D10 |
 
-Waves 3 and 4 are done, and Waves 6 and 7 are begun; their results are above. Wave 3 is the six false
+Waves 3 and 4 are done, and Waves 6, 7 and 8 are begun; their results are above. Wave 3 is the six false
 statements and the three findings that block a fleet following the recipe. Wave 4 is where the per-outcome scorecard row moves.
 Waves 6 to 9 do not depend on each other and can be reordered.
 

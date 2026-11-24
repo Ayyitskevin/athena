@@ -46,7 +46,7 @@ def test_password_is_stored_hashed_never_plaintext(tmp_path):
 
 def test_login_success_sets_session_cookie(tmp_path):
     # WHY: a correct email+password must mint a session and hand the browser a
-    # cookie, then bounce it to the dashboard.
+    # cookie, then bounce it to the dashboard, where the attention queue is (U6).
     app = create_app(tmp_path / "login.db")
     with TestClient(app) as client:
         _user(client, password="secret")
@@ -56,7 +56,7 @@ def test_login_success_sets_session_cookie(tmp_path):
             follow_redirects=False,
         )
         assert r.status_code == 303
-        assert r.headers["location"] == "/aegis"
+        assert r.headers["location"] == "/aegis/dashboard"
         assert config.SESSION_COOKIE in r.cookies
 
 

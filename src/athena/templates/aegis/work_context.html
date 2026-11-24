@@ -410,7 +410,13 @@
             {% if event.imported_at %}
             <span class="muted">imported {{ event.imported_at }}</span>
             {% endif %}
+            {% if event.get("reported_completion") is not none %}
+            {# The report renders once, through the shared partial (U9); the raw
+               payload is not repeated beside it. #}
+            <span class="activity-detail">{{ event.detail.text | completion_header }}</span>
+            {% else %}
             {{ excerpt(event.detail, "No event detail.") }}
+            {% endif %}
             {{ show_report(event.get("reported_completion"), event.get("evidence_checks"), event.get("checklist_coverage")) }}
         </li>
         {% endfor %}

@@ -295,16 +295,29 @@ def _age(stamp: str | None, now: datetime) -> int | None:
 def open_questions(
     conn: sqlite3.Connection,
     *,
-    actor: dict,
+    actor: dict | None,
     asked_by: int | None = None,
     now: datetime | None = None,
     limit: int = LANE_LIMIT,
+    with_answers: bool = False,
 ) -> dict:
     """Open blocking questions — yielded claims nobody has resumed — oldest first,
     on issues this actor can see. ``asked_by`` narrows to one asker (a desk).
-    Count and rows apply the same visibility. Read-only."""
+    Count and rows apply the same visibility. Read-only. ``actor=None`` is the
+    admin-only attention rollup's caller contract and sees every project.
+
+    ``with_answers`` is the operator's view (U7). It marks a ``needs_input``
+    question ``answered`` when a person (a non-agent account) other than the
+    asker has answered the issue since the question, by the ready lane's answer
+    verbs (``ready_queue.answered_sql`` with ``humans_only``), and adds
+    ``answered_total``. The asker commenting again after that answer restates
+    the question, so it waits on the operator again. Another agent's comment or
+    claim answers nothing here, and a ``blocked`` yield is never marked: its
+    question is about the work, not a reply the agent awaits. An answered
+    question is still open (only a resume closes it), but it waits on the agent,
+    not on the operator. Off by default, so the desk's answer is unchanged."""
     current = _now(now)
-    vis_sql, vis_params = _visibility(conn, actor)
+    vis_sql, vis_params = ("", []) if actor is None else _visibility(conn, actor)
     asker_sql = "" if asked_by is None else " AND ye.actor_id = ?"
     asker_params: list[object] = [] if asked_by is None else [asked_by]
     base = (
@@ -318,13 +331,40 @@ def open_questions(
         f"AND i.archived_at IS NULL{asker_sql}{vis_sql}"
     )
     params = [*asker_params, *vis_params]
-    total = int(conn.execute(f"SELECT COUNT(*) AS n {base}", params).fetchone()["n"])
+    if with_answers:
+        # The question's moment is its yield, or the asker's latest native
+        # comment on the issue after it, whichever is newer: a follow-up
+        # ("still blocked") restates the question.
+        restated = (
+            "MAX(ye.id, COALESCE((SELECT MAX(qc.id) FROM activity qc "
+            "WHERE qc.target_kind = 'issue' AND qc.target_id = h.issue_id "
+            "AND qc.actor_id = ye.actor_id AND qc.verb = 'commented' "
+            "AND qc.imported_at IS NULL), 0))"
+        )
+        reply, answered_params = ready_queue.answered_sql(
+            issue_ref="h.issue_id",
+            after_ref=restated,
+            settler_ref="ye.actor_id",
+            humans_only=True,
+        )
+        answered = f"(h.reason = 'needs_input' AND {reply})"
+        counted = conn.execute(
+            f"SELECT COUNT(*) AS n, COALESCE(SUM({answered}), 0) AS answered {base}",
+            [*answered_params, *params],
+        ).fetchone()
+        total, answered_total = int(counted["n"]), int(counted["answered"])
+    else:
+        answered, answered_params = "NULL", []
+        total = int(
+            conn.execute(f"SELECT COUNT(*) AS n {base}", params).fetchone()["n"]
+        )
     rows = conn.execute(
         "SELECT h.handoff_token, h.reason, h.blocking_question, h.issue_id, "
         "ye.actor_id AS asked_by_id, u.name AS asked_by_name, ye.run_id, "
-        "ye.created_at AS asked_at, i.title, i.project_seq, p.key AS project_key "
+        "ye.created_at AS asked_at, i.title, i.project_seq, p.key AS project_key, "
+        f"{answered} AS answered "
         f"{base} ORDER BY ye.created_at, ye.id LIMIT ?",
-        [*params, limit],
+        [*answered_params, *params, limit],
     ).fetchall()
     items = []
     for row in rows:
@@ -354,7 +394,9 @@ def open_questions(
                 "handoff_token": row["handoff_token"],
             }
         )
-    return {
+        if with_answers:
+            items[-1]["answered"] = bool(row["answered"])
+    lane: dict = {
         "items": items,
         "total": total,
         "limit": limit,
@@ -365,6 +407,9 @@ def open_questions(
             "time."
         ),
     }
+    if with_answers:
+        lane["answered_total"] = answered_total
+    return lane
 
 
 def waiting_on_operator(

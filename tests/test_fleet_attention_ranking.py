@@ -66,6 +66,20 @@ def _claimed_issue(client, agent, *, title, reporting=True):
     return issue
 
 
+def _heartbeat_overdue(db_file):
+    """Every claim was taken long ago: past the stale threshold, so a claim that
+    never checked in has missed its check-in (U7). The app has no injectable
+    clock, and a test never sleeps."""
+    conn = db.connect(db_file)
+    conn.execute(
+        "UPDATE activity SET created_at = datetime('now', '-1 hour') "
+        "WHERE verb = 'claimed' AND target_kind = 'issue'"
+    )
+    conn.execute("UPDATE issue_leases SET claimed_at = datetime('now', '-1 hour')")
+    conn.commit()
+    conn.close()
+
+
 def _expire_lease(db_file, issue_id):
     conn = db.connect(db_file)
     conn.execute(
@@ -175,6 +189,7 @@ def test_signal_filter_returns_only_requested_signals(tmp_path):
         _bootstrap(c)
         agent = _agent(c)
         _claimed_issue(c, agent, title="urgent", reporting=False)
+        _heartbeat_overdue(db_file)
 
         only_claims = c.get(
             "/attention/ranking?signals=claim_needs_attention",
@@ -420,11 +435,12 @@ def test_budget_exhaustion_and_security_refusal_are_excluded_when_imported(tmp_p
 
 
 def test_agent_command_authorization_degrades_to_operator_link(tmp_path):
-    app, _ = _app(tmp_path)
+    app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
         agent = _agent(c)
         _claimed_issue(c, agent, title="urgent", reporting=False)
+        _heartbeat_overdue(db_file)
 
         # Admin (actor 1) is NOT the assignee, so an agent-command degrades to a
         # link — the slice never executes a command, and it only labels one when

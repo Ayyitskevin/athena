@@ -74,6 +74,7 @@ def build_attention(
     actor: dict | None = None,
     ranking_signals: set[str] | None = None,
     ranking_limit: int = 20,
+    counts: dict | None = None,
 ) -> dict:
     """Count what needs a human, and say where each number lives.
 
@@ -81,6 +82,65 @@ def build_attention(
     admin-scoped read (active work, automation rules, webhook health, the approval
     queue, the worker registry, refusal events), and aggregating them does not
     widen any of them.
+
+    The counts and their ``total`` are :func:`needs_you`'s (U6). ``counts`` is a
+    ``needs_you`` result this request already computed for the same actor and
+    window (the nav badge's), reused so the card and the badge in one response
+    are the same read, made once.
+    """
+    current = _normalized_now(now)
+    projection = (
+        dict(counts)
+        if counts is not None
+        else needs_you(conn, window_hours=window_hours, now=current, actor=actor)
+    )
+    # The ranked queue is an extension of this projection, not a second source
+    # of truth. Callers that have an actor get both the count card and its
+    # actor-filtered "what next" rows from one request clock.
+    if actor is not None:
+        # Alive is not progress: expired leases, in-progress work with no recorded
+        # work, and the oldest request waiting on the operator. Kept out of the
+        # signal total on purpose — each lane carries its own count and meaning.
+        projection["progress"] = work_progress.build_progress(
+            conn, actor=actor, now=current
+        )
+        waiting = projection["progress"].get("oldest_waiting_on_operator")
+        if waiting is not None:
+            projection["progress"]["oldest_waiting_on_operator"] = _worded_waiting(
+                conn, waiting
+            )
+        ranking = build_attention_ranking(
+            conn,
+            signals=ranking_signals,
+            actor=actor,
+            window_hours=window_hours,
+            now=current,
+            limit=ranking_limit,
+        )
+        projection["now"] = public_attention_ranking(conn, ranking, actor=actor)
+        projection["now"]["rows"] = cockpit_rows(conn, projection["now"]["items"])
+    return projection
+
+
+def needs_you(
+    conn: sqlite3.Connection,
+    *,
+    window_hours: int = DEFAULT_WINDOW_HOURS,
+    now: datetime | None = None,
+    actor: dict | None = None,
+) -> dict:
+    """The one "needs you" number, with the signals it sums.
+
+    ``total`` is everything asking for a human (``docs/EXCEPTION_SURFACES.md``):
+    the sum of the signal counts below. It is the only number the Intervene badge
+    and the dashboard's fleet-attention card show as "needs you"; both read it
+    from here, for the same actor, and a page renders both from one call. The
+    card's live refresh carries the badge with it (an out-of-band swap), so a
+    refreshed card never sits beside a stale badge. The unread inbox is not in
+    it: an inbox row says something happened, not that a decision waits, and the
+    surfaces show it beside this number, never added to it.
+
+    Admin-only by the caller's contract, like :func:`build_attention`.
     """
     if isinstance(window_hours, bool) or not isinstance(window_hours, int):
         raise ValueError("window_hours must be an integer")
@@ -99,6 +159,12 @@ def build_attention(
         hook for hook in webhooks.list_webhooks(conn) if hook["failure_count"]
     ]
     pending_approvals = approvals.list_requests(conn, state="pending", limit=200)
+    # Questions an agent asked that no person has answered since: the ranked
+    # queue's only ``critical`` kind, so they are in the number (U7). Counted by
+    # the operator rule the ranked rows and the questions panel use.
+    questions = run_state.open_questions(
+        conn, actor=actor, now=current, limit=1, with_answers=True
+    )
     unanswered_kills = workers.count_unanswered(conn, now=current)
     # Live run controls: asked, not yet answered, clock still running. Standing
     # like the kill count — a week-old unanswered steer is still unanswered —
@@ -126,6 +192,16 @@ def build_attention(
     overlaps = fence_overlaps.find_overlaps(conn, actor=actor, now=current, limit=1)
 
     signals = [
+        {
+            "key": "open_questions",
+            "label": "Questions waiting on you",
+            "count": questions["total"] - questions["answered_total"],
+            "href": "/admin/agents#questions",
+            "scope": (
+                "standing; blocking questions from yielded claims nobody has "
+                "resumed, less those a person has answered since"
+            ),
+        },
         {
             "key": "claims_needing_attention",
             "label": "Claims needing attention",
@@ -214,7 +290,7 @@ def build_attention(
             "scope": f"in the last {window_hours}h",
         },
     ]
-    projection = {
+    return {
         "schema": SCHEMA,
         "window_hours": window_hours,
         "since": since,
@@ -224,26 +300,6 @@ def build_attention(
         # down without a second query.
         "refusals_by_verb": refusals,
     }
-    # The ranked queue is an extension of this projection, not a second source
-    # of truth. Callers that have an actor get both the count card and its
-    # actor-filtered "what next" rows from one request clock.
-    if actor is not None:
-        # Alive is not progress: expired leases, in-progress work with no recorded
-        # work, and the oldest request waiting on the operator. Kept out of the
-        # signal total on purpose — each lane carries its own count and meaning.
-        projection["progress"] = work_progress.build_progress(
-            conn, actor=actor, now=current
-        )
-        ranking = build_attention_ranking(
-            conn,
-            signals=ranking_signals,
-            actor=actor,
-            window_hours=window_hours,
-            now=current,
-            limit=ranking_limit,
-        )
-        projection["now"] = public_attention_ranking(conn, ranking, actor=actor)
-    return projection
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +347,13 @@ RANKING_SIGNALS: tuple[AttentionSignal, ...] = (
     "budget_exhaustion",
     "security_refusal",
 )
+
+#: The claim reasons that only say a heartbeat is overdue. A claim with no
+#: other reason is ranked ``medium``: below a pending decision (U7).
+HEARTBEAT_REASONS = frozenset({"checkin_missing", "checkin_stale", "run_untagged"})
+
+#: How an answered question's reason opens: it waits on the agent now (U7).
+ANSWERED_WAITING = "answered, waiting on the agent"
 
 # Closed severity vocabulary. Lower numeric rank = more urgent.
 SEVERITIES: tuple[Severity, ...] = ("critical", "high", "medium", "low")
@@ -371,8 +434,16 @@ def _collect_awaiting_input(
     """Runs that stopped and asked a human: open blocking questions on issues
     this actor can see. Ranked ``critical`` — above stale claims (``high``) and
     the quiet event signals (``medium``) — because a run that asked is waiting on
-    a person, not on the clock. Pending approvals keep their own signal."""
-    lane = run_state.open_questions(conn, actor=actor, now=now, limit=200)
+    a person, not on the clock. Pending approvals keep their own signal.
+
+    A question someone other than the asker has answered since it was asked (the
+    ready lane's rule, ``ready_queue.answered_sql``) stays in the queue under the
+    same signal, since only the agent's resume closes it, but it no longer waits
+    on a human: it ranks ``low``, its reason opens "answered, waiting on the
+    agent" and it offers no next action (U7)."""
+    lane = run_state.open_questions(
+        conn, actor=actor, now=now, limit=200, with_answers=True
+    )
     operator = _has_admin_visibility(actor)
     items: list[AttentionRankItem] = []
     examined = len(lane["items"])
@@ -380,21 +451,23 @@ def _collect_awaiting_input(
         issue = question["issue"]
         text = question["blocking_question"]
         short = text if len(text) <= 160 else text[:157] + "..."
+        asked = f"{question['asked_by']['name']} asks: {short}"
+        answered = question["answered"]
         items.append(
             AttentionRankItem(
                 signal="awaiting_input",
-                severity="critical",
+                severity="low" if answered else "critical",
                 source_kind="issue",
                 source_id=issue["id"],
                 owner_id=question["asked_by"]["id"],
-                reason=f"{question['asked_by']['name']} asks: {short}",
+                reason=f"{ANSWERED_WAITING}: {asked}" if answered else asked,
                 freshness=question["asked_at"],
                 examined=examined,
                 total=lane["total"],
-                next_action="operator-link",
-                link="/admin/agents#questions"
-                if operator
-                else f"/aegis/issues/{issue['id']}",
+                next_action="none" if answered else "operator-link",
+                link=f"/aegis/issues/{issue['id']}"
+                if answered or not operator
+                else "/admin/agents#questions",
                 source_link=f"/aegis/issues/{issue['id']}",
             )
         )
@@ -480,7 +553,11 @@ def _collect_claims_needing_attention(
         items.append(
             AttentionRankItem(
                 signal="claim_needs_attention",
-                severity="high",
+                # A claim whose only trouble is a missed heartbeat is not a
+                # decision: it ranks under every pending approval and question.
+                # Any other reason (a lapsed lease, a paused holder, ...) keeps
+                # it ``high`` (U7).
+                severity="medium" if set(reasons) <= HEARTBEAT_REASONS else "high",
                 source_kind="issue",
                 source_id=issue["id"],
                 owner_id=holder_id,
@@ -834,6 +911,161 @@ def public_attention_ranking(
             to_public_rank_item(conn, item, actor=actor) for item in ranking["items"]
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# How the cockpit words a ranked row
+# ---------------------------------------------------------------------------
+#
+# The API's rows keep their codes (``signal``, the claim's reason codes), which
+# conductors read. The operator reads words: what kind of thing it is, the issue
+# by its key and title, and what is wrong in a sentence (U7). This is wording
+# only; it ranks, filters and decides nothing.
+
+SIGNAL_WORDS: dict[str, str] = {
+    "awaiting_input": "Question",
+    "fence_overlap": "Overlapping fences",
+    "pending_approval": "Approval",
+    "claim_needs_attention": "Claim",
+    "open_blocker": "Blocked",
+    "open_run_control": "Run control",
+    "failing_automation_rule": "Automation rule failing",
+    "failing_webhook": "Webhook failing",
+    "budget_exhaustion": "Budget ceiling hit",
+    "security_refusal": "Boundary refusal",
+}
+
+#: Every reason ``fleet_work._item`` can give, in words.
+CLAIM_REASON_WORDS: dict[str, str] = {
+    "issue_archived": "the issue was archived while claimed",
+    "issue_done": "the issue is done but still claimed",
+    "holder_paused": "the holder is paused",
+    "holder_read_only": "the holder is read-only",
+    "holder_ineligible": "the holder may not work this issue",
+    "no_live_issue_write_token": "the holder has no live token that can write issues",
+    "lease_expired": "the lease expired",
+    "run_untagged": "never tagged with a run, so it cannot check in",
+    "checkin_missing": "missed its check-in: nothing heard since the claim",
+    "checkin_stale": "missed its check-in: the last one is overdue",
+    "visible_open_blockers": "blocked by an open issue",
+    "open_claim_handoff": "a handoff is open",
+}
+
+
+def _words(code: str) -> str:
+    return code.replace("_", " ").replace(".", " ")
+
+
+def _action_words(action_kind: str) -> str:
+    """``issue.close`` reads "close the issue"."""
+    noun, _, verb = str(action_kind).partition(".")
+    return f"{_words(verb)} the {_words(noun)}" if verb else _words(noun)
+
+
+def _worded_waiting(conn: sqlite3.Connection, waiting: dict) -> dict:
+    """The progress lane's oldest pending approval, with what it would act on
+    (the issue's key, title and link) and a sentence, for the cockpit (U7)."""
+    subject = None
+    if waiting.get("target_kind") == "issue":
+        subject = _issue_subjects(conn, {int(waiting["target_id"])}).get(
+            int(waiting["target_id"])
+        )
+    owner = resolve_owner_name(conn, waiting.get("requested_by")) or "An agent"
+    return {
+        **waiting,
+        "subject": subject,
+        "headline": f"{owner} asks to {_action_words(waiting['action_kind'])}",
+    }
+
+
+def _issue_subjects(conn: sqlite3.Connection, issue_ids: set[int]) -> dict[int, dict]:
+    if not issue_ids:
+        return {}
+    ordered = sorted(issue_ids)
+    placeholders = ",".join("?" for _ in ordered)
+    rows = conn.execute(
+        "SELECT i.id, i.title, i.project_seq, p.key AS project_key FROM issues i "
+        f"LEFT JOIN projects p ON p.id = i.project_id WHERE i.id IN ({placeholders})",
+        ordered,
+    ).fetchall()
+    subjects = {}
+    for row in rows:
+        key = None
+        if row["project_key"] is not None and row["project_seq"] is not None:
+            key = f"{row['project_key']}-{row['project_seq']}"
+        subjects[int(row["id"])] = {
+            "key": key,
+            "title": row["title"],
+            "href": f"/aegis/issues/{row['id']}",
+        }
+    return subjects
+
+
+def cockpit_rows(conn: sqlite3.Connection, items: list[dict]) -> list[dict]:
+    """One worded row per public ranked item, in the same order: ``kind`` (the
+    signal in words), ``subject`` (the issue's key, title and link, when the row
+    is about an issue) and ``headline`` (what is wrong, in words).
+
+    Called only with items the actor's ranking already returned, so it reads the
+    key and title of issues the actor was already shown, and nothing more."""
+    approval_ids = [
+        int(item["source_id"])
+        for item in items
+        if item["source_kind"] == "approval_request"
+    ]
+    approvals_by_id: dict[int, sqlite3.Row] = {}
+    if approval_ids:
+        placeholders = ",".join("?" for _ in approval_ids)
+        approvals_by_id = {
+            int(row["id"]): row
+            for row in conn.execute(
+                "SELECT id, action_kind, target_kind, target_id "
+                f"FROM approval_requests WHERE id IN ({placeholders})",
+                approval_ids,
+            )
+        }
+    issue_ids = {
+        int(item["source_id"]) for item in items if item["source_kind"] == "issue"
+    }
+    issue_ids |= {
+        int(row["target_id"])
+        for row in approvals_by_id.values()
+        if row["target_kind"] == "issue"
+    }
+    subjects = _issue_subjects(conn, issue_ids)
+
+    rows = []
+    for item in items:
+        signal = item["signal"]
+        owner = item.get("owner_name") or "someone"
+        subject = None
+        headline = item["reason"]
+        if item["source_kind"] == "issue":
+            subject = subjects.get(int(item["source_id"]))
+        if signal == "claim_needs_attention":
+            reasons = [r for r in item["reason"].split("; ") if r]
+            headline = f"Held by {owner}: " + "; ".join(
+                CLAIM_REASON_WORDS.get(code, _words(code)) for code in reasons
+            )
+        elif signal == "pending_approval":
+            approval = approvals_by_id.get(int(item["source_id"]))
+            if approval is not None:
+                headline = f"{owner} asks to {_action_words(approval['action_kind'])}"
+                if approval["target_kind"] == "issue":
+                    subject = subjects.get(int(approval["target_id"]))
+        elif signal == "budget_exhaustion":
+            headline = f"{owner} hit an action budget ceiling"
+        elif signal == "security_refusal":
+            verb, _, detail = item["reason"].partition(": ")
+            headline = f"{_words(verb)}: {detail}" if detail else _words(verb)
+        rows.append(
+            {
+                "kind": SIGNAL_WORDS.get(signal, _words(signal)),
+                "subject": subject,
+                "headline": headline,
+            }
+        )
+    return rows
 
 
 def build_attention_ranking(

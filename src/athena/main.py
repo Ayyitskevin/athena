@@ -30,7 +30,6 @@ from athena import __version__ as athena_version
 from athena import config
 from athena.aegis import api as aegis_api
 from athena.aegis import automation as aegis_automation
-from athena.aegis import fleet_attention as aegis_fleet_attention
 from athena.aegis import fleet_attention_api as aegis_fleet_attention_api
 from athena.aegis import notification_priority_api as aegis_notification_priority_api
 from athena.aegis import notification_state_api as aegis_notification_state_api
@@ -42,6 +41,7 @@ from athena.workflows import workspace_search_api as workflows_workspace_search_
 from athena.aegis import dispatch_api as aegis_dispatch_api
 from athena.aegis import forge_api as aegis_forge_api
 from athena.web import chips, render
+from athena.web.nav import NavCounts
 from athena.aegis import embeds_api as aegis_embeds_api
 from athena.aegis import filters_api as aegis_filters_api
 from athena.aegis import fleet_metrics_api as aegis_fleet_metrics_api
@@ -67,7 +67,6 @@ from athena.core import (
     security_events,
     events_api,
     feed_observers,
-    notifications,
     notifications_api,
     provenance,
     rate_limits,
@@ -697,9 +696,7 @@ def create_app(
         if _path_matches_root(request.url.path, "/static"):
             request.state.user = None
             request.state.csrf_token = None
-            request.state.unread_count = 0
-            request.state.attention_total = 0
-            request.state.attention_signals = []
+            request.state.nav = NavCounts(None, None)
             request.state.oidc_enabled = False
             return await call_next(request)
         # Resolve the browser session once per request onto request.state.user,
@@ -709,13 +706,9 @@ def create_app(
         # check it. No cookie → no DB hit; both stay None.
         request.state.user = None
         request.state.csrf_token = None
-        # Unread-inbox count for the nav badge; 0 when logged out.
-        request.state.unread_count = 0
-        # Fleet-attention rollup for the Intervene badge. Admin-only below —
-        # every input is an admin-scoped read, so for everyone else these
-        # stay zero/empty and the template renders nothing.
-        request.state.attention_total = 0
-        request.state.attention_signals = []
+        # The Intervene nav's counts (unread inbox; the admin-only "needs you"
+        # rollup). Nothing when logged out; see below for a session.
+        request.state.nav = NavCounts(None, None)
         # Whether SSO is configured, so the nav can show the linked-identities link
         # only when it's relevant. Evaluated per request so tests/config see it live.
         request.state.oidc_enabled = config.oidc_enabled()
@@ -742,37 +735,24 @@ def create_app(
                     request.state.user = None
                 if request.state.user is not None:
                     request.state.csrf_token = sessions.csrf_token_for(conn, raw)
-                    # Gate the badge by visibility too, so it matches the inbox: an
-                    # unread notification on a target the user can no longer see
-                    # doesn't inflate the count.
-                    request.state.unread_count = notifications.unread_count(
-                        conn, request.state.user["id"], actor=request.state.user
-                    )
                     # The number that decides whether you need to look must not
-                    # live only on the dashboard. The same build the dashboard
-                    # card runs, so nav and card cannot disagree. Admins only:
-                    # the rollup aggregates admin-scoped reads.
+                    # live only on the dashboard: the Intervene badge shows the
+                    # "needs you" rollup (admins only: it aggregates admin-scoped
+                    # reads) and the unread inbox beside it.
                     #
-                    # Cost, re-measured on a seeded 10k-issue / 100k-event database
-                    # (scripts/seed_benchmark.py, no ANALYZE): 0.11 ms with no
-                    # supervision state, 0.50 ms at 5 agents, 1.21 ms at 25, 3.81 ms
-                    # at 100. It scales with FLEET SIZE, not with trail size — the
-                    # 0075 verb-window index removed the activity scans that used to
-                    # make it grow with the log (12.9 ms at 100k events before that
-                    # index; the "~0.1 ms" this comment used to claim predated the
-                    # measurement). What remains is per-agent work: the active-work
-                    # projection, the worker registry, the approval queue.
+                    # Both are read lazily, on first use and once per request
+                    # (web/nav.py). Only a page that renders the nav, or the
+                    # attention card's live refresh, ever asks, so a JSON route, a
+                    # health check or a 404 carrying an admin cookie pays nothing,
+                    # and the dashboard reuses the badge's read for its card (U6).
                     #
-                    # There is deliberately NO cache here. A cache would trade
-                    # staleness in an attention badge — the signal whose whole job is
-                    # to be current — for about half a millisecond at the fleet sizes
-                    # this product is for. If a much larger fleet ever makes this
-                    # hurt, the honest fix is a short TTL measured against a
-                    # re-measurement, not a cache added on the strength of this note.
-                    if request.state.user.get("role") == "admin":
-                        attention = aegis_fleet_attention.build_attention(conn)
-                        request.state.attention_total = attention["total"]
-                        request.state.attention_signals = attention["signals"]
+                    # There is deliberately NO cache across requests. A cache would
+                    # trade staleness in an attention badge — the signal whose whole
+                    # job is to be current — for read time that scales with fleet
+                    # size, not trail size (the 0075 verb-window index removed the
+                    # activity scans). If a large fleet makes the rollup itself
+                    # hurt, the fix is in the rollup, measured, not a cache.
+                    request.state.nav = NavCounts(conn, request.state.user)
             finally:
                 # Not closed here: the route, the idempotency publish and any
                 # exception handler still need it. The middleware that opened it
@@ -844,6 +824,10 @@ def create_app(
     # passes no hosts renders inert text, so a surface that has not opted in
     # degrades to today's behavior rather than breaking.
     templates.env.filters["forge_detail"] = render.render_forge_detail
+    # A completion report is agent-written data (U9): these split a claim_completed
+    # row into its header and the parsed report the shared partial renders.
+    templates.env.filters["completion_parts"] = render.completion_parts
+    templates.env.filters["completion_header"] = render.completion_header
     # Chip tone mapping (design system: docs/DESIGN_SYSTEM.md). Presentation-only,
     # no database access — see chips.py for which domains are exact vs. best-effort.
     templates.env.filters["status_tone"] = chips.status_tone

@@ -35,6 +35,7 @@ from athena.core import (
     labels,
     links,
     notifications,
+    undo,
     users,
 )
 from athena.web.render import render_comment, render_issue_body
@@ -90,6 +91,16 @@ def issue_visible_or_404(conn, issue_id, user):
     return issue, None
 
 
+#: The most of a ``notice``/``error`` query value the issue page shows. The
+#: messages its own forms return are a sentence or two; a crafted link gets no
+#: more than this, escaped, in a banner that wraps.
+REFLECTED_MESSAGE_MAX_CHARS = 300
+
+
+def _reflected(request: Request, name: str) -> str:
+    return (request.query_params.get(name) or "").strip()[:REFLECTED_MESSAGE_MAX_CHARS]
+
+
 def render_issue_detail(
     request: Request,
     conn: sqlite3.Connection,
@@ -124,6 +135,12 @@ def render_issue_detail(
         for sprint in sprints.list_sprints(conn)
         if sprint["project_id"] in visible_project_names
     ]
+    # This issue's own audit trail (newest first) — the same data-layer read
+    # the REST feed serves, scoped to this target.
+    trail = activity.list_activity(
+        conn, target_kind="issue", target_id=issue_id, actor=user
+    )
+    offered = undo.offer(conn, user, trail) if can_write else None
 
     context = {
         "issue": issue,
@@ -191,15 +208,27 @@ def render_issue_detail(
         # Admins may moderate (delete) any comment, not just their own — drives the
         # per-comment Delete control the same way the server-side override gates it.
         "is_admin": user is not None and identity.is_admin(user),
-        # This issue's own audit trail (newest first) — the same data-layer read
-        # the REST feed serves, scoped to this target.
-        "activity": activity.list_activity(
-            conn, target_kind="issue", target_id=issue_id, actor=user
+        "activity": trail,
+        # Undo where the operator looks (U9): the History list offers it for the
+        # newest undoable event of THIS trail, when the undo engine would accept
+        # it from this viewer now (undo.offer: shape, not yet reversed, and the
+        # inverse command's own write gate and still-in-force checks), and for
+        # no older event when it would not. The form is the
+        # activity page's own post, which comes back here; the engine still
+        # decides on the click.
+        "undoable_ids": {offered["id"]} if offered is not None else set(),
+        "reversed_ids": activity.reversed_event_ids(
+            conn, [event["id"] for event in trail]
         ),
+        "undo_return_to": f"/aegis/issues/{issue_id}",
         # Hosts Athena was told to expect events from. The trail links a forge
         # URL only when its host is one of these — otherwise anyone holding a
         # source secret could plant an arbitrary outbound link on an issue.
         "forge_hosts": event_sources.registered_hosts(conn),
+        # The outcome of a form that returned here (a lease release, an undo):
+        # plain text from the URL, capped and rendered through autoescape.
+        "notice": _reflected(request, "notice"),
+        "error": _reflected(request, "error"),
     }
     if extra:
         context.update(extra)

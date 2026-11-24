@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from athena import config
 from athena.aegis import (
+    approval_rows,
     automation,
     delegations,
     fleet_work,
@@ -138,6 +139,11 @@ def _build_agents_context(
                 "requested_by_name": requester["name"] if requester else "unknown",
             }
         )
+    # What each row asks about (U9): the issue's key and title and, for a close,
+    # the verdict the requester reported — read as far as this viewer may read.
+    described = approval_rows.describe(conn, viewer=viewer, requests=pending)
+    for row in pending:
+        row.update(described[row["id"]])
     # Workers told to stop that have not answered are the operator's live question,
     # so they are surfaced above the per-agent detail rather than buried in it.
     unanswered_kills, stop_total = workers.unanswered_page(conn, limit=200, now=now)
@@ -155,7 +161,10 @@ def _build_agents_context(
         "pending_approvals": pending,
         # Beside the approvals: blocking questions from yielded claims nobody has
         # resumed. The page is admin-only; the reader still applies visibility.
-        "open_questions": run_state.open_questions(conn, actor=viewer),
+        # Each marked answered or not by the ready lane's rule (U7).
+        "open_questions": run_state.open_questions(
+            conn, actor=viewer, with_answers=True
+        ),
         "notice": None,
         "error": None,
         **extra,

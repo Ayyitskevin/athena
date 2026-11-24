@@ -24,18 +24,19 @@ search snippets are short, untrusted, and want literal text, not formatting.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 import re
 import secrets
 import sqlite3
 from html import unescape
+from typing import Any
 from urllib.parse import urlparse
 
 from markdown_it import MarkdownIt
 from markupsafe import Markup, escape
 import nh3
 
-from athena.aegis import embed_data
+from athena.aegis import embed_data, issue_activity, lease_commands
 from athena.core import embeds, links, notifications, users
 
 # One configured Markdown renderer for every body. `html=False` is the security
@@ -279,6 +280,31 @@ def render_forge_detail(text: str | None, hosts: Collection[str]) -> Markup:
         )
 
     return Markup(_URL_RE.sub(_link, escaped).replace("\n", "<br>"))
+
+
+def completion_header(detail: str | None) -> str:
+    """The part of a ``claim_completed`` detail before its report payload
+    (``generation …``), as plain text. Templates show this beside the report the
+    shared partial renders, never the payload itself."""
+    return (detail or "").partition(issue_activity.COMPLETION_REPORT_MARKER)[0]
+
+
+def completion_parts(event: Mapping[str, Any]) -> dict[str, Any]:
+    """Split one ``claim_completed`` row for the report partial (U9).
+
+    ``report`` is what ``lease_commands.reported_completion`` reads — native,
+    bounded and well formed — or None, in which case ``header`` is the whole
+    detail, shown as wrapped text so nothing is dropped. The inbox row names the
+    event's import stamp ``event_imported_at``; an imported row never becomes a
+    native report. Returns plain values: autoescape does the rest."""
+    detail = event.get("detail") or ""
+    imported = event.get("imported_at", event.get("event_imported_at"))
+    report = lease_commands.reported_completion(
+        {"verb": event.get("verb"), "detail": detail, "imported_at": imported}
+    )
+    if report is None:
+        return {"header": detail, "report": None}
+    return {"header": completion_header(detail), "report": report}
 
 
 def render_comment(conn: sqlite3.Connection, text: str | None) -> Markup:

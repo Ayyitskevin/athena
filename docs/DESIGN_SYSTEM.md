@@ -175,8 +175,10 @@ Everything the original migration deferred has since shipped:
 - **Category-based status chips** (see Chip tone mapping above).
 - **`/settings/theme` + `/settings/rail`** — cookie-backed preferences with
   their buttons in the shell; system/dark/light cycle, rail collapse.
-- **Fleet attention in the Intervene nav badge** — computed per-request for
-  admins in the session middleware; members get nothing, not zeros.
+- **Fleet attention in the Intervene nav badge** — read per request for
+  admins, lazily, only when a page renders the nav (`web/nav.py`); members get
+  nothing, not zeros. The badge is the "needs you" total alone; the card's live
+  refresh swaps it out of band so the two never differ (U6).
 - **Issue detail** adopted `.issue-layout` + `.supervision` + `.meta-rail`;
   **Mentor page detail** adopted `.doc-layout` + `.doc-admin` disclosures.
   Their §8 shell rules are gone — the shrink-one-surface-at-a-time path in

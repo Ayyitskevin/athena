@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "aegis/partials/completion_report.html" import show_report %}
 
 {% block title %}Inbox — Athena{% endblock %}
 
@@ -16,9 +17,12 @@
 {% if items %}
 <ul class="inbox-list">
     {% for it in items %}
+    {# A completion's report renders through the shared partial (U9), below the
+       link rather than inside it, never as its raw payload. #}
+    {% set completion = it | completion_parts if it.verb == "claim_completed" else none %}
     <li class="{% if not it.read_at %}unread{% endif %}">
         <a href="{{ it.href }}">
-            {{ it.actor_name }} {{ it.verb }} {{ it.target_kind }} #{{ it.target_id }}{% if it.detail %} — {{ it.detail }}{% endif %}
+            {{ it.actor_name }} {{ it.verb }} {{ it.target_kind }} #{{ it.target_id }}{% if completion is not none %}{% if completion.header %} — {{ completion.header }}{% endif %}{% elif it.detail %} — {{ it.detail }}{% endif %}
         </a>
         {% if it.target_state %}
         <span class="chip" data-tone="neutral">{{ {"archived": "target archived", "completed_by_you": "you completed this", "closed": "target closed"}[it.target_state] }}</span>
@@ -30,6 +34,7 @@
             <button type="submit" class="button small">Mark read</button>
         </form>
         {% endif %}
+        {% if completion is not none %}{{ show_report(completion.report) }}{% endif %}
     </li>
     {% endfor %}
 </ul>

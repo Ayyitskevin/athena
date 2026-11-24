@@ -236,6 +236,21 @@ def events(db_file: Path, *verbs: str) -> list[dict[str, Any]]:
     return [row for row in rows if not verbs or row["verb"] in verbs]
 
 
+def lease_facts(lease: Mapping[str, Any]) -> dict[str, Any]:
+    """A lease answer without its countdown or the claim answer's issue ETag.
+
+    `expires_in_seconds` falls every second (A13), so two reads of one
+    unchanged lease differ in it whenever they straddle a second; `issue_etag`
+    is beside the lease on a claim answer only (A12). What a test means by
+    "the same lease" is everything else: compare two lease answers through
+    this, never with `==` directly."""
+    return {
+        key: value
+        for key, value in lease.items()
+        if key not in ("expires_in_seconds", "issue_etag")
+    }
+
+
 def lapse_lease(db_file: Path, issue_id: int) -> None:
     """The clock passes the issue's lease expiry: its stored ``expires_at`` moves
     into the past, as ``tests/test_desk.py`` lapses a lease. The app has no

@@ -21,7 +21,6 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-import athena.main as main_module
 from athena.aegis import fleet_attention
 from athena.main import STATIC_CACHE_CONTROL, create_app, static_version
 
@@ -72,15 +71,13 @@ def test_fetching_a_static_asset_costs_no_session_work(tmp_path):
     app, client = _signed_in(tmp_path, "rollup.db")
     try:
         calls: list[int] = []
-        real = fleet_attention.build_attention
+        real = fleet_attention.needs_you
 
         def counting(*args, **kwargs):
             calls.append(1)
             return real(*args, **kwargs)
 
-        with patch.object(
-            main_module.aegis_fleet_attention, "build_attention", counting
-        ):
+        with patch.object(fleet_attention, "needs_you", counting):
             client.get("/static/styles.css")
             client.get("/static/htmx.min.js")
             assert calls == [], "a static fetch still builds the nav rollup"

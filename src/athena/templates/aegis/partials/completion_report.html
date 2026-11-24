@@ -1,9 +1,21 @@
+{# The one renderer of a completion report (U9): the issue page, the activity
+   feed and its runs and lineage views, the dashboard, the agents page, the
+   inbox, the work-context packet and the issue history all call show_report.
+   A report is text an agent wrote: it is DATA. Every value goes through
+   autoescape; nothing here is ever marked safe. Long values wrap (.report),
+   and a key this partial was not taught is shown under "Other reported
+   fields" rather than dropped: one level, its value as escaped text, never
+   walked (the write path refuses unknown keys and nesting today). #}
+{% macro reported_fields(fields) -%}
+<dl class="report-fields">{% for key, value in fields %}<dt>{{ key }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>
+{%- endmacro %}
 {% macro show_report(report, checks=none, coverage=none) %}
 {% if report is not none %}
+{% set known_report_keys = ["verdict", "findings", "results", "unfinished", "uncertainty", "evidence", "usage"] %}
 {% set results = report.get("results", []) %}
 {% set unfinished = report.get("unfinished", [])|length %}
 {% set uncertainty = report.get("uncertainty", [])|length %}
-<details{% if results|rejectattr("state", "equalto", "met")|list or unfinished or uncertainty %} open{% endif %}>
+<details class="report"{% if results|rejectattr("state", "equalto", "met")|list or unfinished or uncertainty %} open{% endif %}>
     <summary>Reported completion (advisory){% if "verdict" in report %} · reported verdict {{ report.verdict }}{% endif %}{% if "findings" in report %}{% set stated = [] %}{% for severity in ["P1", "P2", "P3"] %}{% if severity in report.findings %}{% set _ = stated.append(severity ~ " " ~ report.findings[severity]) %}{% endif %}{% endfor %} · reported findings {{ stated|join(", ") }}{% endif %}{% for state in ["met", "not_met", "not_assessed", "inconclusive"] %}{% set count = results|selectattr("state", "equalto", state)|list|length %}{% if count %} · {{ count }} reported {{ state }}{% endif %}{% endfor %}{% if unfinished %} · {{ unfinished }} reported unfinished{% endif %}{% if uncertainty %} · {{ uncertainty }} reported uncertainty{% endif %}{% if coverage %} · {{ coverage.summary }}{% endif %}</summary>
     {% if coverage %}<p class="muted"><strong>{{ coverage.summary }}</strong> — matched by exact subject against the project's definition of done; not enforced.{% for row in coverage['items'] %}{% if not row.reported %} Not reported: {{ row.item }}.{% endif %}{% endfor %}</p>{% endif %}
     <p class="muted">Reported by the actor. Athena has not verified these claims; they do not change issue status or grant approval.</p>
@@ -22,6 +34,15 @@
     {% if "evidence" in report %}
     <h4>Reported evidence references (not fetched)</h4>
     <ul>{% for ref in report.evidence %}<li>{{ ref.kind }} · {{ ref.source }} · <code>{{ ref.ref }}</code> · reported scope {{ ref.scope }}{% if ref.digest %} · reported SHA-256 <code>{{ ref.digest }}</code>{% endif %}{% if ref.bytes is defined %} · reported {{ ref.bytes }} bytes{% endif %}{% if ref.locator %} · reported locator {{ ref.locator }}{% endif %}{% if checks %} · {{ checks[loop.index0] }}{% endif %}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if "usage" in report %}
+    <h4>Reported usage (not metered)</h4>
+    {% if report.usage is mapping %}{{ reported_fields(report.usage.items()) }}{% else %}<p>{{ report.usage }}</p>{% endif %}
+    {% endif %}
+    {% set other = report.items()|rejectattr("0", "in", known_report_keys)|list %}
+    {% if other %}
+    <h4>Other reported fields</h4>
+    {{ reported_fields(other) }}
     {% endif %}
 </details>
 {% endif %}
