@@ -210,6 +210,11 @@ def offer(
     refuses, or the verb has none, nothing is offered: the offer never moves
     down to an older event, so one Undo always means the last change that can
     be reversed. An older event is still undone from the activity page.
+
+    One refusal is not about now: ``undo_not_reversible`` says the event never
+    had an inverse (an edit recorded before prior texts were kept, F10). Such
+    an event is no candidate, as a one-way verb is none, and the next one is
+    asked; otherwise one old edit would end the offer on its issue for good.
     Read-only; :func:`undo` still decides under its own transaction, so a race
     between render and click is refused there, not here."""
     if actor is None:
@@ -218,17 +223,20 @@ def offer(
     if not shaped:
         return None
     already = activity.reversed_event_ids(conn, [event["id"] for event in shaped])
-    candidate = next((event for event in shaped if event["id"] not in already), None)
-    if candidate is None:
-        return None
-    precheck = reversal_for(candidate["verb"]).precheck
-    if precheck is None:
-        return None
-    try:
-        precheck(conn, actor, candidate)
-    except UndoRefused:
-        return None
-    return candidate
+    for candidate in shaped:
+        if candidate["id"] in already:
+            continue
+        precheck = reversal_for(candidate["verb"]).precheck
+        if precheck is None:
+            return None
+        try:
+            precheck(conn, actor, candidate)
+        except UndoRefused as refused:
+            if refused.code == NOT_REVERSIBLE_CODE:
+                continue
+            return None
+        return candidate
+    return None
 
 
 def undo(conn: sqlite3.Connection, actor: dict | None, *, event_id: int) -> dict:

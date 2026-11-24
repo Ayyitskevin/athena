@@ -265,3 +265,60 @@ def test_an_undo_that_needs_approval_is_not_offered_and_a_click_asks(tmp_path):
     assert after_approval == [reopen_event]
     assert undone.status_code == 303 and "Undid+event" in undone.headers["location"]
     assert status == "done"
+
+
+def test_an_edit_is_offered_and_the_click_restores_the_text(tmp_path):
+    """An edit keeps the text it replaced (F10), so it is the page's newest
+    undoable event like any other, and the click puts the old body back."""
+    app, db_file = make_app(tmp_path)
+    with TestClient(app) as client:
+        bootstrap(client)
+        issue = _issue(client, body="the contract")
+        _status(client, issue["id"], "in_progress")
+        edited = client.patch(
+            f"/issues/{issue['id']}", json={"body": "overwritten"}, headers=ADMIN
+        )
+        assert edited.status_code == 200, edited.text
+        edit_event = events(db_file, "issue_edited")[0]["id"]
+        login(client, "a@e.com")
+        offered = _offered(client, issue["id"])
+        undone = client.post(
+            f"/aegis/activity/{edit_event}/undo",
+            data={"return_to": f"/aegis/issues/{issue['id']}"},
+            follow_redirects=False,
+        )
+        body = client.get(f"/issues/{issue['id']}", headers=ADMIN).json()["body"]
+
+    assert offered == [edit_event]
+    assert undone.status_code == 303, undone.text
+    assert body == "the contract"
+
+
+def test_an_edit_that_never_had_an_inverse_does_not_end_the_offer(tmp_path):
+    """An edit recorded before prior texts were kept can never be undone. It is
+    no candidate, as a one-way event is none, so the page offers the status
+    change beneath it; were it one, that old edit would end the offer on its
+    issue for good."""
+    app, db_file = make_app(tmp_path)
+    with TestClient(app) as client:
+        bootstrap(client)
+        issue = _issue(client, body="the contract")
+        _status(client, issue["id"], "in_progress")
+        client.patch(f"/issues/{issue['id']}", json={"body": "later"}, headers=ADMIN)
+        status_event = events(db_file, "changed_status")[0]["id"]
+        edit_event = events(db_file, "issue_edited")[0]["id"]
+    conn = db.connect(db_file)
+    try:
+        conn.execute("DROP TRIGGER issue_prior_texts_immutable_delete")
+        conn.execute("DELETE FROM issue_prior_texts")
+        conn.commit()
+    finally:
+        conn.close()
+    with TestClient(app) as client:
+        login(client, "a@e.com")
+        offered = _offered(client, issue["id"])
+        refused = client.post(f"/activity/{edit_event}/undo", headers=ADMIN)
+
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["code"] == "undo_not_reversible"
+    assert offered == [status_event]

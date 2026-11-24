@@ -14,6 +14,7 @@ status, same assignee) writes nothing, on either surface.
 from __future__ import annotations
 
 from collections.abc import Collection
+import hashlib
 import json
 import sqlite3
 from typing import TypedDict
@@ -33,9 +34,18 @@ _INFER_PROJECT = object()
 COMPLETION_REPORT_MARKER = "; reported_completion_v1 "
 #: The events that write an issue's title and body: its creation and its edits
 #: (every title or body change goes through the edit command, which records
-#: ``issue_edited``; an edit has no undo). The newest names the current text's
-#: author.
+#: ``issue_edited`` and keeps the text it replaced in ``issue_prior_texts``; an
+#: undo of an edit is itself an ``issue_edited``). The newest names the current
+#: text's author.
 ISSUE_TEXT_VERBS = ("created", "issue_edited")
+#: The fields an ``issue_edited`` event can change, in the order answers list them.
+ISSUE_TEXT_FIELDS = ("title", "body")
+
+
+def text_digest(text: str) -> str:
+    """The SHA-256 (hex) of one field's text, as ``issue_prior_texts`` stores the
+    text an edit left: undo compares it with the issue's current text."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def issue_text_authors(
@@ -173,6 +183,32 @@ def assignee_fact_for_event(conn: sqlite3.Connection, event_id: int) -> dict | N
     return dict(row) if row is not None else None
 
 
+def prior_text_for_event(conn: sqlite3.Connection, event_id: int) -> dict | None:
+    """The text one ``issue_edited`` event replaced, or None.
+
+    This module owns the only INSERT into ``issue_prior_texts`` (in
+    :func:`record_edited`), so the reader lives beside it, as the lifecycle and
+    assignee fact readers do. ``changed`` lists the fields the edit changed;
+    ``prior_title``/``prior_body`` hold the replaced text of a changed field and
+    None for one it left alone; ``after_*_sha256`` the digest of the text it
+    left. ``None`` is a real answer: an edit recorded before the table existed,
+    and every imported edit, has no row. A caller that needs the prior text must
+    refuse on None, never reconstruct it from the event's prose."""
+    row = conn.execute(
+        "SELECT event_id, issue_id, prior_title, prior_body, "
+        "after_title_sha256, after_body_sha256 "
+        "FROM issue_prior_texts WHERE event_id = ?",
+        (event_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    fact = dict(row)
+    fact["changed"] = [
+        name for name in ISSUE_TEXT_FIELDS if fact[f"after_{name}_sha256"] is not None
+    ]
+    return fact
+
+
 class _ScopeKwargs(TypedDict, total=False):
     """The one optional kwarg this module forwards to ``activity.record``.
 
@@ -267,11 +303,17 @@ def record_edited(
 ) -> None:
     """An issue's title or body was edited. No-op if neither actually changed — a
     resubmit of identical content (both surfaces send every field) isn't an audit
-    fact. Detail carries the new title so the feed can name what was edited, since
-    the global feed otherwise links an issue only by number. Status and priority
-    are their own concerns (changed_status and changed_priority), so this
-    deliberately ignores them."""
-    if before["title"] == after["title"] and before["body"] == after["body"]:
+    fact, and stores no prior text. Detail carries the new title so the feed can
+    name what was edited, since the global feed otherwise links an issue only by
+    number. Status and priority are their own concerns (changed_status and
+    changed_priority), so this deliberately ignores them.
+
+    The replaced text of each changed field is kept in ``issue_prior_texts``
+    (F10, D20), keyed to this event and written in its transaction: this is the
+    only writer of that table. It is not in ``detail`` and no feed reads it."""
+    title_changed = before["title"] != after["title"]
+    body_changed = before["body"] != after["body"]
+    if not title_changed and not body_changed:
         return
     try:
         event = activity.record(
@@ -282,6 +324,19 @@ def record_edited(
             target_id=issue_id,
             detail=after["title"],
             commit=False,
+        )
+        conn.execute(
+            "INSERT INTO issue_prior_texts "
+            "(event_id, issue_id, prior_title, prior_body, "
+            "after_title_sha256, after_body_sha256) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                event["id"],
+                issue_id,
+                before["title"] if title_changed else None,
+                before["body"] if body_changed else None,
+                text_digest(after["title"]) if title_changed else None,
+                text_digest(after["body"]) if body_changed else None,
+            ),
         )
         # A newly-added [[user:N]] in the edited body mentions that person.
         notifications.process_mentions(

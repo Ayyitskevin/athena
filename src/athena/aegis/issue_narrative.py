@@ -8,7 +8,7 @@ has had to read all three surfaces and stitch the story together by run id.
 This projection does the stitching at READ time. It walks the issue's visible
 activity, joins the claim handoffs, run controls, and check-ins belonging to
 the runs on that trail, and returns one ordered list of typed signal items
-(claim, checkin, ask, run control, handoff, evidence, outcome). It creates no
+(claim, checkin, ask, run control, handoff, evidence, outcome, edit). It creates no
 table, no event source, no second timeline, and no ID namespace: every item
 CITES the owning surface's own id (activity event id, handoff token, run
 control id, run check-in) in ``source`` and names the owning read in ``via``.
@@ -41,6 +41,8 @@ from athena.aegis import (
     claim_handoffs,
     completion_evidence,
     definition_of_done,
+    issue_activity,
+    issue_prior_texts,
     issues,
     lease_commands,
 )
@@ -62,6 +64,9 @@ SIGNAL_RUN_CONTROL = "run_control"
 SIGNAL_HANDOFF = "handoff"
 SIGNAL_EVIDENCE = "evidence"
 SIGNAL_OUTCOME = "outcome"
+#: A change of the issue's title or body (F10). The item names the fields and
+#: points at the read that returns the text the edit replaced; it carries none.
+SIGNAL_EDIT = "edit"
 
 #: Bounds on one build. The item list is a reading window, not a pager: when a
 #: lane clips, the response says so rather than presenting a partial story as
@@ -82,6 +87,7 @@ _SIGNAL_RANK = {
     SIGNAL_ASK: 4,
     SIGNAL_RUN_CONTROL: 5,
     SIGNAL_CHECKIN: 6,
+    SIGNAL_EDIT: 7,
 }
 
 #: The only activity verbs the narrative reads as claim/outcome signals. A
@@ -94,6 +100,7 @@ _RELEASE_VERB = "lease_released"
 _YIELD_VERB = "claim_yielded"
 _RESUME_VERB = "claim_handoff_resumed"
 _COMPLETE_VERB = "claim_completed"
+_EDIT_VERB = issue_prior_texts.EDIT_VERB
 
 #: Open control states read as an outstanding ask; anything past them is the
 #: record of how the steering ended.
@@ -139,6 +146,36 @@ def _actor_ref(actor_id: int | None, name: str | None) -> dict | None:
     if actor_id is None:
         return None
     return {"id": actor_id, "name": name}
+
+
+def _edit_item(
+    conn: sqlite3.Connection, base: dict, event: dict, issue_id: int
+) -> dict:
+    """One title or body edit: who, when, which fields, and where its prior text
+    is read. An imported edit, or one recorded before prior texts were kept, has
+    none: ``changed`` and ``prior_text`` are null."""
+    fact = (
+        issue_activity.prior_text_for_event(conn, int(event["id"]))
+        if event["imported_at"] is None
+        else None
+    )
+    changed = None if fact is None else fact["changed"]
+    what = " and ".join(changed) if changed else "title or body"
+    summary = f"{event['actor_name']} edited the {what}"
+    if event.get("reverses_event_id"):
+        summary += f", undoing event #{event['reverses_event_id']}"
+    return {
+        **base,
+        "signal": SIGNAL_EDIT,
+        "state": None,
+        "summary": summary,
+        "changed": changed,
+        "prior_text": (
+            None
+            if fact is None
+            else issue_prior_texts.prior_text_pointer(issue_id, int(event["id"]))
+        ),
+    }
 
 
 def build_issue_narrative(
@@ -275,6 +312,8 @@ def _build(
                     f"without a handoff ({event['detail']})",
                 }
             )
+        elif verb == _EDIT_VERB:
+            items.append(_edit_item(conn, base, event, issue_id))
         elif verb == _YIELD_VERB or verb == _RESUME_VERB:
             # Classified, but narrated by the handoff lane's own record.
             if verb == _RESUME_VERB and event["id"] not in handoff_by_resume_event:

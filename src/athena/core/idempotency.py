@@ -10,11 +10,119 @@ domain commit but before it stores the response, Athena cannot know whether the
 mutation happened. Such a key is therefore indeterminate and is never taken over
 automatically. Failing closed is less convenient than guessing, but it cannot
 silently apply the same mutation twice.
+
+The authorization fence
+-----------------------
+
+What the fence is for: a replayed key should not return a stored response its
+caller could not obtain by making the request now. A replay is always stale (the
+issue may have been edited since); what it must not be is unauthorized: the same
+request, made now by the same caller, should still be allowed, and nothing the
+stored response exposes should have become unreadable to that caller. Database
+triggers move counters on the acts listed below (0043, 0061, 0090); a receipt
+whose captured counters differ is purged and answers
+``idempotency_authorization_changed``. The fence fails closed: an act that might
+narrow is fenced even when it widens. It holds for the acts listed here and no
+others; the exceptions are listed last.
+
+The counters. ``revision`` (0043) moves on EVERY act below. A process still
+running the old code compares only ``revision``, so it fails closed on all of
+them, whatever order processes restart in. ``issue_authority_revision`` moves,
+with ``revision``, on every per-issue act, so ``revision - issue_authority_revision``
+(``access`` in ``_counters``) moves on the workspace-wide acts alone. Each issue's
+own counter (``idempotency_issue_authority``) moves on that issue's per-issue acts.
+A receipt compares ``revision`` (scope ``workspace``), ``access`` and its issue's
+counter (scope ``issue``) or ``access`` alone (scope ``none``).
+
+Which stored responses each act can invalidate (F6, decision D17):
+
+* **Every receipt** (workspace-wide acts). A user's id, role, pause state or
+  ``is_agent``, or the user's deletion (role makes an admin, who reads and writes
+  everything; a viewer writes nothing; pause refuses every action; an agent may
+  not close a blocked issue under the blocked-close policy, even with the
+  override). A token's principal, hash or scopes, or its deletion. A project's or
+  space's visibility or owner, or its deletion; a project's blocked-close policy;
+  a project or space membership removed or moved (these decide who reads every
+  issue and page inside, and any response may embed one: a parent, a link
+  target, a blocker, a packet, a search hit, the ``similar_open`` of a create).
+  An approval gate added, removed or rewritten for an account (a gated close
+  answers 202 ``approval_required``). An action budget set, or its limit or
+  window changed. A page's space, a sprint's project, a comment's issue or
+  author, a page comment's page or author, an attachment's target or uploader, a
+  filter's, notification's or watch's owner or target. And an issue's
+  **placement**: its ``project_id`` decides who can read it, and it is embedded
+  in other issues' answers (as a parent, a link, a blocker, a child, a similar
+  issue), so moving one issue can make a receipt for a write on a *different*
+  issue expose what its caller may no longer read. An issue's ``id`` is a
+  workspace-wide act too, because the per-issue scope is keyed by it.
+
+* **The receipts of one issue** (per-issue acts): an issue's ``assignee_id`` or
+  ``created_by`` changing, or one of its contributors removed or moved (a
+  ``DELETE /contributors`` or a decline). The argument has two halves, and both
+  are checked by ``tests/test_idempotency_issue_fence.py``:
+
+  1. *Reads.* No visibility rule reads an issue's assignee, creator or
+     contributors. ``core/access.py`` decides visibility from a project's or
+     space's visibility, owner and members and from an issue's ``project_id``;
+     the "mine" selections (the activity feed's, the desk's, the ready queue's)
+     choose among issues the caller can already read and never admit one.
+     Assignment grants no visibility, not in a private project either (an
+     assignee who is not a member still reads nothing there), and an issue's
+     creator is not its project's owner. So no per-issue act can make any stored
+     response, whatever issues it embeds, expose something its caller can no
+     longer read. A response that embeds another issue's assignee name shows a
+     fact the caller can still read on that issue's trail.
+  2. *Writes.* An issue's assignee, creator and contributors are read only by
+     the write gates of that same issue: ``issues.can_act_on`` (creator,
+     assignee, delegated contributor or admin), the claimant gate in
+     ``lease_commands`` (assignee, contributor or admin) and the reviewer gate in
+     ``review_request_commands`` (the review issue's assignee or a contributor).
+     Every route in ``ISSUE_SCOPED_ROUTES`` gates on the issue its path names and
+     checks every other issue it touches (a parent, a link target, a mention
+     target, a review candidate) for visibility only. So for those receipts the
+     only issue whose assignee, creator or contributors decided "allowed" is the
+     path's issue.
+
+  A receipt can be scoped only where its route names, before it runs, every
+  issue whose assignee, creator or contributors its authorization read.
+  ``POST /issues`` (``ISSUE_INDEPENDENT_ROUTES``) reads only the issue it
+  creates, whose creator is the caller by construction: a fresh create makes a
+  new issue with the caller as its creator, so no later change to the first one
+  can refuse it, and its receipt depends on no issue's. Everything else is scope
+  ``workspace``, compared on ``revision``, so a per-issue act anywhere fences it
+  as before: ``POST /issues/bulk`` (many issues), ``POST /issues/claim-next``
+  (its issue is chosen by the ready rule, which reads assignees, and is unknown
+  from the path), every route outside ``/issues``, and any route added under
+  ``/issues/{id}`` that nobody has reviewed: the lists below are allow-lists,
+  not patterns.
+
+  A write that is itself a per-issue act fences its own receipt: its fresh
+  answer is sent once and its key then refuses. A keyed ``PUT /assignee`` that
+  hands the issue away always did this; a keyed decline now does too.
+
+* **None** (the exceptions; these move no counter). An issue's parent, sprint,
+  status, text, blockers or lease; a contributor added; a membership, gate or
+  budget removed only widens. And spending an action budget: every metered write
+  spends, and a replay applies nothing and is not metered, so a receipt still
+  replays after its caller's budget is spent while a fresh request answers 429
+  ``agent_budget_exhausted``. A replay is also stale about state by design: a
+  fresh request may meet a 409 or 422 about the target as it is now (a lease
+  someone else holds, a close the policy now refuses because a blocker was
+  added), which the replay does not re-evaluate.
+
+A fenced marker expires when its receipt would have (``expires_at`` carried
+over from the receipt, or the receipt's TTL from the moment it is fenced while
+still executing). After that the key is a key never seen: the same request
+under it runs again. That is the retention a completed receipt already had; a
+fenced key gains no window for a duplicate that its receipt did not have.
+Markers fenced before 0090 keep no expiry, because their receipt's expiry was
+discarded with the response.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 import secrets
 import sqlite3
 import time
@@ -23,6 +131,92 @@ from athena.core import db
 
 
 LEGACY_FINGERPRINT = "legacy-fingerprint-unavailable"
+
+#: Keyed routes whose receipt depends on the assignee and creator of the issue the
+#: path names, and of no other issue (see the module docstring). Each was read
+#: one by one; ``tests/test_idempotency_issue_fence.py`` fails when a listed route
+#: no longer exists. A route missing from this list keeps the workspace fence.
+ISSUE_SCOPED_ROUTES: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("PATCH", "/issues/{issue_id}"),
+        ("POST", "/issues/{issue_id}/archive"),
+        ("POST", "/issues/{issue_id}/unarchive"),
+        ("PUT", "/issues/{issue_id}/assignee"),
+        ("PUT", "/issues/{issue_id}/project"),
+        ("PUT", "/issues/{issue_id}/sprint"),
+        ("PUT", "/issues/{issue_id}/parent"),
+        ("POST", "/issues/{issue_id}/attachments"),
+        ("POST", "/issues/{issue_id}/comments"),
+        ("PATCH", "/issues/{issue_id}/comments/{comment_id}"),
+        ("DELETE", "/issues/{issue_id}/comments/{comment_id}"),
+        ("POST", "/issues/{issue_id}/labels"),
+        ("DELETE", "/issues/{issue_id}/labels/{label_id}"),
+        ("POST", "/issues/{issue_id}/links"),
+        ("DELETE", "/issues/{issue_id}/links/{relation}/{target_id}"),
+        ("POST", "/issues/{issue_id}/link-mention"),
+        ("POST", "/issues/{issue_id}/contributors"),
+        ("DELETE", "/issues/{issue_id}/contributors/{user_id}"),
+        ("POST", "/issues/{issue_id}/delegate"),
+        ("POST", "/issues/{issue_id}/decline"),
+        ("POST", "/issues/{issue_id}/claim"),
+        ("POST", "/issues/{issue_id}/complete"),
+        ("POST", "/issues/{issue_id}/yield"),
+        ("POST", "/issues/{issue_id}/claim-handoffs/{handoff_token}/resume"),
+        ("POST", "/issues/{issue_id}/dispatch"),
+        ("POST", "/issues/{issue_id}/learnings"),
+        ("POST", "/issues/{review_issue_id}/review-requests"),
+    }
+)
+
+#: Keyed routes whose receipt depends on no issue's assignee or creator.
+ISSUE_INDEPENDENT_ROUTES: frozenset[tuple[str, str]] = frozenset({("POST", "/issues")})
+
+# A canonical row id: what the scope is keyed by. Any other spelling of the path's
+# issue (a leading zero, a sign, a non-ASCII digit) keeps the workspace fence.
+_ROW_ID = "([1-9][0-9]{0,17})"
+_PARAM = re.compile(r"\{[a-z_]+\}")
+
+
+def _route_pattern(template: str) -> re.Pattern[str]:
+    """The template's first parameter captures the issue; the rest match a segment."""
+    parts = _PARAM.split(template)
+    params = _PARAM.findall(template)
+    pattern = re.escape(parts[0])
+    for index, literal in enumerate(parts[1:]):
+        pattern += (_ROW_ID if index == 0 else "[^/]+") + re.escape(literal)
+    assert len(params) == len(parts) - 1
+    return re.compile(pattern)
+
+
+_SCOPED_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (method, _route_pattern(template))
+    for method, template in sorted(ISSUE_SCOPED_ROUTES)
+)
+
+
+@dataclass(frozen=True)
+class ReceiptScope:
+    """Which issue assignee/creator changes fence a receipt: any (``workspace``),
+    one issue's (``issue``) or none (``none``)."""
+
+    kind: str
+    issue_id: int | None = None
+
+
+WORKSPACE_SCOPE = ReceiptScope("workspace")
+
+
+def receipt_scope(method: str, path: str) -> ReceiptScope:
+    """The scope a keyed request's receipt is fenced under, from its method and
+    route path alone (the claim is made before the route runs)."""
+    if (method, path) in ISSUE_INDEPENDENT_ROUTES:
+        return ReceiptScope("none")
+    for scoped_method, pattern in _SCOPED_PATTERNS:
+        if method == scoped_method:
+            match = pattern.fullmatch(path)
+            if match is not None:
+                return ReceiptScope("issue", int(match.group(1)))
+    return WORKSPACE_SCOPE
 
 
 @dataclass(frozen=True)
@@ -39,7 +233,8 @@ def _now(value: int | None) -> int:
 
 def _record(conn: sqlite3.Connection, *, key: str, identity: str) -> dict | None:
     row = conn.execute(
-        "SELECT request_fingerprint, authorization_revision, method, path, "
+        "SELECT request_fingerprint, authorization_revision, authority_scope, "
+        "scope_issue_id, access_revision, issue_authority_revision, method, path, "
         "state, owner_token, lease_expires_at, status_code, content_type, "
         "response_headers, "
         "response_body, failure_code, created_at, updated_at, expires_at "
@@ -105,18 +300,69 @@ def _legacy_actor_alias_record(
 
 
 def _authorization_changed(
-    conn: sqlite3.Connection, *, key: str, identity: str
+    conn: sqlite3.Connection, *, key: str, identity: str, expires_at: int
 ) -> None:
-    """Purge a stale response and retain a non-expiring, fail-closed marker."""
+    """Purge a stale response and keep a fail-closed marker until ``expires_at``,
+    the instant its receipt would have expired."""
     conn.execute(
         "UPDATE idempotency_keys SET "
         "state = 'indeterminate', owner_token = NULL, lease_expires_at = NULL, "
         "status_code = NULL, content_type = NULL, response_headers = NULL, "
         "response_body = NULL, failure_code = 'authorization_changed', "
-        "updated_at = datetime('now'), expires_at = NULL "
+        "updated_at = datetime('now'), expires_at = ? "
         "WHERE idempotency_key = ? AND identity = ?",
-        (key, identity),
+        (int(expires_at), key, identity),
     )
+
+
+def _counters(conn: sqlite3.Connection, issue_id: int | None) -> dict[str, int]:
+    """Every counter a receipt may be compared on, read in the caller's
+    transaction (migrations 0043 and 0090):
+
+    * ``revision`` moves on every act, workspace-wide or per-issue. Old code
+      compares only this, and the new code compares it for scope ``workspace``.
+    * ``access`` is ``revision`` minus the workspace-wide count of per-issue
+      acts: it moves on the workspace-wide acts only.
+    * ``issue`` is ``issue_id``'s own counter of per-issue acts (0 until its
+      first one, or with no issue).
+    """
+    state = conn.execute(
+        "SELECT revision, issue_authority_revision "
+        "FROM idempotency_authorization_state WHERE singleton = 1"
+    ).fetchone()
+    issue = 0
+    if issue_id is not None:
+        row = conn.execute(
+            "SELECT revision FROM idempotency_issue_authority WHERE issue_id = ?",
+            (issue_id,),
+        ).fetchone()
+        issue = row["revision"] if row is not None else 0
+    return {
+        "revision": state["revision"],
+        "access": state["revision"] - state["issue_authority_revision"],
+        "issue": issue,
+    }
+
+
+def _fenced(conn: sqlite3.Connection, record: dict) -> bool:
+    """Whether authorization may have narrowed since ``record`` was claimed."""
+    scope = record["authority_scope"]
+    now = _counters(conn, record["scope_issue_id"])
+    if scope == "workspace":
+        return now["revision"] != record["authorization_revision"]
+    if scope == "issue":
+        return (now["access"], now["issue"]) != (
+            record["access_revision"],
+            record["issue_authority_revision"],
+        )
+    if scope == "none":
+        return now["access"] != record["access_revision"]
+    raise ValueError(f"unknown receipt scope: {scope!r}")
+
+
+def _expired(record: dict, current: int) -> bool:
+    """A completed receipt, or a marker fenced from one, past its expiry."""
+    return record["expires_at"] is not None and int(record["expires_at"]) <= current
 
 
 def claim_or_read(
@@ -138,9 +384,6 @@ def claim_or_read(
     """
     current = _now(now)
     with db.transaction(conn, immediate=True):
-        authorization_revision = conn.execute(
-            "SELECT revision FROM idempotency_authorization_state WHERE singleton = 1"
-        ).fetchone()["revision"]
         record = _legacy_actor_alias_record(conn, key=key, identity=identity)
         if record is None:
             record = _record(conn, key=key, identity=identity)
@@ -152,26 +395,11 @@ def claim_or_read(
                 if record["method"] != method or record["path"] != path:
                     return ClaimResult("mismatch", record)
                 return ClaimResult("indeterminate", record)
-            if record["state"] == "indeterminate":
-                kind = (
-                    "authorization_changed"
-                    if record["failure_code"] == "authorization_changed"
-                    else "indeterminate"
-                )
-                return ClaimResult(kind, record)
-            if record["authorization_revision"] != authorization_revision:
-                if record["state"] == "executing":
-                    return ClaimResult("authorization_changed", record)
-                # Authorization changed after claim. Purge the stored body and keep
-                # the key forever fail-closed; neither replay nor re-execution is safe.
-                _authorization_changed(conn, key=key, identity=identity)
-                return ClaimResult(
-                    "authorization_changed",
-                    _record(conn, key=key, identity=identity),
-                )
-            if record["state"] == "completed" and int(record["expires_at"]) <= current:
-                # The target key must expire even when more than the cleanup batch's
-                # worth of older receipts exist.
+            if _expired(record, current):
+                # A completed receipt, or the marker fenced from one, past the
+                # instant the receipt would have expired: the key is unused again.
+                # The target key must expire even when more than the cleanup
+                # batch's worth of older rows exist.
                 conn.execute(
                     "DELETE FROM idempotency_keys "
                     "WHERE idempotency_key = ? AND identity = ?",
@@ -179,28 +407,58 @@ def claim_or_read(
                 )
                 record = None
 
-        # Lazy, bounded retention for other keys. Executing and indeterminate rows
-        # never expire automatically because their mutation outcome may be unknown.
+        if record is not None:
+            if record["state"] == "indeterminate":
+                kind = (
+                    "authorization_changed"
+                    if record["failure_code"] == "authorization_changed"
+                    else "indeterminate"
+                )
+                return ClaimResult(kind, record)
+            if _fenced(conn, record):
+                if record["state"] == "executing":
+                    return ClaimResult("authorization_changed", record)
+                # Authorization may have narrowed since the claim. Purge the stored
+                # body and keep the key fail-closed until the receipt would have
+                # expired; neither replay nor re-execution is safe before then.
+                _authorization_changed(
+                    conn, key=key, identity=identity, expires_at=record["expires_at"]
+                )
+                return ClaimResult(
+                    "authorization_changed",
+                    _record(conn, key=key, identity=identity),
+                )
+
+        # Lazy, bounded retention for other keys: completed receipts and the markers
+        # fenced from them. Executing and other indeterminate rows carry no expiry
+        # because their mutation outcome may be unknown.
         conn.execute(
             "DELETE FROM idempotency_keys WHERE rowid IN ("
             "SELECT rowid FROM idempotency_keys "
-            "WHERE state = 'completed' AND expires_at <= ? LIMIT 100)",
+            "WHERE expires_at IS NOT NULL AND expires_at <= ? LIMIT 100)",
             (current,),
         )
 
         if record is None:
+            scope = receipt_scope(method, path)
+            counters = _counters(conn, scope.issue_id)
             owner_token = secrets.token_urlsafe(32)
             conn.execute(
                 "INSERT INTO idempotency_keys ("
                 "idempotency_key, identity, request_fingerprint, "
-                "authorization_revision, method, path, state, owner_token, "
-                "lease_expires_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, 'executing', ?, ?)",
+                "authorization_revision, authority_scope, scope_issue_id, "
+                "access_revision, issue_authority_revision, method, path, state, "
+                "owner_token, lease_expires_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'executing', ?, ?)",
                 (
                     key,
                     identity,
                     request_fingerprint,
-                    authorization_revision,
+                    counters["revision"],
+                    scope.kind,
+                    scope.issue_id,
+                    counters["access"],
+                    counters["issue"],
                     method,
                     path,
                     owner_token,
@@ -248,23 +506,25 @@ def complete(
 
     Returns completed, authorization_changed, or lost. An authorization change
     during route execution purges the replay body but still lets middleware send
-    this fresh response; subsequent retries remain fail-closed.
+    this fresh response; subsequent retries remain fail-closed until the receipt
+    would have expired (``ttl_seconds`` from now).
     """
     current = _now(now)
+    expires_at = current + max(1, int(ttl_seconds))
     with db.transaction(conn, immediate=True):
         row = conn.execute(
-            "SELECT authorization_revision FROM idempotency_keys "
+            "SELECT authorization_revision, authority_scope, scope_issue_id, "
+            "access_revision, issue_authority_revision FROM idempotency_keys "
             "WHERE idempotency_key = ? AND identity = ? "
             "AND state = 'executing' AND owner_token = ?",
             (key, identity, owner_token),
         ).fetchone()
         if row is None:
             return "lost"
-        authorization_revision = conn.execute(
-            "SELECT revision FROM idempotency_authorization_state WHERE singleton = 1"
-        ).fetchone()["revision"]
-        if row["authorization_revision"] != authorization_revision:
-            _authorization_changed(conn, key=key, identity=identity)
+        if _fenced(conn, dict(row)):
+            _authorization_changed(
+                conn, key=key, identity=identity, expires_at=expires_at
+            )
             return "authorization_changed"
 
         cur = conn.execute(
@@ -280,7 +540,7 @@ def complete(
                 content_type,
                 response_headers,
                 response_body,
-                current + max(1, int(ttl_seconds)),
+                expires_at,
                 key,
                 identity,
                 owner_token,

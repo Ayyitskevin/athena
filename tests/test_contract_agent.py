@@ -386,7 +386,14 @@ async def refusal_branches(board: Board, sol: Agent, terra: Agent) -> None:
     # A stale precondition: the issue moved after Sol read it.
     foxtrot = board.issue("Foxtrot", "low", "sol")
     stale_tag = (await sol.call("get_issue", issue_id=foxtrot))["_etag"]
-    board.ok(board.operator.patch(f"/issues/{foxtrot}", json={"title": "Foxtrot 2"}))
+    # The operator's title edit over its token names the revision (D20).
+    board.ok(
+        board.operator.patch(
+            f"/issues/{foxtrot}",
+            json={"title": "Foxtrot 2"},
+            headers={"If-Match": stale_tag},
+        )
+    )
     moved = await sol.refused(
         "precondition_failed", "claim_issue", issue_id=foxtrot, if_match=stale_tag
     )

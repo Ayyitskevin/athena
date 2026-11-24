@@ -316,29 +316,37 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         return client.unlinked_mentions(kind, id, limit)
 
     # Writes EITHER module depending on source_kind; the route still enforces
-    # the precise scope, this only decides presentation. Destructive and not
-    # idempotent: it rewrites the next unlinked mention, and an issue body keeps
-    # no history.
-    @tool(
+    # the precise scope, this only decides presentation. Not idempotent: it
+    # rewrites the next unlinked mention. Not destructive: a page keeps the
+    # version it replaced and an issue the body it replaced (F10).
+    @mutation_tool(
         scope=ANY_WRITE_SCOPE,
         profiles=FULL_ONLY,
-        hints=WriteHint(destructive=True, idempotent=False),
+        hints=WriteHint(destructive=False, idempotent=False),
     )
     def link_mention(
-        source_kind: str, source_id: int, target_kind: str, target_id: int
+        source_kind: str,
+        source_id: int,
+        target_kind: str,
+        target_id: int,
+        if_match: str | None = None,
     ) -> dict:
         """Rewrite the SOURCE document so its first unlinked mention of the target
         becomes a real reference.
 
         This edits `source_id` — not the target — through the ordinary page/issue
-        command, so it snapshots a version, records an edit event, and is
+        command, so it keeps the text it replaced, records an edit event, and is
         attributed to you like any other write. It rewrites ONE occurrence; call
-        again for the next.
+        again for the next. For an issue source, if_match (the issue's `_etag`)
+        is required, as for any issue body edit: without it the call is refused
+        428.
 
         Refused with 409 if the mention is no longer there (the body changed under
         you). That is deliberate: editing anyway would rewrite text you never
         read."""
-        return client.link_mention(source_kind, source_id, target_kind, target_id)
+        return client.link_mention(
+            source_kind, source_id, target_kind, target_id, if_match=if_match
+        )
 
     @tool(scope=READ_ONLY, profiles=FULL_ONLY)
     def query_help() -> dict:
@@ -440,6 +448,20 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         its owning source; unknown activity stays unclassified, and clipped
         lanes are reported instead of presented as complete."""
         return client.get_issue_history(issue_id, limit=limit)
+
+    @tool(scope=READ_ONLY, profiles=CONDUCTOR)
+    def get_issue_prior_text(
+        issue_id: int, event_id: int, body_offset: BodyOffset = 0
+    ) -> dict:
+        """Read the title and body one edit of an issue replaced, exactly as they
+        were. event_id is the issue_edited event: an `edit` item of
+        get_issue_history names it in prior_text.next. changed lists the fields
+        the edit changed; a field it left alone is null. A long prior_body is cut
+        to the response budget; body_offset reads on from there. To put the text
+        back, undo the edit (the operator's undo, POST /activity/{event_id}/undo);
+        it refuses while a later edit has replaced that text."""
+        answer = client.get_issue_prior_text(issue_id, event_id)
+        return results.from_offset(answer, "prior_body", body_offset)
 
     @tool(scope=READ_ONLY, profiles=CONDUCTOR)
     def get_attention_ranking(

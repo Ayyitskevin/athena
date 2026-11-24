@@ -371,6 +371,12 @@ class AthenaClient:
             )
         )
 
+    def get_issue_prior_text(self, issue_id: int, event_id: int) -> Any:
+        """The title and body one edit of the issue replaced."""
+        return self._result(
+            self._client.get(f"/issues/{issue_id}/prior-texts/{event_id}")
+        )
+
     def get_attention_ranking(
         self,
         *,
@@ -1121,15 +1127,22 @@ class AthenaClient:
         )
 
     def link_mention(
-        self, source_kind: str, source_id: int, target_kind: str, target_id: int
+        self,
+        source_kind: str,
+        source_id: int,
+        target_kind: str,
+        target_id: int,
+        *,
+        if_match: str | None = None,
     ) -> Any:
-        """Rewrite the SOURCE's body so its first unlinked mention becomes a link."""
+        """Rewrite the SOURCE's body so its first unlinked mention becomes a link.
+        ``if_match`` is the source issue's ETag (an issue body edit needs it)."""
         base = "issues" if source_kind == "issue" else "pages"
-        return self._result(
-            self._client.post(
-                f"/{base}/{source_id}/link-mention",
-                json={"target_kind": target_kind, "target_id": target_id},
-            )
+        return self._mutate(
+            self._client.post,
+            f"/{base}/{source_id}/link-mention",
+            json={"target_kind": target_kind, "target_id": target_id},
+            if_match=if_match,
         )
 
     def list_page_versions(self, page_id: int) -> Any:

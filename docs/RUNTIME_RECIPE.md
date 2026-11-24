@@ -127,7 +127,7 @@ work context, `brief=true` keeps the issue, issue ETag, dependencies,
 warnings and work-order report for a compact re-read.
 
 For a conductor coordinating architect, builder and reviewer accounts, use the
-38-tool `conductor` profile (onboard it with `"profile": "conductor"`) and
+39-tool `conductor` profile (onboard it with `"profile": "conductor"`) and
 [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md).
 It adds assignment, delegation, dependencies and visible project observation to
 `seat`; it does not add admin authority or launch workers. Keep this recipe's

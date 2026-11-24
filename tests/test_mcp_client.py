@@ -469,6 +469,9 @@ OPTIONAL_IF_MATCH_TOOL_NAMES = {
     "assign_issue",
     "set_issue_sprint",
     "update_page",
+    # Optional in the schema, as update_issue's: a page source takes none, and
+    # an issue source without one is refused 428 by the server (F10).
+    "link_mention",
 }
 IF_MATCH_TOOL_NAMES = REQUIRED_IF_MATCH_TOOL_NAMES | OPTIONAL_IF_MATCH_TOOL_NAMES
 MCP_MUTATION_CASES = [

@@ -323,7 +323,13 @@ def test_undoing_a_close_is_metered_and_gated_like_any_status_write(tmp_path):
             c.patch(
                 f"/issues/{issue['id']}",
                 json={"title": "spend it"},
-                headers=_bearer(agent),
+                # A bearer title edit names the revision it read (D20).
+                headers={
+                    **_bearer(agent),
+                    "If-Match": c.get(f"/issues/{issue['id']}", headers=H1).headers[
+                        "ETag"
+                    ],
+                },
             ).status_code
             == 200
         )

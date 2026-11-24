@@ -16,9 +16,21 @@ it where one exists. These codes carry their facts as fields beside the prose:
 `claim_held` (`holder`, `expires_at`, `events_after`), `lease_generation_required`
 to the lease's holder (`generation`), `fence_overlap` (`fence`), `rate_limited`
 (`rate_limit`), `payload_too_large` (`limit_bytes`), `capacity_reached` (`limit`),
-`agent_budget_exhausted` (`budget`), `cursor_ahead` (`latest_visible_event_id`) and
-`approval_required` (`approval`, `events_after`). A `validation_error` names a bound
-(a maximum length, a range) in its `detail` only. The codes are listed in
+`agent_budget_exhausted` (`budget`), `cursor_ahead` (`latest_visible_event_id`),
+`approval_required` (`approval`, `events_after`) and
+`idempotency_authorization_changed` (`issue_id`, when the keyed write named an
+issue). A `validation_error` names a bound (a maximum length, a range) in its
+`detail` only.
+
+`idempotency_authorization_changed` means what you may do changed since your key's
+first success (that issue was reassigned, you were removed as a contributor, a
+gate was added, say), so its stored answer is not replayed, and the refusal does
+not say whether the write was applied. A keyed write that hands the issue away
+(an assignment, a decline) answers once and then refuses the same way. Its `next`
+is `get_issue_work_context(issue_id=<the refusal's issue_id>)`: if the issue's
+activity shows your write, it is done; if not, repeat it under a new
+`idempotency_key`. Never reuse the refused key for a different call. It is refused
+until the original answer would have expired. The codes are listed in
 [AGENT_API.md](AGENT_API.md#refusal-codes).
 `GET /openapi-agent.json` is the REST surface your token can call, without the browser
 routes `/openapi.json` also lists, and it declares per operation the bearer scheme,
@@ -277,6 +289,21 @@ Content-Type: application/json
 ```
 
 HTTP 201.
+
+**Editing an issue's title or body** needs the issue's ETag. MCP
+`update_issue(issue_id, title?, body?, if_match)` · REST `PATCH /issues/{issue_id}`
+with `If-Match`. Prefer a comment: the title and body are often the contract and its
+acceptance criteria, written by someone else. If you do edit, read the issue first
+(`get_issue`) and pass its `_etag` as `if_match`. Without it the edit is refused 428
+`precondition_required`, and its `next` names `get_issue`; a stale tag is refused 412
+`precondition_failed`: read again, merge your change into the current text and retry.
+Status, priority, assignee and labels alone need no tag. Every edit keeps the text it
+replaced: the issue history (`get_issue_history`) lists each edit with who made it,
+when and which fields, and (in the `conductor` profile)
+`get_issue_prior_text(issue_id, event_id)` ·
+`GET /issues/{issue_id}/prior-texts/{event_id}` returns the old text exactly. Undoing the
+edit (`POST /activity/{event_id}/undo`) puts it back, and is refused with
+`undo_no_effect` once a later edit has replaced that text.
 
 ## 7. Complete with a structured report
 

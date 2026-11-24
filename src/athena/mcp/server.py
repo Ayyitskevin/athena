@@ -716,8 +716,9 @@ def _budget_cuts(
 ) -> list[results.Cut]:
     """Where an object answer may be cut to its budget, and what reads on.
 
-    The long texts are an issue's or a page's body (the rest is read by
-    body_offset) and the work-context packet's description and comments; the
+    The long texts are an issue's or a page's body and an edit's prior body (the
+    rest is read by body_offset) and the work-context packet's description and
+    comments; the
     long lists are the packet's activity, the delegation inbox and the event
     feed, each continued by its own paging. The desk declares none: its lanes
     are cut by shape (``_budget_rest``)."""
@@ -734,6 +735,21 @@ def _budget_cuts(
         return [
             results.Cut(
                 ("body",), lambda kept: _page_reader(result["id"], start + kept)
+            )
+        ]
+    if name == "get_issue_prior_text" and isinstance(result.get("prior_body"), str):
+        issue_id, event_id = result["issue_id"], result["event_id"]
+        return [
+            results.Cut(
+                ("prior_body",),
+                lambda kept: {
+                    "tool": name,
+                    "arguments": {
+                        "issue_id": issue_id,
+                        "event_id": event_id,
+                        "body_offset": base + kept,
+                    },
+                },
             )
         ]
     if name == "get_issue_work_context" and isinstance(result.get("issue"), dict):

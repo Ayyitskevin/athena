@@ -726,8 +726,9 @@ def test_invalid_and_oversized_keys_are_rejected_without_claim(tmp_path):
 
 
 def test_v1_receipts_migrate_fail_closed_and_discard_cached_bytes(
-    tmp_path, migration_inventory_through
+    tmp_path, monkeypatch, migration_inventory_through
 ):
+    packaged = db.MIGRATIONS_DIR
     migration_inventory_through("0043_durable_idempotency.sql")
     db_path = tmp_path / "legacy.db"
     conn = db.connect(db_path)
@@ -796,6 +797,9 @@ def test_v1_receipts_migrate_fail_closed_and_discard_cached_bytes(
     conn.commit()
 
     assert db.migrate(conn) == ["0043_durable_idempotency.sql"]
+    # Every later migration carries the legacy rows on (0090 rebuilds the table).
+    monkeypatch.setattr(db, "MIGRATIONS_DIR", packaged)
+    db.migrate(conn)
     result = idempotency.claim_or_read(
         conn,
         key="legacy",
@@ -930,7 +934,9 @@ def test_membership_revocation_fences_private_response_replay(tmp_path):
             headers=bearer,
         ).json()
 
-        keyed = {"Idempotency-Key": "private-edit", **bearer}
+        # A bearer body edit names the revision it read (D20).
+        etag = client.get(f"/issues/{issue['id']}", headers=bearer).headers["ETag"]
+        keyed = {"Idempotency-Key": "private-edit", "If-Match": etag, **bearer}
         first = client.patch(
             f"/issues/{issue['id']}",
             json={"body": "sensitive private body"},
@@ -938,6 +944,13 @@ def test_membership_revocation_fences_private_response_replay(tmp_path):
         )
         assert first.status_code == 200
         assert first.json()["body"] == "sensitive private body"
+        reader = db.connect(db_path)
+        receipt = reader.execute(
+            "SELECT state, expires_at FROM idempotency_keys "
+            "WHERE idempotency_key = 'private-edit'"
+        ).fetchone()
+        reader.close()
+        assert receipt["state"] == "completed"
 
         assert (
             client.delete(
@@ -969,7 +982,8 @@ def test_membership_revocation_fences_private_response_replay(tmp_path):
         assert row["status_code"] is None
         assert row["response_headers"] is None
         assert row["response_body"] is None
-        assert row["expires_at"] is None
+        # The marker expires when its receipt would have (F6), never sooner.
+        assert row["expires_at"] == receipt["expires_at"]
     finally:
         conn.close()
 
@@ -1203,7 +1217,9 @@ def test_private_project_move_fences_old_issue_response(tmp_path):
             ).status_code
             == 200
         )
-        keyed = {"Idempotency-Key": "source-edit", **bearer}
+        # A bearer body edit names the revision it read (D20).
+        etag = client.get(f"/issues/{issue['id']}", headers=bearer).headers["ETag"]
+        keyed = {"Idempotency-Key": "source-edit", "If-Match": etag, **bearer}
 
         first = client.patch(
             f"/issues/{issue['id']}",

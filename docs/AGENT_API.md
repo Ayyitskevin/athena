@@ -79,6 +79,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `get_issue` | `GET /issues/{ref}` | read-only | Get one issue by issue_id (the number every write tool takes) or by … |
 | `get_issue_history` | `GET /issues/{issue_id}/history` | read-only | Read one issue's bounded operator run narrative. Every item cites … |
 | `get_issue_lease` | `GET /issues/{issue_id}/lease` | read-only | Who holds the exclusive claim on this issue right now — {holder_id, holder_name, … |
+| `get_issue_prior_text` | `GET /issues/{issue_id}/prior-texts/{event_id}` | read-only | Read the title and body one edit of an issue replaced, exactly as they … |
 | `get_issue_runbook` | `GET /issues/{issue_id}/runbook` | read-only | The issue's runbook page — accumulated learnings from earlier runs — or … |
 | `get_issue_state` | `GET /issues/{issue_id}/state` | read-only | Reconstruct an issue's lifecycle state from the activity log. Pass … |
 | `get_issue_work_context` | `GET /issues/{ref}/work-context` | read-only | Get a bounded, current packet containing one visible issue and its … |
@@ -162,7 +163,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `start_sprint` | `POST /sprints/{sprint_id}/start` | idempotent | Move a planned sprint to active. A project may have only one active … |
 | `unarchive_issue` | `POST /issues/{issue_id}/unarchive` | idempotent | Restore a previously archived issue to the active lists. Returns the issue. |
 | `unlink_issues` | `DELETE /issues/{issue_id}/links/{relation}/{target_id}` | idempotent | Remove a dependency from this issue: the same relation used to add it … |
-| `update_issue` | `PATCH /issues/{issue_id}` | destructive, idempotent | Update an issue. Send only the fields to change. status must be a name … |
+| `update_issue` | `PATCH /issues/{issue_id}` | idempotent | Update an issue. Send only the fields to change. status must be a name … |
 | `update_sprint` | `PATCH /sprints/{sprint_id}` | destructive, idempotent | Update a sprint's name, goal, or dates without changing its state. |
 | `yield_claim` | `POST /issues/{issue_id}/yield` | idempotent | Honestly release your exact active claim with a structured continuation … |
 
@@ -190,7 +191,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `complete_run_control` | `POST /run-controls/{control_id}/complete` | idempotent | Complete a control addressed to your run. |
 | `decline_run_control` | `POST /run-controls/{control_id}/decline` | idempotent | Decline a control addressed to your run, with the reason the operator … |
 | `heartbeat_agent_run` | `PUT /agent-runs/heartbeat` | additive | Report that this authenticated agent is still working on this … |
-| `link_mention` | `POST /{base}/{source_id}/link-mention` | destructive | Rewrite the SOURCE document so its first unlinked mention of the target … |
+| `link_mention` | `POST /{base}/{source_id}/link-mention` | additive | Rewrite the SOURCE document so its first unlinked mention of the target … |
 | `mark_notification_read` | `POST /notifications/read_all`<br>`POST /notifications/{notification_id}/read` | idempotent | Mark notifications in YOUR inbox as read, after handling them. Pass … |
 | `mark_notifications_read` | `POST /notifications/read_all` | additive | Mark ALL unread notifications in YOUR inbox as read, including rows not shown … |
 | `set_watch_preference` | `PUT /watches/{target_kind}/{target_id}/preference` | destructive, idempotent | Replace YOUR preference for an active watch. Omit or pass null for a … |
@@ -282,7 +283,7 @@ back with `isError` false, `applied: false` and `next`.
 | `idempotency_mismatch` | 409 | This Idempotency-Key was already used for a different request; use a new key for a different call. |  |
 | `idempotency_in_progress` | 409 | A request with this Idempotency-Key is still running; retry the same call after Retry-After seconds. |  |
 | `idempotency_indeterminate` | 409 | The earlier request under this key ended with an unknown outcome; read the target's state before choosing a new key. |  |
-| `idempotency_authorization_changed` | 409 | Your authorization changed after this key was claimed, so its stored response cannot be replayed. |  |
+| `idempotency_authorization_changed` | 409 | What you may do changed after this key was claimed (the assignee, creator or a contributor of the issue it named, `issue_id`; or a role, token, membership, visibility, pause, placement, agent flag, close policy, approval gate or budget limit anywhere), so its stored response is not replayed and this answer does not say whether the write was applied. Read the target; repeat under a new key only if it was not. The key stays refused until its receipt would have expired. | `get_issue_work_context`: issue_id: the refusal's issue_id (the issue your keyed write named); its activity and comments show whether your write was applied. Repeat it with a new idempotency_key only if it was not. For a write on no issue, read what it changed instead. |
 | `undo_event_not_found` | 404 | No activity event with that id is visible to you. |  |
 | `undo_not_reversible` | 401, 422 | This event's action has no inverse that undo may apply. |  |
 | `undo_already_reversed` | 409 | This event was already reversed; the detail names the reversal. |  |
@@ -307,4 +308,4 @@ with `isError` true and `status_code` null.
 
 ---
 
-*141 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*142 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

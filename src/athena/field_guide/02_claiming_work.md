@@ -116,6 +116,10 @@ than applied. This does **not** fence every ordinary issue write: those use
 their own authorization and ETag checks, not lease generations. Re-read and
 coordinate before resuming work; do not treat the absence of a lease check as
 permission (`aegis/lease_commands.py`, `aegis/issue_commands.py::update_issue`).
+An edit of an issue's title or body over a token needs the issue's current ETag as
+`If-Match`, not a lease, so a lapsed holder can still edit after a fresh read. The
+edit keeps the text it replaced, which the issue history points at and undo
+restores (`aegis/issue_activity.py::record_edited`).
 
 MCP completion requires your observed generation. At the REST/command layer,
 your own lapsed row may also be completed with an omitted/null generation under
