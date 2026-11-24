@@ -110,4 +110,5 @@ def heartbeat_agent_run(
             status_code=_STATUS_BY_KIND[exc.kind],
             detail=exc.detail,
             code=_CODE_BY_KIND[exc.kind],
+            extra=exc.extra,
         ) from exc

@@ -87,12 +87,11 @@ _ENTRIES: tuple[RefusalCode, ...] = (
         statuses=(403,),
         meaning=(
             "Your token lacks the scope this call needs (the detail names it); "
-            "only an operator can issue a wider token."
+            "only an operator can issue a wider token, so no call of yours "
+            "resolves it (my_desk's identity.scopes lists what this one may do)."
         ),
-        next=NextCall(
-            tool="my_desk",
-            hint="identity.scopes lists what this token may do; ask the operator",
-        ),
+        # No `next`: my_desk only restated what this token may do; no call made
+        # with this token makes progress or waits for a change (F11).
     ),
     RefusalCode(
         code="account_paused",
@@ -156,7 +155,10 @@ _ENTRIES: tuple[RefusalCode, ...] = (
     RefusalCode(
         code="payload_too_large",
         statuses=(413,),
-        meaning="The request body or upload exceeds the server's size limit.",
+        meaning=(
+            "The request body or upload exceeds the server's size limit; "
+            "`limit_bytes` names it."
+        ),
     ),
     RefusalCode(
         code="validation_error",
@@ -169,7 +171,10 @@ _ENTRIES: tuple[RefusalCode, ...] = (
     RefusalCode(
         code="rate_limited",
         statuses=(429,),
-        meaning="Too many requests from this token or address; wait Retry-After seconds.",
+        meaning=(
+            "Too many requests from this token or address; `rate_limit` carries "
+            "the limit, what remains and retry_after_seconds to wait."
+        ),
     ),
     RefusalCode(
         code="capacity_reached",
@@ -177,7 +182,7 @@ _ENTRIES: tuple[RefusalCode, ...] = (
         meaning=(
             "A bounded server-side limit is reached (run check-ins, workers, "
             "run controls, playbook steps); the detail says which and how to "
-            "stay within it."
+            "stay within it, and `limit` names the bound where it is one."
         ),
     ),
     RefusalCode(
@@ -244,10 +249,23 @@ _ENTRIES: tuple[RefusalCode, ...] = (
         code="claim_held",
         statuses=(409,),
         meaning=(
-            "Another account holds this issue's active lease (the detail names "
-            "the holder); do not work it."
+            "Another account holds this issue's active lease; `holder` and "
+            "`expires_at` name it and when it ends, and `events_after` is the "
+            "newest event on the issue you can see. Do not work the issue."
         ),
-        next=NextCall(tool="claim_next_ready", hint="take other ready work instead"),
+        # Not claim_next_ready: for a seat whose one delegation is the held
+        # issue, pickup answers nothing_ready and names neither the issue nor
+        # when it frees (FLEET-15). Not get_issue_lease: it restates the
+        # holder and expiry this refusal carries. The wait parks until the
+        # holder acts on the issue (tests/test_refusal_next.py).
+        next=NextCall(
+            tool="wait_for_events",
+            hint=(
+                "kind=issue, target=the issue, after=events_after: answers when "
+                "the holder renews, yields, completes or declines; then claim "
+                "again (also after expires_at). Other work: claim_next_ready"
+            ),
+        ),
     ),
     RefusalCode(
         code="claim_required",
@@ -265,10 +283,13 @@ _ENTRIES: tuple[RefusalCode, ...] = (
         code="lease_generation_required",
         statuses=(428,),
         meaning=(
-            "You already hold this lease; a repeated claim is a renewal and "
-            "needs your current generation (the detail names it)."
+            "The call needs the lease's current generation (a repeated claim "
+            "by its holder is a renewal). When you hold the lease, `generation` "
+            "names it: repeat with it. An admin releasing another account's "
+            "lease is not told it; get_issue_lease shows it."
         ),
-        next=NextCall(tool="get_issue_lease", hint="issue_id; pass its generation"),
+        # No `next`: the holder's refusal carries the generation, so a lease
+        # read would only restate it (F11).
     ),
     RefusalCode(
         code="invalid_lease_generation",
@@ -293,12 +314,18 @@ _ENTRIES: tuple[RefusalCode, ...] = (
         statuses=(409,),
         meaning=(
             "A path you declared overlaps another active lease's fence; `fence` "
-            "names your path and the basis, and the other issue, holder and "
-            "path when you can read that lease (else null)."
+            "names your path and the basis, and the other issue, holder, path "
+            "and newest event (`events_after`) when you can read that lease "
+            "(else null)."
         ),
+        # Not claim_next_ready: with the same paths it restates this fence.
         next=NextCall(
-            tool="claim_next_ready",
-            hint="take work your paths do not overlap, or claim again once that lease ends",
+            tool="wait_for_events",
+            hint=(
+                "kind=issue, target=fence.issue.id, after=fence.events_after: "
+                "answers when that holder acts there; then claim again. With "
+                "fence.issue null, declare paths that do not overlap instead"
+            ),
         ),
     ),
     RefusalCode(
@@ -316,12 +343,11 @@ _ENTRIES: tuple[RefusalCode, ...] = (
         statuses=(409,),
         meaning=(
             "The project refuses to close an issue that has open blockers; "
-            "close or unlink the blockers first."
+            "close or unlink the blockers first (get_issue_work_context's "
+            "dependencies.open_blockers lists them)."
         ),
-        next=NextCall(
-            tool="get_issue_work_context",
-            hint="dependencies.open_blockers lists them",
-        ),
+        # No `next`: reading the blockers neither closes the issue nor waits
+        # for them to close, and several blockers have no one event (F11).
     ),
     # --- desk ----------------------------------------------------------------
     RefusalCode(
@@ -347,13 +373,15 @@ _ENTRIES: tuple[RefusalCode, ...] = (
         statuses=(202,),
         meaning=(
             "The action is gated for you: it was NOT applied, and an operator "
-            "decision is pending (the body carries the approval)."
+            "decision is pending (the body carries the approval, and "
+            "`events_after`, the newest event on its target you can see)."
         ),
         next=NextCall(
             tool="wait_for_events",
             hint=(
-                "kind=approval.target_kind, target=approval.target_id; once "
-                "decided, repeat the call with the same idempotency_key"
+                "kind=approval.target_kind, target=approval.target_id, "
+                "after=events_after: answers when the operator decides; then "
+                "repeat the call with the same idempotency_key"
             ),
         ),
     ),

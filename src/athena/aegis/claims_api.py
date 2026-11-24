@@ -208,6 +208,9 @@ class FenceRefusalOut(BaseModel):
     issue: FenceIssueRef | None
     holder: FenceHolderRef | None
     holder_path: str | None
+    # The newest event on that issue you may read: wait on the issue's events
+    # after it to learn when that lease changes. Null with the issue.
+    events_after: int | None
 
 
 class ReadyClaimAttempt(BaseModel):

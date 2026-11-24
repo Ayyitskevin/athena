@@ -1223,7 +1223,10 @@ def upload_page_attachment(
         raise Refusal(status_code=422, detail="empty file", code="validation_error")
     if len(data) > config.ATTACH_MAX_BYTES:
         raise Refusal(
-            status_code=413, detail="attachment too large", code="payload_too_large"
+            status_code=413,
+            detail="attachment too large",
+            code="payload_too_large",
+            extra={"limit_bytes": config.ATTACH_MAX_BYTES},
         )
     try:
         return attachment_commands.create_attachment(

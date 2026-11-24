@@ -79,6 +79,7 @@ from athena.core import (
     sessions,
     tokens_api,
     undo,
+    users,
     users_api,
     webhooks,
     webhooks_api,
@@ -558,6 +559,7 @@ def create_app(
             raise exc
         mark_response_non_final(request)
         recorded = None
+        events_after = None
         try:
             conn = db.connect(request.app.state.db_path)
             try:
@@ -569,6 +571,17 @@ def create_app(
                     target_id=exc.target_id,
                     run_id=run_context.get_run_id(),
                 ).public()
+                # The cursor the registered `next` waits from (F11): the newest
+                # event on the target the requester may read, its own request
+                # among them, so the wait answers with the decision, not history.
+                newest = activity.list_activity(
+                    conn,
+                    target_kind=exc.target_kind,
+                    target_id=exc.target_id,
+                    limit=1,
+                    actor=users.get_user(conn, exc.actor_id),
+                )
+                events_after = int(newest[0]["id"]) if newest else 0
             finally:
                 conn.close()
         except Exception:  # noqa: BLE001 — the 202 must go out regardless
@@ -579,6 +592,7 @@ def create_app(
                 "detail": str(exc),
                 "code": approvals.APPROVAL_REQUIRED_CODE,
                 "approval": recorded,
+                "events_after": events_after,
             },
         )
 

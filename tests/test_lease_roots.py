@@ -650,6 +650,7 @@ def test_hidden_issue_still_blocks_but_denial_does_not_disclose(client):
             "issue": None,
             "holder": None,
             "holder_path": None,
+            "events_after": None,
         },
     }
     assert (

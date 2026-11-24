@@ -18,7 +18,7 @@ mutation, and its activity event in one transaction.
 from __future__ import annotations
 
 import sqlite3
-from typing import Literal
+from typing import Any, Literal
 
 from athena import config
 from athena.core import activity, db, identity, tokens, workers
@@ -45,10 +45,14 @@ _WRITE_SCOPES = frozenset(
 class WorkerCommandError(Exception):
     """A transport-neutral worker-command rejection."""
 
-    def __init__(self, kind: ErrorKind, detail: str):
+    def __init__(
+        self, kind: ErrorKind, detail: str, *, extra: dict[str, Any] | None = None
+    ):
         super().__init__(detail)
         self.kind = kind
         self.detail = detail
+        # Structured fields beside the prose: the bound a capacity refusal names.
+        self.extra = extra
 
 
 STATUS_BY_KIND: dict[str, int] = {
@@ -192,6 +196,7 @@ def heartbeat(
                 raise WorkerCommandError(
                     "capacity",
                     "worker registry capacity reached; refresh an existing worker_key",
+                    extra={"limit": config.WORKER_MAX_PER_AGENT},
                 )
         worker_id = workers.upsert_worker(
             conn,

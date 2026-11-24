@@ -65,6 +65,7 @@ def start_playbook(
             status_code=playbook_commands.STATUS_BY_KIND.get(exc.kind, 400),
             detail=exc.detail,
             code=playbook_commands.CODE_BY_KIND.get(exc.kind, "bad_request"),
+            extra=exc.extra,
         ) from exc
     # Several issues are created here, so no one ETag header can describe the
     # answer: each created issue carries its own, as of the end of the start,

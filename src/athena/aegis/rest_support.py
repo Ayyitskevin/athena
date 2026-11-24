@@ -132,7 +132,9 @@ def issue_command_error_response(
         status_code, code = generation_spec
         return JSONResponse(
             status_code=status_code,
-            content={"detail": exc.detail, "code": code},
+            # A renewal's refusal names the holder's own generation as a field
+            # (F11); the command never puts one in a rival's refusal.
+            content={"detail": exc.detail, "code": code, **(exc.extra or {})},
             headers=PRIVATE_LEASE_HEADERS,
         )
     policy_status = _ISSUE_POLICY_HTTP.get(exc.code or "")

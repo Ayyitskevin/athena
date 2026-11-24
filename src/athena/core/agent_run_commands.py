@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Literal
+from typing import Any, Literal
 
 from athena import config
 from athena.core import (
@@ -28,10 +28,14 @@ ErrorKind = Literal[
 class AgentRunCommandError(Exception):
     """A transport-neutral heartbeat rejection."""
 
-    def __init__(self, kind: ErrorKind, detail: str):
+    def __init__(
+        self, kind: ErrorKind, detail: str, *, extra: dict[str, Any] | None = None
+    ):
         super().__init__(detail)
         self.kind = kind
         self.detail = detail
+        # Structured fields beside the prose: the bound a capacity refusal names.
+        self.extra = extra
 
 
 _WRITE_SCOPES = frozenset(
@@ -187,6 +191,7 @@ def heartbeat(
                 raise AgentRunCommandError(
                     "capacity",
                     "agent run check-in capacity reached; refresh an existing run_id",
+                    extra={"limit": config.AGENT_RUN_MAX_CHECKINS_PER_AGENT},
                 )
         agent_run_checkins.upsert_checkin(
             conn, agent_id=agent_id, run_id=normalized_run_id, token_id=token_id

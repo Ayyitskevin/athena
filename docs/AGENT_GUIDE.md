@@ -12,7 +12,14 @@ on every write that belongs to one execution, so the trail groups them.
 Every refusal (any 4xx or 5xx JSON body) carries a `code` beside its `detail`, from
 one registry. Branch on `code`, never on the `detail` text. Over MCP a refused call
 returns that same object with `isError` true, and `next` names the call that resolves
-it where one exists. The codes are listed in [AGENT_API.md](AGENT_API.md#refusal-codes).
+it where one exists. These codes carry their facts as fields beside the prose:
+`claim_held` (`holder`, `expires_at`, `events_after`), `lease_generation_required`
+to the lease's holder (`generation`), `fence_overlap` (`fence`), `rate_limited`
+(`rate_limit`), `payload_too_large` (`limit_bytes`), `capacity_reached` (`limit`),
+`agent_budget_exhausted` (`budget`), `cursor_ahead` (`latest_visible_event_id`) and
+`approval_required` (`approval`, `events_after`). A `validation_error` names a bound
+(a maximum length, a range) in its `detail` only. The codes are listed in
+[AGENT_API.md](AGENT_API.md#refusal-codes).
 `GET /openapi-agent.json` is the REST surface your token can call, without the browser
 routes `/openapi.json` also lists, and it declares per operation the bearer scheme,
 `Idempotency-Key`, `If-Match` and `ETag`, the run headers and this refusal body.

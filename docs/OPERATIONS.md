@@ -1046,7 +1046,8 @@ read-only; they do not change authentication or token behavior.
 
 Bearer-token API traffic is rate limited per token by
 `ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE`. A rejected request returns `429`, a
-`Retry-After` header, and rate-limit headers. Browser sessions are not
+`Retry-After` header, and rate-limit headers; the body's `rate_limit` carries the
+same `limit`, `remaining` and `retry_after_seconds` as fields. Browser sessions are not
 token-limited. `athena-serve` refuses the legacy `X-Athena-Actor` trust mode.
 
 

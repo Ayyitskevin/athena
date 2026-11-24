@@ -443,7 +443,9 @@ def test_bootstrap_credential_guesses_use_the_anonymous_rate_limit(tmp_path):
 
     assert wrong.status_code == 401
     assert bounded.status_code == 429
-    assert bounded.json() == {
+    bounded_body = bounded.json()
+    assert bounded_body.pop("rate_limit")["limit"] == 1
+    assert bounded_body == {
         "detail": "anonymous rate limit exceeded",
         "code": "rate_limited",
     }

@@ -750,7 +750,13 @@ def test_rest_handoff_lifecycle_projections_and_escaping(tmp_path):
             assert rejected.status_code == status
             assert rejected.json()["code"] == code
             assert rejected.headers["cache-control"] == "private, no-store"
-            assert first_generation not in rejected.text
+            if code == "lease_generation_required":
+                # The current holder sent none: its own generation is named as
+                # a field (F11), as a repeated claim names it.
+                assert rejected.json()["generation"] == first_generation
+            else:
+                # A wrong or stale token is never answered with the real one.
+                assert first_generation not in rejected.text
 
         for bad_evidence in (["x"] * 11, ["x" * 1001]):
             rejected = client.post(

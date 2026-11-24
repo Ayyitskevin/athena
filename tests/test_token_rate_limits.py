@@ -47,6 +47,12 @@ def test_bearer_token_is_limited_after_configured_requests(tmp_path):
         assert limited.json() == {
             "detail": "token rate limit exceeded",
             "code": "rate_limited",
+            # The headers' numbers, as fields (F11).
+            "rate_limit": {
+                "limit": 2,
+                "remaining": 0,
+                "retry_after_seconds": int(limited.headers["retry-after"]),
+            },
         }
         assert 1 <= int(limited.headers["retry-after"]) <= 60
         assert limited.headers["x-ratelimit-limit"] == "2"
