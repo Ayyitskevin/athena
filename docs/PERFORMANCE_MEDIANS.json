@@ -1,0 +1,6 @@
+{
+ "schema": "athena.hot_path_medians.v1",
+ "recorded": false,
+ "meaning": "Not yet recorded. The 10,000-issue medians are recorded by scripts/benchmark_hot_paths.py --record on a quiet machine from a committed tree; until then this file holds none, and no number here is a baseline. See docs/PERFORMANCE.md.",
+ "paths": {}
+}

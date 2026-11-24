@@ -18,11 +18,16 @@ asks a script what it does should not find it has already done it.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import importlib.util
+import json
 from pathlib import Path
 import re
 import sqlite3
+import stat
 import subprocess
 import sys
+import threading
+import time
 
 REPO = Path(__file__).resolve().parent.parent
 _SCRIPT = re.compile(r"(?<![\w/.-])scripts/[A-Za-z0-9_][A-Za-z0-9_/-]*\.py\b")
@@ -144,6 +149,210 @@ def test_the_benchmark_seed_runs_at_its_smallest_size(tmp_path):
         )
     finally:
         conn.close()
+
+
+def _seed_fleet(tmp_path: Path, *extra: str) -> Path:
+    database = tmp_path / "fleet.db"
+    seeded = subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "scripts" / "seed_benchmark.py"),
+            str(database),
+            "--shape",
+            "fleet",
+            "--issues",
+            "300",
+            "--hot-comments",
+            "3",
+            *extra,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        cwd=tmp_path,
+    )
+    assert seeded.returncode == 0, seeded.stderr[-2000:]
+    assert f"seeded {database}" in seeded.stdout
+    return database
+
+
+def test_the_fleet_seed_writes_the_shape_it_promises(tmp_path):
+    """H8: the medians in docs/PERFORMANCE_MEDIANS.json are only as reproducible
+    as the seed. Read back the shape its docstring promises; the map beside it
+    holds bearer tokens, so only its owner may read it."""
+    database = _seed_fleet(tmp_path)
+    seed_map_path = tmp_path / "fleet.db.json"
+    assert stat.S_IMODE(seed_map_path.stat().st_mode) == 0o600
+    seed_map = json.loads(seed_map_path.read_text())
+    assert seed_map["shape"] == "fleet" and len(seed_map["seats"]) == 6
+    assert seed_map["analyzed"] is False
+    assert set(seed_map["open_variants"]) == {
+        "ready",
+        "blocked",
+        "yielded_needs_input",
+        "completed_left_open",
+        "yielded_blocked",
+        "archived_open",
+        "in_progress",
+        "delegated",
+    }
+    conn = sqlite3.connect(database)
+    try:
+
+        def count(sql: str) -> int:
+            return conn.execute(sql).fetchone()[0]
+
+        assert count("SELECT COUNT(*) FROM issues") == 300
+        assert count("SELECT COUNT(*) FROM users WHERE is_agent = 1") == 6
+        assert count("SELECT COUNT(*) FROM projects WHERE visibility = 'private'") == 1
+        # Through the commands: the closed issues carry their whole lifecycle.
+        assert count("SELECT COUNT(*) FROM activity WHERE verb = 'claim_completed'") > 0
+        assert count("SELECT COUNT(*) FROM issue_claim_handoffs") > 0
+        assert count("SELECT COUNT(*) FROM issues WHERE archived_at IS NOT NULL") > 0
+        assert count("SELECT COUNT(*) FROM issue_links WHERE kind = 'blocks'") > 0
+        assert count("SELECT COUNT(*) FROM issue_contributors") > 0
+        assert count("SELECT COUNT(*) FROM issues WHERE status = 'in_progress'") > 0
+        assert (
+            count("SELECT COUNT(*) FROM sqlite_master WHERE name = 'sqlite_stat1'") == 0
+        )
+    finally:
+        conn.close()
+    # The map is not something to commit.
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-q", "--no-index", "scratch/fleet.db.json"],
+        cwd=REPO,
+        check=False,
+    )
+    assert ignored.returncode == 0
+
+
+def test_the_fleet_seed_refuses_what_it_would_ignore(tmp_path):
+    refused = subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "scripts" / "seed_benchmark.py"),
+            str(tmp_path / "x.db"),
+            "--shape",
+            "fleet",
+            "--events",
+            "10",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=tmp_path,
+    )
+    assert refused.returncode == 2 and "--events" in refused.stderr
+    assert not (tmp_path / "x.db").exists()
+
+
+def _benchmark(*args: str, **kwargs) -> list[str]:
+    return [sys.executable, str(REPO / "scripts" / "benchmark_hot_paths.py"), *args]
+
+
+def test_the_benchmark_runs_records_and_leaves_nothing_behind(tmp_path):
+    """Run the benchmark once over a small seed with --record and read the
+    file's form back. Nothing here looks at a timing: the gate holds query
+    plans, not numbers. Its scratch directory is gone when it returns."""
+    database = _seed_fleet(tmp_path)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    medians = tmp_path / "medians.json"
+    measured = subprocess.run(
+        _benchmark(
+            str(database),
+            "--calls",
+            "1",
+            "--rounds",
+            "1",
+            "--scratch-root",
+            str(scratch),
+            "--record",
+            str(medians),
+            "--record-anyway",
+            "a test run",
+        ),
+        capture_output=True,
+        text=True,
+        timeout=300,
+        cwd=tmp_path,
+    )
+    assert measured.returncode == 0, measured.stderr[-2000:]
+    assert list(scratch.iterdir()) == []
+    document = json.loads(medians.read_text())
+    assert document["schema"] == "athena.hot_path_medians.v1"
+    assert document["recorded"] is True
+    assert document["workspace"]["issues"] == 300
+    paths = document["paths"]
+    assert "GET /desk (seat)" in paths and "POST /issues/claim-next (seat)" in paths
+    assert all(row["status"] in (200, 201) for row in paths.values() if "status" in row)
+    reads = [row for name, row in paths.items() if not name.startswith("POST")]
+    assert all(row["n"] == 1 and row["median_ms"] >= 0 for row in reads)
+    if document["recorded_despite"] is not None:
+        assert document["recorded_despite"]["reason"] == "a test run"
+    # The tracked file is in the same form; until it is recorded it holds none.
+    tracked = json.loads((REPO / "docs" / "PERFORMANCE_MEDIANS.json").read_text())
+    assert tracked["schema"] == document["schema"]
+    if tracked["recorded"]:
+        assert set(tracked["paths"]) == set(paths)
+    else:
+        assert tracked["paths"] == {}
+
+
+def _alive(pid: int) -> bool:
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except (FileNotFoundError, IndexError):
+        return False
+    return state != "Z"
+
+
+def _wait_for(condition, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        threading.Event().wait(0.1)
+    return condition()
+
+
+def test_a_killed_benchmark_leaves_no_server_and_no_scratch(tmp_path):
+    """SIGKILL runs no cleanup, and a test's subprocess timeout sends one. The
+    server is in its own process group and a watcher removes it and the scratch
+    directory when the benchmark's end closes the pipe it holds."""
+    database = _seed_fleet(tmp_path)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    running = subprocess.Popen(
+        _benchmark(str(database), "--calls", "100000", "--scratch-root", str(scratch)),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        assert _wait_for(lambda: list(scratch.glob("*/server.pid")), 60)
+        pid = int(next(scratch.glob("*/server.pid")).read_text())
+        assert _alive(pid)
+    finally:
+        running.kill()
+        running.wait()
+    assert _wait_for(lambda: not _alive(pid), 30), f"athena-serve {pid} still runs"
+    assert _wait_for(lambda: list(scratch.iterdir()) == [], 30), list(scratch.iterdir())
+
+
+def test_record_refuses_a_busy_machine_or_a_changed_checkout():
+    """A median recorded at a load above the CPU count, or from a checkout
+    that is not the commit it names, is not a baseline."""
+    spec = importlib.util.spec_from_file_location(
+        "benchmark_hot_paths", REPO / "scripts" / "benchmark_hot_paths.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    refusals = module.record_refusals
+    assert refusals(load=1.0, cpus=4, commit="abc1234", changes="") == []
+    assert refusals(load=24.0, cpus=4, commit="abc1234", changes="") != []
+    assert refusals(load=1.0, cpus=4, commit="abc1234", changes=" M src/x.py") != []
+    assert refusals(load=1.0, cpus=4, commit=None, changes=None) != []
 
 
 def test_the_documents_name_scripts_that_exist():

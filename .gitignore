@@ -26,6 +26,8 @@ venv*/
 *.db
 *.db-wal
 *.db-shm
+# scripts/seed_benchmark.py writes a seeded database's map beside it, with tokens
+*.db.json
 /data/
 
 # OS / editor noise
