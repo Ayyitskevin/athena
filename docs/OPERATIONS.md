@@ -62,7 +62,7 @@ when the code reads a variable the registry does not declare.
 | `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | no | Per-client-IP ceiling used by optional-identity REST reads and each signed-inbound attempt (forge and Icarus callbacks). It is not a global browser-request ceiling. Keyed by the accepted direct peer, never forwarding headers. Tailnet mode requires a positive value. |
 | `ATHENA_LOGIN_RATE_LIMIT_PER_MINUTE` | `10` | no | Per-client-IP cap on `POST /login` attempts, checked before the password hash (bounds brute force and pbkdf2 CPU). Over the limit returns `429` with `Retry-After`. Keyed by the accepted direct peer, never forwarding headers. `0` disables it and is refused in tailnet mode. |
 | `ATHENA_LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE` | `5` | no | Per-**account** cap on `POST /login` attempts, keyed by the submitted email address rather than the resolved user, so a real address and an unknown one are throttled identically and the limiter cannot be used to test whether an account exists. Closes the axis the per-IP limit above leaves open: credential stuffing is distributed by construction. `0` disables it. See SECURITY.md for the denial-of-service trade. |
-| `ATHENA_ANONYMOUS_READS` | `true` | no | When `false`, REST reads require an authenticated REST actor and browser routes require a resolved browser session, regardless of container visibility. Signing in and first-user creation stay reachable so the switch cannot lock out the operator. Bearer and trusted-header credentials remain REST/MCP-only and never satisfy the browser gate. Swagger UI and ReDoc follow that browser rule; OpenAPI, liveness, readiness, and build identity remain public metadata. |
+| `ATHENA_ANONYMOUS_READS` | `true` | no | When `false`, REST reads require an authenticated REST actor and browser routes require a resolved browser session, regardless of container visibility. Signing in and first-user creation stay reachable so the switch cannot lock out the operator. Bearer and trusted-header credentials remain REST/MCP-only and never satisfy the browser gate. Swagger UI and ReDoc follow that browser rule; OpenAPI, liveness, readiness, and build identity remain public metadata. Tailnet mode refuses to start until this is set explicitly, either way. `athena-doctor` prints the state, how many GET routes the credential gate lets a caller with none past, the public projects and spaces, and the reads no container scopes. |
 | `ATHENA_DEFAULT_VISIBILITY` | `public` | no | Visibility new projects and spaces are born with (`public` or `private`). Ergonomics, not enforcement: it does nothing for containers that already exist, and nothing at all when `ATHENA_ANONYMOUS_READS=false` has already closed reads. |
 | `ATHENA_LIVE_REFRESH_SECONDS` | `10` | no | How often the three self-refreshing cockpit panels (fleet attention, active claimed work, run controls) re-ask the server for their own markup. `0` turns polling off — the pages still render and say so, they just stop updating themselves. Any other value must be 5–3600; the floor is a load bound, since each polling admin costs roughly `0.5 ms / interval` of server time. |
 | `ATHENA_EGRESS_PRIVATE_HOSTS` | *(empty)* | no | Exact hostnames (comma-separated, case-insensitive, no wildcards) outbound webhook/dispatch POSTs may reach even though they resolve to private, loopback, or link-local addresses. Empty keeps the SSRF policy absolute. Set it when your webhook receiver or execution fleet legitimately lives on your own machine, LAN, or tailnet — e.g. `127.0.0.1` — and name only hosts you operate. Delivery still pins the connection to the resolved address. |
@@ -392,6 +392,46 @@ Run `athena-doctor --deployment --host <exact-ip> --port <exact-port>` after the
 migration, start `athena-serve` with the same listener values, and follow it with
 the service-level `/readyz` check. For a first install, use the dedicated
 [First User Bootstrap](#first-user-bootstrap) flow instead.
+
+### What the instance answers without a credential
+
+Plain and deployment modes of `athena-doctor` also print one line of this shape
+(here with anonymous reads on):
+
+```text
+anonymous reads in this environment: on (ATHENA_ANONYMOUS_READS is not set; the default is on); N of M GET routes let a caller with no credential past the credential gate (R of RM REST routes, B of BM browser routes, D OpenAPI documents); past the gate a route may still ask the viewer to sign in, or answer 404 for a hidden or absent row or for single sign-on that is not configured; public containers: P of PM projects (KEY, ...), S of SM spaces (KEY, #ID, ...); readable whatever a container's visibility: issues with no project: K; labels, the activity feed and its CSV export, and fleet metrics; set ATHENA_ANONYMOUS_READS=false to require a credential for every read
+```
+
+The setting is the one in the environment the doctor runs in, which is why the
+line says so: run it with the service's environment to learn the service's.
+It says whether the variable was set or left at its default, which stays on.
+
+The route count comes from the application's own routes, each asked the way
+its identity dependency decides: a REST route that requires a credential never
+counts, one with an optional identity counts while anonymous reads are on, and
+one with no identity dependency (health, readiness, version, the OpenAPI
+documents) always counts; a browser route (a page, its JSON and CSV helpers,
+the sign-in routes) counts when the browser-session gate lets a signed-out
+request through. It is what the credential gate admits, not what answers: past
+the gate a page may still answer a signed-out viewer with its own sign-in
+prompt, and a route may answer 404 for a hidden or absent row or for single
+sign-on that is not configured, so fewer routes answer than the count. The
+doctor prints the count stored with the release (`athena.exposure`), so it does
+not build the application; the test suite recomputes it from the routes and
+fails when a route changes it.
+
+Public projects and spaces are named by key when the key has a project key's
+shape (a letter, then up to nine letters or digits), and as `#<id>` otherwise,
+at most ten of each; a private one is never named. Some reads are scoped to no
+container, so they answer a caller with no credential while anonymous reads are
+on even when every project and space is private: issues with no project (the
+line counts them), labels, the activity feed and its CSV export, and fleet
+metrics.
+
+The first start, `athena-serve --bootstrap`, prints one line saying what
+anonymous reads are. In tailnet mode `athena-serve` refuses to start, and
+`athena-doctor --deployment` refuses, until `ATHENA_ANONYMOUS_READS` is set
+explicitly to `true` or `false`.
 
 ### The seat doctor — proving one agent's wiring
 
@@ -1477,6 +1517,12 @@ Before leaving laptop-only development:
 - Leave `ATHENA_COOKIE_SECURE` off; the current direct-HTTP launcher refuses it.
   Do not add TLS termination or a proxy without defining and reviewing a new
   supported deployment contract.
+- Decide `ATHENA_ANONYMOUS_READS`: `false` requires a credential for every read;
+  the default, on, lets anyone who reaches the listener read every public
+  project and space. Tailnet mode refuses to start until it is set either way.
+  `athena-doctor` prints the state, the GET routes the credential gate lets a
+  caller with none past, the public containers and the reads no container
+  scopes.
 - Set `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` (e.g. `120`) when optional-identity
   REST reads or signed-inbound endpoints need a direct-peer-IP ceiling. It does
   not globally limit anonymous browser pages.

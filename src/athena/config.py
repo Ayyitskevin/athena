@@ -251,7 +251,11 @@ _DECLARED: tuple[Setting, ...] = (
         "switch cannot lock out the operator. Bearer and trusted-header "
         "credentials remain REST/MCP-only and never satisfy the browser gate. "
         "Swagger UI and ReDoc follow that browser rule; OpenAPI, liveness, "
-        "readiness, and build identity remain public metadata.",
+        "readiness, and build identity remain public metadata. Tailnet mode "
+        "refuses to start until this is set explicitly, either way. "
+        "`athena-doctor` prints the state, how many GET routes the credential "
+        "gate lets a caller with none past, the public projects and spaces, and "
+        "the reads no container scopes.",
         "server",
     ),
     Setting(
@@ -835,6 +839,10 @@ LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE = _int_env(
 # changing them for existing deployments would silently break the loopback setup the
 # product is documented around.
 ANONYMOUS_READS = _bool_env("ATHENA_ANONYMOUS_READS")
+# Whether the operator chose the value rather than inheriting the default. Tailnet
+# mode refuses to start without a choice (decision D7): an instance other machines
+# can reach must not be readable without a credential by omission.
+ANONYMOUS_READS_EXPLICIT = _env("ATHENA_ANONYMOUS_READS") is not None
 
 _VISIBILITIES = frozenset({"public", "private"})
 

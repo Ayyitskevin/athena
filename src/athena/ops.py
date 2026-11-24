@@ -304,6 +304,25 @@ def _deployment_checks(
     ]
 
 
+def _anonymous_reads_report(db_path: Path) -> str:
+    """The doctor's line: the setting, the route count, the public containers."""
+    from athena import config, exposure
+
+    routes = exposure.ROUTE_COUNTS[config.ANONYMOUS_READS]
+    conn = sqlite3.connect(_sqlite_uri(db_path, mode="ro"), uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        containers = exposure.public_containers(conn)
+    finally:
+        conn.close()
+    return exposure.doctor_line(
+        routes,
+        containers,
+        anonymous_reads=config.ANONYMOUS_READS,
+        explicit=config.ANONYMOUS_READS_EXPLICIT,
+    )
+
+
 def _port_argument(value: str) -> int:
     try:
         port = int(value)
@@ -517,6 +536,7 @@ def serve_main(argv: list[str] | None = None) -> int:
             login_account_rate_limit_per_minute=(
                 config.LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE
             ),
+            anonymous_reads_explicit=config.ANONYMOUS_READS_EXPLICIT,
         )
         checks = _deployment_checks(
             config.DB_PATH,
@@ -547,6 +567,18 @@ def serve_main(argv: list[str] | None = None) -> int:
         f"{len(authorities)} Host authorities)",
         flush=True,
     )
+    if args.bootstrap:
+        # The first start of an instance says, once, what anonymous reads are.
+        from athena import exposure
+
+        print(
+            exposure.first_start_line(
+                exposure.ROUTE_COUNTS[config.ANONYMOUS_READS],
+                anonymous_reads=config.ANONYMOUS_READS,
+                explicit=config.ANONYMOUS_READS_EXPLICIT,
+            ),
+            flush=True,
+        )
     print("athena-serve: preflight ok", flush=True)
     _run_server(
         host=bind_host,
@@ -963,6 +995,7 @@ def _deployment_doctor_checks(
             login_account_rate_limit_per_minute=(
                 config.LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE
             ),
+            anonymous_reads_explicit=config.ANONYMOUS_READS_EXPLICIT,
         )
         report.record(
             "network", "passed", "network mode and listener binding validated"
@@ -1025,7 +1058,9 @@ def _doctor_checks(args: argparse.Namespace, report: _DoctorReceipt) -> list[str
             f"plain doctor refuses a recovery bundle database; run `{command}` instead"
         )
     if args.deployment:
-        return _deployment_doctor_checks(args, report)
+        checks = _deployment_doctor_checks(args, report)
+        checks.append(_anonymous_reads_report(args.db_path))
+        return checks
     checks = [
         _run_doctor_check(
             report,
@@ -1049,6 +1084,7 @@ def _doctor_checks(args: argparse.Namespace, report: _DoctorReceipt) -> list[str
                 lambda: _check_attachment_dir(args.db_path, args.attach_dir),
             )
         )
+    checks.append(_anonymous_reads_report(args.db_path))
     return checks
 
 
