@@ -454,6 +454,69 @@ reviewed. Run it after onboarding an agent, after any token rotation, and
 after a deploy move; [`AGENT_BOOT.md`](AGENT_BOOT.md) names it as the
 wire-first proof a seat must pass before its rules file adopts the boot block.
 
+## Startup Refusals
+
+`athena-serve` refuses to start, and `athena-doctor` fails, rather than serve a
+database it cannot trust. Each refusal is one line on standard error that
+states the condition, names the database file and the object it is about (a
+migration file, a schema object), and ends with what to do. Every refusal
+still refuses. The line is printed with control characters escaped, so nothing
+a database or a path holds reaches the terminal raw.
+
+A command is printed only where it runs exactly as printed and does what its
+line says, in the state the line is printed for; otherwise the line states the
+condition and names the section of this runbook to follow, and prints no
+command. So a path holding a control character gets no command, a start
+command carries the `--host` and `--port` of the start that was refused (and
+none is printed for an inherited `--fd` listener, or by `athena-doctor`), and a
+`chmod` names only the file or directory a write would fail on.
+`tests/test_startup_refusals.py` runs every printed command in a scratch copy
+of each state it is printed for. For example:
+
+```text
+athena-serve: database is missing migrations: 0084_title_link_bindings.sql, 0085_desk_cursor_repair.sql (database /var/lib/athena/athena.db); this Athena release has migrations the database has not applied; stop Athena first, then keep a copy of the database with its -wal and -shm files: `mkdir -m 700 /var/lib/athena/athena.db.kept && for f in /var/lib/athena/athena.db /var/lib/athena/athena.db-wal /var/lib/athena/athena.db-shm; do if [ -e "$f" ]; then cp -p "$f" /var/lib/athena/athena.db.kept/; fi; done`, then apply them: `athena-doctor /var/lib/athena/athena.db --migrate`
+```
+
+No remedy restores over the database in one step. Where the answer is a
+restore, the line first says to stop Athena and keep a copy of the database
+with its `-wal` and `-shm` files (a plain file copy: `athena-backup` opens the
+database through SQLite, which fails on a damaged file), then points at
+[Restore a matched pair](#restore-a-matched-pair). `mkdir` refuses an existing
+copy, so the keep command never overwrites one.
+
+| The line says | What it means | What to do |
+|---|---|---|
+| `database does not exist` | `ATHENA_DB` names no file. Normal start never creates a database. | If `ATHENA_DB` is wrong, set it to the existing database. For a new instance at that path, in one shell run the export and the bootstrap start below, then create the first user from that shell as [First User Bootstrap](#first-user-bootstrap) shows; the token lives in that shell, which is what lets it create the user |
+| `database is not migrated: schema_migrations is missing`, `file is not a database`, `bootstrap refuses an existing database that is not recognized as Athena`, `bootstrap refuses an existing database without an applied Athena schema` | The file is not an Athena database. Bootstrap never takes over a file that holds other data. | `ATHENA_DB` is likely wrong: set it to the Athena database. For a new instance, choose a path in a directory of its own and follow [First User Bootstrap](#first-user-bootstrap); no path is printed |
+| `database is missing migrations` | This release has migrations the database has not applied. Normal start never migrates. | Stop Athena, keep a copy, then apply them with the migrate command below (see [Deploy Preflight](#deploy-preflight)) |
+| `schema_migrations checksum metadata is missing` | An older Athena wrote the migration ledger without checksums. The migration runner adds them. | Stop Athena, keep a copy, then the migrate command |
+| `database has future migration`, `applied migration is not packaged`, `database has unknown applied migration` | A newer Athena release migrated this database. | Run that release; or stop Athena, keep a copy, and restore a backup taken with this release |
+| `migration checksum mismatch` | The database applied different SQL under that file name than this release ships. | Run the release that applied it; or stop Athena, keep a copy, and restore |
+| `database schema does not match the packaged Athena schema` | The schema was changed outside Athena's migrations; the line names each `missing`, `unexpected` or `changed` table, index, trigger or view. | Stop Athena, keep a copy, and restore a backup taken with this release |
+| `... is not part of this release's schema` (when every difference is `unexpected`) | Something added a table, index, trigger or view that Athena does not make; nothing Athena needs is missing. | If you or a tool added it, stop Athena, keep a copy, and remove it; no restore is needed |
+| `database integrity check failed`, `database foreign key check failed`, `database disk image is malformed` | SQLite reports the file damaged, or rows point at rows that do not exist. | Stop Athena, keep a copy, and restore a verified backup |
+| any other line naming `schema_migrations` | The migration ledger is damaged (an invalid, duplicate or non-contiguous row). | Stop Athena, keep a copy, and restore |
+| `invalid migration inventory entry`, `duplicate migration sequence`, `migration inventory is missing`, `migration is not valid UTF-8`, `no Athena migrations were found` | The installed package's own migration files are damaged. | Reinstall this Athena release from the wheel or checkout it came from |
+| `... : database ... cannot be written` (`database file is not writable`, `data directory is not writable`, `attempt to write a readonly database`, `unable to open database file`) | Athena must write the database and create `athena.db-wal` and `athena.db-shm` beside it. `athena-serve` checks, before starting, whether the account it runs as could write them (what a write would meet, not the mode bits, so a root-run instance with a 0400 file still starts); `athena-doctor --deployment` only warns, since the account running it may be an operator account. | The line names only what a write would fail on: the file, `chmod u+w /var/lib/athena/athena.db`, or the directory, `chmod u+w /var/lib/athena`, printed when the account may run it (it owns the path, or is root). It prints no command when the path belongs to another account, the directory is shared (sticky or world-writable: give the database a directory of its own), the filesystem is mounted read-only (remount it read-write), or the modes already allow the write (an immutable attribute or a missing capability) |
+| `... is a directory, not a database file` | `ATHENA_DB` names a directory. | Set `ATHENA_DB` to the database file itself |
+| `... does not exist, so the data directory ... cannot be created` (from `--bootstrap` or `athena-doctor --migrate`) | Athena creates only the database's own directory. | Create it and the data directory as [First User Bootstrap](#first-user-bootstrap) does, or set `ATHENA_DB` to the existing database |
+| `... is a symbolic link to ..., whose directory ... does not exist` | `ATHENA_DB` is a link into a directory that is missing. | Create that directory, or point the link or `ATHENA_DB` at the database |
+| `a part of ... is a file, not a directory` | A component of the path is a file. | Set `ATHENA_DB` to a path inside a directory |
+| `migration NNNN_name.sql failed` (from `--bootstrap` or `athena-doctor --migrate`) | That migration met a schema it does not expect. It was rehearsed on a private copy first and was not applied. | Stop Athena, keep a copy, restore a backup taken before the drift, then apply migrations as [Deploy Preflight](#deploy-preflight) shows. No migrate command is printed: in this state it would fail again |
+| `bootstrap startup requires a database with zero users` | The database already has users. | Start it normally, without `--bootstrap` and without the token, with the same `--host` and `--port` the line carries |
+
+The commands, with this runbook's path, for a start without `--host` or
+`--port` (a refusal prints them with its own path and listener arguments):
+
+- keep a copy (stop Athena first): `mkdir -m 700 /var/lib/athena/athena.db.kept && for f in /var/lib/athena/athena.db /var/lib/athena/athena.db-wal /var/lib/athena/athena.db-shm; do if [ -e "$f" ]; then cp -p "$f" /var/lib/athena/athena.db.kept/; fi; done`
+  It never overwrites a copy: where `athena.db.kept` is there from an earlier
+  refusal, the refusal names it and prints no command until it is moved
+  elsewhere.
+- migrate: `athena-doctor /var/lib/athena/athena.db --migrate`
+- bootstrap, in one shell: `export ATHENA_BOOTSTRAP_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"`, then `athena-serve --bootstrap`
+- start normally after bootstrap: `env -u ATHENA_BOOTSTRAP_TOKEN athena-serve`
+- write access: `chmod u+w /var/lib/athena/athena.db` for the file, `chmod u+w /var/lib/athena` for the directory
+
 ## Attachment Storage Integrity
 
 New uploads are written to a private, unique sibling staging file, flushed and

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 from dataclasses import dataclass
 import json
 import os
@@ -14,7 +15,7 @@ import stat
 import sys
 import tempfile
 import time
-from typing import Any, Callable, TextIO
+from typing import Any, Callable, Iterator, TextIO
 from datetime import datetime, timezone
 
 from athena.core import activity_chain, attachments, db, deployment
@@ -26,6 +27,7 @@ from athena.core.backup import (
 )
 from athena.core.recovery import (
     RecoveryActivityChainVerification,
+    SchemaMismatchError,
     RecoveryChainVerificationError,
     RecoveryPhaseResult,
     create_recovery_bundle,
@@ -75,6 +77,484 @@ def _sqlite_uri(path: Path, *, mode: str) -> str:
     return f"{path.absolute().as_uri()}?mode={mode}"
 
 
+def _refusal(exc: BaseException, message: str) -> BaseException:
+    """``exc`` restated as one line naming its file, object and command (H12).
+
+    The refusal keeps the type it was raised with, so every caller that catches
+    it still does, and carries the original as ``athena_refusal_cause``: the
+    doctor's receipt classifies that, not the remedy text."""
+    try:
+        refusal = type(exc)(message)
+    except TypeError:
+        refusal = ValueError(message)
+    setattr(refusal, "athena_refusal_cause", exc)
+    return refusal
+
+
+#: The database path a documented remedy is rendered with (docs/OPERATIONS.md).
+DOCUMENTED_PATH = Path("/var/lib/athena/athena.db")
+
+#: The listener arguments ``athena-serve`` was started with (``--host``,
+#: ``--port``), so a remedy that starts it again can carry them. None in the
+#: doctor and for an inherited ``--fd`` listener: then no start command is
+#: printed, since none would be certain to start the same listener.
+_START_ARGUMENTS: list[str] | None = None
+
+_RESTORE_RUNBOOK = 'docs/OPERATIONS.md "Restore a matched pair"'
+_BOOTSTRAP_RUNBOOK = 'docs/OPERATIONS.md "First User Bootstrap"'
+_PREFLIGHT_RUNBOOK = 'docs/OPERATIONS.md "Deploy Preflight"'
+_TOKEN_EXPORT = (
+    'export ATHENA_BOOTSTRAP_TOKEN="$(python3 -c '
+    "'import secrets; print(secrets.token_urlsafe(32))')\""
+)
+_WRONG_PATH = (
+    "ATHENA_DB is likely wrong: set it to the Athena database. Bootstrap does not "
+    "take over a file that holds other data; for a new instance, choose a path in "
+    f"a directory of its own and follow {_BOOTSTRAP_RUNBOOK}"
+)
+_RESTORE = (
+    "{keep}, then restore a backup taken with this release as "
+    f"{_RESTORE_RUNBOOK} describes"
+)
+_NEWER_RELEASE = "a newer Athena release migrated this database: run that release; or "
+
+
+@dataclass(frozen=True, slots=True)
+class DatabaseRefusal:
+    """One kind of database refusal: how its line starts or what it says
+    (``label``), and the remedy it prints (``remedy``). The remedy's
+    placeholders are filled per state by ``render_remedy``: ``{keep}`` (stop
+    Athena, then copy the database with its ``-wal`` and ``-shm`` files),
+    ``{migrate}``, ``{bootstrap}`` and ``{normal_start}``. Each becomes a
+    command only where it runs as printed and does what the line says;
+    otherwise it is prose naming the runbook section."""
+
+    label: str
+    remedy: str
+    prefix: bool = True
+
+
+#: Every database refusal the operate lane prints, in the order they are
+#: matched. ``docs/OPERATIONS.md`` lists every row (tested), and
+#: ``tests/test_startup_refusals.py`` runs every command each prints.
+DATABASE_REFUSALS: tuple[DatabaseRefusal, ...] = (
+    DatabaseRefusal(
+        "is a directory, not a database file",
+        "set ATHENA_DB to the database file itself",
+        prefix=False,
+    ),
+    DatabaseRefusal(
+        "cannot be written",
+        "as its owner, run `chmod u+w {db}` for the file or `chmod u+w {dir}` for "
+        "its directory, whichever the line names",
+        prefix=False,
+    ),
+    DatabaseRefusal(
+        "cannot be created",
+        "create it and the data directory as " + _BOOTSTRAP_RUNBOOK + " does, or "
+        "set ATHENA_DB to the existing database",
+        prefix=False,
+    ),
+    DatabaseRefusal(
+        "is a symbolic link to",
+        "create that directory, or point the link or ATHENA_DB at the database",
+        prefix=False,
+    ),
+    DatabaseRefusal(
+        "is a file, not a directory",
+        "set ATHENA_DB to a path inside a directory",
+        prefix=False,
+    ),
+    DatabaseRefusal(
+        "database disk image is malformed",
+        "the database file is damaged; " + _RESTORE,
+    ),
+    DatabaseRefusal("file is not a database", _WRONG_PATH),
+    DatabaseRefusal(
+        "failed",
+        "it was not applied, and the database is unchanged by it; the schema has "
+        "drifted from what the migration expects: {keep}, restore a backup taken "
+        f"before the drift as {_RESTORE_RUNBOOK} describes, then apply migrations "
+        f"as {_PREFLIGHT_RUNBOOK} shows",
+        prefix=False,
+    ),
+    DatabaseRefusal(
+        "database does not exist",
+        "if ATHENA_DB is wrong, set it to the existing database; for a new "
+        "instance at this path, {bootstrap}",
+    ),
+    DatabaseRefusal(
+        "database is not migrated: schema_migrations is missing", _WRONG_PATH
+    ),
+    DatabaseRefusal(
+        "database is missing migrations",
+        "this Athena release has migrations the database has not applied; "
+        "{keep}, then apply them: {migrate}",
+    ),
+    DatabaseRefusal(
+        "schema_migrations checksum metadata is missing",
+        "an older Athena wrote this migration ledger without checksums; {keep}, "
+        "then let the migration runner add them: {migrate}",
+    ),
+    DatabaseRefusal("database has future migration", _NEWER_RELEASE + _RESTORE),
+    DatabaseRefusal("applied migration is not packaged", _NEWER_RELEASE + _RESTORE),
+    DatabaseRefusal(
+        "database has unknown applied migration", _NEWER_RELEASE + _RESTORE
+    ),
+    DatabaseRefusal(
+        "migration checksum mismatch",
+        "the database applied different SQL under that name than this release "
+        "ships: run the release that applied it; or " + _RESTORE,
+    ),
+    DatabaseRefusal(
+        "is not part of this release's schema",
+        "if you or a tool added it, {keep}, then remove it: Athena starts only on "
+        "the schema its migrations make",
+        prefix=False,
+    ),
+    DatabaseRefusal(
+        "database schema does not match the packaged Athena schema",
+        "the schema was changed outside Athena's migrations; " + _RESTORE,
+    ),
+    DatabaseRefusal(
+        "database integrity check failed",
+        "SQLite reports the file damaged; " + _RESTORE,
+    ),
+    DatabaseRefusal(
+        "database foreign key check failed",
+        "rows point at rows that do not exist; " + _RESTORE,
+    ),
+    DatabaseRefusal(
+        "bootstrap startup requires a database with zero users",
+        "this database already has users; {normal_start}",
+    ),
+    DatabaseRefusal(
+        "bootstrap refuses an existing database that is not recognized as Athena",
+        _WRONG_PATH,
+    ),
+    DatabaseRefusal(
+        "bootstrap refuses an existing database without an applied Athena schema",
+        _WRONG_PATH,
+    ),
+    DatabaseRefusal(
+        "invalid migration inventory entry",
+        "the installed Athena package's migration files are damaged; reinstall "
+        "this Athena release from the wheel or checkout it came from",
+    ),
+    DatabaseRefusal(
+        "duplicate migration sequence",
+        "the installed Athena package's migration files are damaged; reinstall "
+        "this Athena release from the wheel or checkout it came from",
+    ),
+    DatabaseRefusal(
+        "migration inventory is missing",
+        "the installed Athena package's migration files are damaged; reinstall "
+        "this Athena release from the wheel or checkout it came from",
+    ),
+    DatabaseRefusal(
+        "migration is not valid UTF-8",
+        "the installed Athena package's migration files are damaged; reinstall "
+        "this Athena release from the wheel or checkout it came from",
+    ),
+    DatabaseRefusal(
+        "no Athena migrations were found",
+        "the installed Athena package's migration files are damaged; reinstall "
+        "this Athena release from the wheel or checkout it came from",
+    ),
+    # Every other migration-ledger refusal (an invalid, duplicate or
+    # non-contiguous schema_migrations row): matched by its type.
+    DatabaseRefusal(
+        "schema_migrations",
+        "the migration ledger is damaged; " + _RESTORE,
+        prefix=False,
+    ),
+)
+_BY_LABEL = {refusal.label: refusal for refusal in DATABASE_REFUSALS}
+
+# SQLite's primary result codes.
+_SQLITE_CORRUPT = 11
+_SQLITE_READONLY = 8
+_SQLITE_CANTOPEN = 14
+_SQLITE_NOTADB = 26
+
+
+class DatabaseNotWritable(PermissionError):
+    """The start found the database or its directory not writable."""
+
+
+def _keep_text(db_path: Path) -> str:
+    """Stop Athena, then copy the database with whichever of its ``-wal`` and
+    ``-shm`` files exist, into a new private directory beside it. ``mkdir``
+    refuses an existing copy, so the command never overwrites one; where a
+    copy from an earlier refusal is still there the command would stop at
+    ``mkdir``, so the line names that copy and prints no command."""
+    words = [_shell_word(f"{db_path}{suffix}") for suffix in ("", "-wal", "-shm")]
+    copy = _shell_word(f"{db_path}.kept")
+    if os.path.lexists(f"{db_path}.kept"):
+        return (
+            "stop Athena first; a copy kept at an earlier refusal is at "
+            f"{db_path}.kept and is never overwritten: move it elsewhere, and "
+            "this line will print the command that keeps a new copy of the "
+            "database with its -wal and -shm files"
+        )
+    if copy is None or any(word is None for word in words):
+        return (
+            "stop Athena first, then keep a copy of the database file with its "
+            "-wal and -shm files (its path holds a control character, so no "
+            "command is printed)"
+        )
+    files = " ".join(word for word in words if word is not None)
+    return (
+        "stop Athena first, then keep a copy of the database with its -wal and "
+        f"-shm files: `mkdir -m 700 {copy} && for f in {files}; do if [ -e "
+        f'"$f" ]; then cp -p "$f" {copy}/; fi; done`'
+    )
+
+
+def _start_words() -> str | None:
+    if _START_ARGUMENTS is None:
+        return None
+    return shlex.join(["athena-serve", *_START_ARGUMENTS])
+
+
+def render_remedy(remedy: str, db_path: Path) -> str:
+    """A remedy for ``db_path``, each command printed only where it runs as
+    printed and does what the line says."""
+    db_word = _shell_word(str(db_path))
+    dir_word = _shell_word(str(db_path.parent))
+    migrate = (
+        f"`athena-doctor {db_word} --migrate`"
+        if db_word is not None
+        else f"athena-doctor --migrate, as {_PREFLIGHT_RUNBOOK} shows (the path "
+        "holds a control character, so no command is printed)"
+    )
+    start = _start_words()
+    if start is None:
+        bootstrap = f"follow {_BOOTSTRAP_RUNBOOK}"
+        normal_start = (
+            "start athena-serve again with the same arguments, without --bootstrap "
+            "and without ATHENA_BOOTSTRAP_TOKEN"
+        )
+    else:
+        bootstrap = (
+            f"in one shell run `{_TOKEN_EXPORT}`, then `{start} --bootstrap`, and "
+            f"create the first user from that shell as {_BOOTSTRAP_RUNBOOK} shows"
+        )
+        normal_start = (
+            "start it normally, without --bootstrap and without the bootstrap "
+            f"token: `env -u ATHENA_BOOTSTRAP_TOKEN {start}`"
+        )
+    return remedy.format(
+        db=db_word if db_word is not None else str(db_path),
+        dir=dir_word if dir_word is not None else str(db_path.parent),
+        keep=_keep_text(db_path),
+        migrate=migrate,
+        bootstrap=bootstrap,
+        normal_start=normal_start,
+    )
+
+
+def _one_line(text: str) -> str:
+    """The condition as raised. A newline it holds (a schema object or path
+    name) stays in it, to be escaped where the line is printed."""
+    return text.strip()
+
+
+def _sqlite_code(exc: BaseException) -> int | None:
+    code = getattr(exc, "sqlite_errorcode", None)
+    return code & 0xFF if isinstance(code, int) else None
+
+
+def _read_only_mount(directory: Path) -> bool:
+    try:
+        return bool(os.statvfs(directory).f_flag & os.ST_RDONLY)
+    except OSError:
+        return False
+
+
+def _not_writable(db_path: Path) -> str | None:
+    """Why this process could not write the database, or None: what a write
+    would meet (``os.access``), not what the mode bits say, so a root process
+    that writes a 0400 file is not refused."""
+    if _read_only_mount(db_path.parent):
+        return "its filesystem is mounted read-only"
+    if not os.access(db_path, os.W_OK):
+        mode = stat.S_IMODE(db_path.stat().st_mode)
+        return f"database file is not writable (mode {mode:04o})"
+    if not os.access(db_path.parent, os.W_OK | os.X_OK):
+        mode = stat.S_IMODE(db_path.parent.stat().st_mode)
+        return f"data directory is not writable (mode {mode:04o})"
+    return None
+
+
+def _owner_command(path: Path, label: str) -> str:
+    """``chmod u+w`` for ``path`` when this account may run it (it owns the
+    path, or is root) and the path prints safely; otherwise the condition."""
+    try:
+        metadata = path.stat()
+    except OSError:
+        return f"{label} {path} cannot be inspected"
+    mode = stat.S_IMODE(metadata.st_mode)
+    word = _shell_word(str(path))
+    if metadata.st_uid != os.geteuid() and os.geteuid() != 0:
+        return (
+            f"{label} {path} (mode {mode:04o}) belongs to another account, so no "
+            "command is printed: give the account Athena runs as write access"
+        )
+    if word is None:
+        return (
+            f"{label} {path} is not writable (mode {mode:04o}); its path holds a "
+            "control character, so no command is printed"
+        )
+    return f"{label} {path} is not writable (mode {mode:04o}): run `chmod u+w {word}`"
+
+
+def _write_access_remedy(db_path: Path) -> str:
+    """The remedy for a database that cannot be written. It names whichever of
+    the file and its directory a write would fail on, and only that one, with
+    ``chmod u+w`` (which adds the owner's write permission and narrows nothing)
+    when this account may run it."""
+    directory = db_path.parent
+    base = (
+        f"Athena writes the file and creates {db_path.name}-wal and "
+        f"{db_path.name}-shm beside it; "
+    )
+    if _read_only_mount(directory):
+        return (
+            base + f"the filesystem holding {directory} is mounted read-only: "
+            "remount it read-write"
+        )
+    shared = _shared_directory(directory)
+    problems = []
+    if not os.access(directory, os.W_OK | os.X_OK):
+        if shared is not None:
+            problems.append(
+                f"its directory is not writable and {shared}: give the database a "
+                "directory of its own that the account Athena runs as can write"
+            )
+        else:
+            problems.append(_owner_command(directory, "its directory"))
+    if db_path.exists() and not os.access(db_path, os.W_OK):
+        problems.append(_owner_command(db_path, "the database file"))
+    if not problems:
+        return base + (
+            "the file and its directory allow this account to write, so the cause "
+            "is outside their modes (a read-only mount, an immutable attribute, a "
+            "missing capability) and no command is printed; see docs/OPERATIONS.md "
+            '"Startup Refusals"'
+        )
+    return base + "; ".join(problems)
+
+
+def _refusal_line(exc: BaseException, db_path: Path) -> str | None:
+    """The one line for ``exc``: its condition, the database, and the remedy;
+    None when ``exc`` is not about the database."""
+    condition = _one_line(str(exc))
+    named = "" if str(db_path) in condition else f" (database {db_path})"
+    code = _sqlite_code(exc)
+    if db_path.is_dir() and (
+        code == _SQLITE_CANTOPEN or isinstance(exc, IsADirectoryError)
+    ):
+        refusal = _BY_LABEL["is a directory, not a database file"]
+        return (
+            f"database {db_path} is a directory, not a database file; "
+            + render_remedy(refusal.remedy, db_path)
+        )
+    if isinstance(exc, DatabaseNotWritable) or code in (
+        _SQLITE_READONLY,
+        _SQLITE_CANTOPEN,
+    ):
+        return (
+            f"{condition}: database {db_path} cannot be written; "
+            + _write_access_remedy(db_path)
+        )
+    if isinstance(exc, FileNotFoundError) and os.path.islink(db_path):
+        refusal = _BY_LABEL["is a symbolic link to"]
+        target = Path(os.path.realpath(db_path))
+        return (
+            f"database {db_path} is a symbolic link to {target}, whose directory "
+            f"{target.parent} does not exist; " + render_remedy(refusal.remedy, db_path)
+        )
+    if isinstance(exc, FileNotFoundError) and exc.filename == str(db_path.parent):
+        refusal = _BY_LABEL["cannot be created"]
+        return (
+            f"{db_path.parent.parent} does not exist, so the data directory "
+            f"{db_path.parent} cannot be created; "
+            + render_remedy(refusal.remedy, db_path)
+        )
+    if isinstance(exc, NotADirectoryError):
+        refusal = _BY_LABEL["is a file, not a directory"]
+        return (
+            f"a part of {db_path} is a file, not a directory, so the database "
+            "cannot be created there; " + render_remedy(refusal.remedy, db_path)
+        )
+    if code == _SQLITE_CORRUPT:
+        refusal = _BY_LABEL["database disk image is malformed"]
+        return f"{condition}{named}; " + render_remedy(refusal.remedy, db_path)
+    if code == _SQLITE_NOTADB:
+        refusal = _BY_LABEL["file is not a database"]
+        return f"{condition}{named}; " + render_remedy(refusal.remedy, db_path)
+    if isinstance(exc, SchemaMismatchError) and not (exc.missing or exc.changed):
+        refusal = _BY_LABEL["is not part of this release's schema"]
+        objects = ", ".join(exc.unexpected)
+        verb = "is" if len(exc.unexpected) == 1 else "are"
+        return (
+            f"{condition}{named}; {objects} {verb} not part of this release's "
+            "schema; " + render_remedy(refusal.remedy, db_path)
+        )
+    for refusal in DATABASE_REFUSALS:
+        if refusal.prefix and condition.startswith(refusal.label):
+            return f"{condition}{named}; " + render_remedy(refusal.remedy, db_path)
+    if isinstance(exc, db.MigrationIntegrityError):
+        refusal = _BY_LABEL["schema_migrations"]
+        return f"{condition}{named}; " + render_remedy(refusal.remedy, db_path)
+    return None
+
+
+def _database_refusal(exc: BaseException, db_path: Path) -> BaseException | None:
+    """The refusal ``exc`` restated with its file, object and remedy, or None
+    when it is not about the database (it then propagates as it was)."""
+    line = _refusal_line(exc, db_path)
+    return None if line is None else _refusal(exc, line)
+
+
+@contextlib.contextmanager
+def _database_refusals(db_path: Path) -> Iterator[None]:
+    """Re-raise a refusal about ``db_path`` with its file, object and remedy."""
+    try:
+        yield
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        if hasattr(exc, "athena_refusal_cause"):
+            raise  # already restated
+        refusal = _database_refusal(exc, db_path)
+        if refusal is None:
+            raise
+        raise refusal from exc
+
+
+def _migrate_naming_failure(conn: sqlite3.Connection, db_path: Path) -> list[str]:
+    """``db.migrate``, with a failing migration named by its file.
+
+    The runner applies each migration and its ledger row in one transaction and
+    rolls a failure back, so the first migration the ledger it leaves still has
+    pending is the one that failed."""
+    try:
+        return db.migrate(conn)
+    except sqlite3.Error as exc:
+        try:
+            pending = db.migration_status(conn, require_current=False).pending
+        except (sqlite3.Error, ValueError):
+            raise exc from None
+        if not pending:
+            raise
+        refusal = _BY_LABEL["failed"]
+        raise _refusal(
+            exc,
+            f"migration {pending[0]} failed: {_one_line(str(exc))} "
+            f"(database {db_path}); " + render_remedy(refusal.remedy, db_path),
+        ) from exc
+
+
 def _dry_run_migration(db_path: Path) -> None:
     """Prove a migration and its final schema on a private copy first."""
     candidate = sqlite3.connect(":memory:")
@@ -88,7 +568,7 @@ def _dry_run_migration(db_path: Path) -> None:
             finally:
                 source.close()
         candidate.execute("PRAGMA foreign_keys = ON")
-        db.migrate(candidate)
+        _migrate_naming_failure(candidate, db_path)
         validate_current_database(candidate)
     finally:
         candidate.close()
@@ -253,7 +733,18 @@ def _file_mode_warnings(db_path: Path, attach_dir: Path | None = None) -> list[s
     return warnings
 
 
-def _check_database(db_path: Path, *, migrate: bool) -> str:
+def _check_database(
+    db_path: Path, *, migrate: bool, require_writable: bool = False
+) -> str:
+    with _database_refusals(db_path):
+        return _check_database_state(
+            db_path, migrate=migrate, require_writable=require_writable
+        )
+
+
+def _check_database_state(
+    db_path: Path, *, migrate: bool, require_writable: bool
+) -> str:
     if migrate:
         # db.migrate() is forward-only and commits each migration. Rehearse the
         # complete operation and exact packaged schema on an in-memory backup so
@@ -263,13 +754,19 @@ def _check_database(db_path: Path, *, migrate: bool) -> str:
         _create_private_database(db_path)
         conn = db.connect(db_path)
         try:
-            applied_now = db.migrate(conn)
+            applied_now = _migrate_naming_failure(conn, db_path)
             status = validate_current_database(conn)
         finally:
             conn.close()
     else:
         if not db_path.exists():
             raise FileNotFoundError(f"database does not exist: {db_path}")
+        if require_writable and db_path.is_file():
+            # A start must be able to write: a read-only file or directory used
+            # to pass preflight, answer /readyz, and fail every write with 500.
+            problem = _not_writable(db_path)
+            if problem is not None:
+                raise DatabaseNotWritable(problem)
         conn = sqlite3.connect(_sqlite_uri(db_path, mode="rw"), uri=True)
         conn.row_factory = sqlite3.Row
         try:
@@ -390,12 +887,13 @@ def _check_database_posture(
 ) -> str:
     conn = db.connect(db_path)
     try:
-        return deployment.check_database_posture(
-            conn,
-            bootstrap=bootstrap,
-            enabled_oidc_issuer=enabled_oidc_issuer,
-            max_request_body_bytes=max_request_body_bytes,
-        )
+        with _database_refusals(db_path):
+            return deployment.check_database_posture(
+                conn,
+                bootstrap=bootstrap,
+                enabled_oidc_issuer=enabled_oidc_issuer,
+                max_request_body_bytes=max_request_body_bytes,
+            )
     finally:
         conn.close()
 
@@ -457,9 +955,11 @@ def _deployment_checks(
     enabled_oidc_issuer: str | None,
     max_request_body_bytes: int,
     on_check: Callable[[str, str, Exception | None], None] | None = None,
+    require_writable: bool = False,
 ) -> list[str]:
     if bootstrap:
-        _check_bootstrap_database_before_migration(db_path)
+        with _database_refusals(db_path):
+            _check_bootstrap_database_before_migration(db_path)
 
     def run_check(name: str, action: Callable[[], str]) -> str:
         try:
@@ -473,7 +973,12 @@ def _deployment_checks(
         return result
 
     return [
-        run_check("database", lambda: _check_database(db_path, migrate=bootstrap)),
+        run_check(
+            "database",
+            lambda: _check_database(
+                db_path, migrate=bootstrap, require_writable=require_writable
+            ),
+        ),
         run_check("attachments", lambda: _check_attachment_dir(db_path, attach_dir)),
         run_check(
             "administrator-recovery",
@@ -680,6 +1185,15 @@ def serve_main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.fd is not None and (args.host is not None or args.port is not None):
         parser.error("--fd cannot be combined with --host or --port")
+    # What a remedy may carry to start the same listener again; none for --fd.
+    global _START_ARGUMENTS
+    _START_ARGUMENTS = None
+    if args.fd is None:
+        _START_ARGUMENTS = []
+        if args.host is not None:
+            _START_ARGUMENTS += ["--host", args.host]
+        if args.port is not None:
+            _START_ARGUMENTS += ["--port", str(args.port)]
 
     try:
         from athena import config
@@ -727,6 +1241,9 @@ def serve_main(argv: list[str] | None = None) -> int:
             bootstrap=args.bootstrap,
             enabled_oidc_issuer=(config.OIDC_ISSUER if config.oidc_enabled() else None),
             max_request_body_bytes=config.MAX_REQUEST_BODY_BYTES,
+            # A start must write; the doctor's caller may not be the service
+            # account, so the doctor only warns (doctor_main).
+            require_writable=not args.bootstrap,
         )
     except (
         FileNotFoundError,
@@ -735,7 +1252,7 @@ def serve_main(argv: list[str] | None = None) -> int:
         sqlite3.Error,
         ValueError,
     ) as exc:
-        print(f"athena-serve: {exc}", file=sys.stderr)
+        print(_printable(f"athena-serve: {exc}"), file=sys.stderr)
         return 1
 
     # The route layer reads these process-local bootstrap invariants. _run_server
@@ -744,7 +1261,7 @@ def serve_main(argv: list[str] | None = None) -> int:
     config.ALLOWED_AUTHORITIES = tuple(authority.render() for authority in authorities)
     config.BOOTSTRAP_PASSWORD_REQUIRED = args.bootstrap
     for check in checks:
-        print(check, flush=True)
+        print(_printable(check), flush=True)
     print(
         f"network: ok ({config.NETWORK_MODE}; {bind_host}:{bind_port}; "
         f"{len(authorities)} Host authorities)",
@@ -938,7 +1455,13 @@ def _doctor_failure_reason(name: str, exc: Exception) -> str:
         reason = chain.mismatch_reason or "unknown_mismatch"
         return f"{reason} at event {event}; checked {chain.checked} entries from anchor {anchor} through {through}"
 
+    cause = getattr(exc, "athena_refusal_cause", None)
+    if isinstance(cause, Exception):
+        # The receipt classifies the refusal as raised, not its remedy text.
+        exc = cause
     message = str(exc).casefold()
+    if message.startswith("database schema does not match"):
+        return "schema validation failed"  # it names objects: before "migration"
     if name == "activity-chain":
         _, marker, remainder = message.partition("event ")
         if marker:
@@ -974,7 +1497,8 @@ def _doctor_failure_reason(name: str, exc: Exception) -> str:
         return "deployment network configuration failed"
     if "recovery bundle" in message:
         return "recovery-bundle validation failed"
-    return f"{name} check failed ({type(exc).__name__})"
+    # Never a private class name in a receipt.
+    return f"{name} check failed ({type(exc).__name__.lstrip('_')})"
 
 
 def _run_doctor_check(
@@ -1350,6 +1874,8 @@ def doctor_main(argv: list[str] | None = None) -> int:
     _validate_doctor_arguments(parser, args)
 
     report = _DoctorReceipt(args)
+    global _START_ARGUMENTS
+    _START_ARGUMENTS = None  # the doctor knows no listener to start again
     if not args.recovery_bundle:
         attach_dir = args.attach_dir
         if attach_dir is None:
@@ -1359,7 +1885,17 @@ def doctor_main(argv: list[str] | None = None) -> int:
                 attach_dir = config.ATTACH_DIR
             except ValueError:
                 attach_dir = None
-        for warning in _file_mode_warnings(args.db_path, attach_dir):
+        warnings = _file_mode_warnings(args.db_path, attach_dir)
+        if args.db_path.is_file():
+            # athena-serve refuses a database it cannot write; the doctor's
+            # caller may be an operator account that only reads it.
+            problem = _not_writable(args.db_path)
+            if problem is not None:
+                warnings.append(
+                    f"database {args.db_path} is not writable by the account running "
+                    f"this check ({problem}); run it as the account Athena runs as"
+                )
+        for warning in warnings:
             print(_printable(f"athena-doctor: warning: {warning}"), file=sys.stderr)
     try:
         checks = _doctor_checks(args, report)
@@ -1649,7 +2185,7 @@ def backup_main(argv: list[str] | None = None) -> int:
             exc,
             recovery_destination=(args.backup_path if args.recovery_bundle else None),
         )
-        print(f"athena-backup: {detail}", file=sys.stderr)
+        print(_printable(f"athena-backup: {detail}"), file=sys.stderr)
         return 130
     except (
         FileNotFoundError,
@@ -1659,7 +2195,9 @@ def backup_main(argv: list[str] | None = None) -> int:
         sqlite3.Error,
         ValueError,
     ) as exc:
-        print(f"athena-backup: {_recovery_error_text(exc)}", file=sys.stderr)
+        print(
+            _printable(f"athena-backup: {_recovery_error_text(exc)}"), file=sys.stderr
+        )
         return 1
 
     if args.recovery_bundle:
@@ -1672,20 +2210,24 @@ def backup_main(argv: list[str] | None = None) -> int:
                 ["athena-doctor", str(recovery_bundle.path), "--recovery-bundle"]
             )
             print(
-                "athena-backup: warning: captured a bundle with activity-chain "
-                f"mismatch at event {event_label} ({reason}); follow up with: "
-                f"{follow_up}",
+                _printable(
+                    "athena-backup: warning: captured a bundle with activity-chain "
+                    f"mismatch at event {event_label} ({reason}); follow up with: "
+                    f"{follow_up}"
+                ),
                 file=sys.stderr,
             )
         print(
-            "Created recovery bundle "
-            f"at {recovery_bundle.path} "
-            f"({recovery_bundle.attachment_count} attachments, "
-            f"{recovery_bundle.attachment_bytes} bytes)"
+            _printable(
+                "Created recovery bundle "
+                f"at {recovery_bundle.path} "
+                f"({recovery_bundle.attachment_count} attachments, "
+                f"{recovery_bundle.attachment_bytes} bytes)"
+            )
         )
     else:
         assert backup is not None
-        print(f"Backed up {args.db_path} to {backup}")
+        print(_printable(f"Backed up {args.db_path} to {backup}"))
     if not args.recovery_bundle and args.keep is not None:
         print(
             "Pruned "
