@@ -210,9 +210,11 @@ def main() -> int:
                 if athena.poll() is not None:
                     raise Failure(f"athena-serve exited with {athena.returncode}")
                 try:
+                    # Both loops are turned off above, and readiness says so.
                     if _http("GET", f"{base_url}/readyz") == {
                         "status": "ok",
                         "database": "ok",
+                        "background_loops": "disabled",
                     }:
                         break
                 except (OSError, URLError, ValueError):

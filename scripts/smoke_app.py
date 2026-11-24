@@ -24,7 +24,8 @@ from urllib.request import (
 
 
 EXPECTED_HEALTH = {"status": "ok"}
-EXPECTED_READY = {"status": "ok", "database": "ok"}
+# Both loops are turned off for the smoke, and readiness says so.
+EXPECTED_READY = {"status": "ok", "database": "ok", "background_loops": "disabled"}
 BOOTSTRAP_TOKEN = "process-smoke-bootstrap-token-000001"
 STARTUP_TIMEOUT_SECONDS = 15
 _LOOPBACK_OPENER = build_opener(ProxyHandler({}), HTTPCookieProcessor(CookieJar()))
