@@ -162,6 +162,16 @@ class AgentRunSummaryOut(BaseModel):
     child_run_count: int
 
 
+class AgentLastRefusalOut(BaseModel):
+    """The newest refusal an agent account received (F15). Replaced in place:
+    it is the answer the agent is hitting now, not a history."""
+
+    code: str = Field(description="the refusal's registered code")
+    status_code: int
+    request: str = Field(description="the method and path it answered")
+    at: str
+
+
 class AgentRunHealthRowOut(BaseModel):
     user: AgentIdentityOut
     runs: list[AgentRunSummaryOut]
@@ -174,6 +184,15 @@ class AgentRunHealthRowOut(BaseModel):
     child_run_count: int
     health_state: str
     health_label: str
+    last_refusal: AgentLastRefusalOut | None = Field(
+        description=(
+            "the newest refusal this agent received, or null if none is kept. "
+            "Diagnosis only: nothing happened, so it is on no trail"
+        )
+    )
+    last_nothing_ready_at: str | None = Field(
+        description="when a pickup last told this agent nothing was ready, or null"
+    )
 
 
 class AgentRunHealthTotalsOut(BaseModel):

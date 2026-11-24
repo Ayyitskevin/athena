@@ -474,8 +474,11 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         see fleet-private signals; other tokens see their own claim/control rows,
         claims on issues they may read and answer for (assignee, or delegated the
         issue to its holder), and blockers on issues they may read. A lapsed lease
-        you answer for is recorded once as a `lease_lapsed` event. This tool
-        labels a safe next action but never executes one."""
+        you answer for is recorded once as a `lease_lapsed` event. A completion
+        that reported HOLD or BLOCKED on an issue you answer for is a
+        `held_report` row until someone other than its reporter acts on the
+        issue or anyone claims it again. This tool labels a safe next action
+        but never executes one."""
         return client.get_attention_ranking(
             signals=signals,
             window_hours=window_hours,
@@ -842,7 +845,10 @@ def register_read_tools(tool, mutation_tool, client) -> None:
     def get_agent_run_health(agent_id: int | None = None) -> dict:
         """Read the admin-only fleet cockpit rollup: each agent's bounded recent
         runs, cooperative check-ins, replay posture, lineage counts, and totals.
-        Check-ins are self-reports; they do not prove an OS process is alive."""
+        Check-ins are self-reports; they do not prove an OS process is alive.
+        Each agent also has last_refusal (the newest 4xx it was answered: code,
+        status_code, request, at) and last_nothing_ready_at (when a pickup last
+        answered nothing_ready); both null when none is kept. Diagnosis only."""
         return client.get_agent_run_health(agent_id=agent_id)
 
     # An admin read: the route carries the admin dependency

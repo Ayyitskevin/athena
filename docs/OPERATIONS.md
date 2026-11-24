@@ -1346,6 +1346,12 @@ curl -fsS 'http://127.0.0.1:8000/activity/agent-runs?agent_id=2' \
   -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN"
 ```
 
+Each agent's row also carries `last_refusal` (the newest 4xx answer it
+received: `code`, `status_code`, `request`, `at`) and `last_nothing_ready_at`
+(the newest time a pickup told it nothing was ready), so an idle agent that is
+refused on every call reads differently from one with no work. See
+[EXCEPTION_SURFACES.md](EXCEPTION_SURFACES.md#what-an-agent-was-last-refused).
+
 The cockpit's **Active claimed work** section uses a separate read model for the
 operator question "what is claimed and what needs attention?":
 

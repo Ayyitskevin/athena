@@ -118,6 +118,7 @@ from athena.middleware import (
     SECURITY_HEADERS,
     DeploymentBoundaryMiddleware,
     IdempotencyMiddleware,
+    RefusalTraceMiddleware,
     RequestBodyLimitMiddleware,
     RequestConnectionMiddleware,
     RunContextMiddleware,
@@ -706,6 +707,10 @@ def create_app(
 
     app.add_exception_handler(_BrowserSessionRequired, _browser_session_required)
 
+    # Registered first, therefore innermost: it sees each refusal as the routes
+    # and their handlers answered it, before the idempotency middleware stores
+    # the response (F15).
+    app.add_middleware(RefusalTraceMiddleware, db_path=resolved_db)
     app.add_middleware(
         IdempotencyMiddleware,
         db_path=resolved_db,

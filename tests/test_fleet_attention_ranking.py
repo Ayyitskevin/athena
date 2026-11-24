@@ -156,6 +156,7 @@ def test_the_signal_vocabulary_and_the_awaiting_input_rank_are_pinned():
     # claims (high) and the quiet event signals (medium).
     assert fleet_attention.RANKING_SIGNALS == (
         "awaiting_input",
+        "held_report",
         "fence_overlap",
         "pending_approval",
         "claim_needs_attention",

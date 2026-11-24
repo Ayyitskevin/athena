@@ -31,6 +31,7 @@ from athena.aegis import (
     dependencies,
     fence_overlaps,
     fleet_work,
+    held_reports,
     issues,
     run_state,
     work_progress,
@@ -165,6 +166,9 @@ def needs_you(
     questions = run_state.open_questions(
         conn, actor=actor, now=current, limit=1, with_answers=True
     )
+    # Completions that reported HOLD or BLOCKED and that nothing has answered
+    # (F15): a decision about the work, waiting on whoever answers for it.
+    held = held_reports.open_held_reports(conn, actor=actor, limit=1)
     unanswered_kills = workers.count_unanswered(conn, now=current)
     # Live run controls: asked, not yet answered, clock still running. Standing
     # like the kill count — a week-old unanswered steer is still unanswered —
@@ -200,6 +204,16 @@ def needs_you(
             "scope": (
                 "standing; blocking questions from yielded claims nobody has "
                 "resumed, less those a person has answered since"
+            ),
+        },
+        {
+            "key": "held_reports",
+            "label": "Reports of HOLD or BLOCKED",
+            "count": held["total"],
+            "href": "/aegis/dashboard#fleet-attention-heading",
+            "scope": (
+                "standing; completions that reported HOLD or BLOCKED on open "
+                "issues, with no answer and no new claim since; each is in the Now queue"
             ),
         },
         {
@@ -314,6 +328,7 @@ def needs_you(
 # fail closed at the boundary so the queue can never be widened by a typo.
 AttentionSignal = Literal[
     "awaiting_input",
+    "held_report",
     "fence_overlap",
     "pending_approval",
     "claim_needs_attention",
@@ -337,6 +352,7 @@ SourceKind = Literal[
 
 RANKING_SIGNALS: tuple[AttentionSignal, ...] = (
     "awaiting_input",
+    "held_report",
     "fence_overlap",
     "pending_approval",
     "claim_needs_attention",
@@ -469,6 +485,41 @@ def _collect_awaiting_input(
                 if answered or not operator
                 else "/admin/agents#questions",
                 source_link=f"/aegis/issues/{issue['id']}",
+            )
+        )
+    return items, examined, lane["total"]
+
+
+def _collect_held_reports(
+    conn: sqlite3.Connection, *, actor: dict
+) -> tuple[list[AttentionRankItem], int, int]:
+    """Completions that reported HOLD or BLOCKED and that nothing has answered
+    (``held_reports``). An admin sees every one it may read. Anyone else sees
+    the ones it answers for: on issues it is the assignee of or delegated to
+    the reporter, never its own report (F15). Ranked ``high``, with the claims
+    that need a decision: the work stopped and says why, and what happens to it
+    is somebody's call. The row leaves when that somebody acts on the issue."""
+    lane = held_reports.open_held_reports(
+        conn, actor=actor, accountable_only=not _has_admin_visibility(actor)
+    )
+    items: list[AttentionRankItem] = []
+    examined = len(lane["items"])
+    for report in lane["items"]:
+        issue = report["issue"]
+        items.append(
+            AttentionRankItem(
+                signal="held_report",
+                severity="high",
+                source_kind="issue",
+                source_id=issue["id"],
+                owner_id=report["reported_by"]["id"],
+                reason=f"reported {report['verdict']}; nothing has answered it",
+                freshness=report["reported_at"],
+                examined=examined,
+                total=lane["total"],
+                next_action="operator-link",
+                link=f"/aegis/issues/{issue['id']}",
+                source_link=f"/aegis/issues/{issue['id']}/history",
             )
         )
     return items, examined, lane["total"]
@@ -924,6 +975,7 @@ def public_attention_ranking(
 
 SIGNAL_WORDS: dict[str, str] = {
     "awaiting_input": "Question",
+    "held_report": "Report",
     "fence_overlap": "Overlapping fences",
     "pending_approval": "Approval",
     "claim_needs_attention": "Claim",
@@ -1053,6 +1105,9 @@ def cockpit_rows(conn: sqlite3.Connection, items: list[dict]) -> list[dict]:
                 headline = f"{owner} asks to {_action_words(approval['action_kind'])}"
                 if approval["target_kind"] == "issue":
                     subject = subjects.get(int(approval["target_id"]))
+        elif signal == "held_report":
+            verdict = item["reason"].partition(";")[0].removeprefix("reported ")
+            headline = f"{owner} reported {verdict}: decide what happens to the work"
         elif signal == "budget_exhaustion":
             headline = f"{owner} hit an action budget ceiling"
         elif signal == "security_refusal":
@@ -1114,6 +1169,8 @@ def build_attention_ranking(
             items, examined, total = _collect_awaiting_input(
                 conn, actor=actor, now=current
             )
+        elif signal == "held_report":
+            items, examined, total = _collect_held_reports(conn, actor=actor)
         elif signal == "fence_overlap":
             items, examined, total = _collect_fence_overlaps(
                 conn, actor=actor, now=current

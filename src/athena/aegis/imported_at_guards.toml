@@ -141,6 +141,17 @@ module = "fleet_work.py"
 function = "_replay_ready_run_ids"
 why = "run-scoped; imported rows carry NULL run coordinates"
 
+# --- held_reports.py ---------------------------------------------------------
+
+[[guarded]]
+module = "held_reports.py"
+function = "open_held_reports"
+pattern = 'ce\.imported_at IS NULL'
+why = """\
+    a HOLD or BLOCKED report that asks an account to decide is a native \
+    completion; an imported one is another instance's history and must not \
+    raise an attention row here, and an imported claim must not close one"""
+
 # --- leases.py ---------------------------------------------------------------
 
 [[guarded]]

@@ -239,6 +239,14 @@
             <td>
                 <span class="chip" data-tone="{{ agent.health_state | health_tone }}">{{ agent.health_label }}</span>
                 <div class="muted">{{ agent.recent_event_count }} recent event{{ "s" if agent.recent_event_count != 1 }}</div>
+                {# F15: answers the server gave this agent, which are on no trail.
+                   The newest of each only; diagnosis, not a record. #}
+                {% if agent.last_refusal %}
+                <div class="muted">Last refused: <code>{{ agent.last_refusal.code }}</code> on {{ agent.last_refusal.request }}, {{ agent.last_refusal.at }}</div>
+                {% endif %}
+                {% if agent.last_nothing_ready_at %}
+                <div class="muted">Last found nothing ready: {{ agent.last_nothing_ready_at }}</div>
+                {% endif %}
             </td>
             <td>
                 {% if agent.latest_run %}

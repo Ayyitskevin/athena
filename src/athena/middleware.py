@@ -17,6 +17,7 @@ from fastapi import Request
 from starlette._utils import get_route_path
 from athena import config
 from athena.core import (
+    agent_signal_commands,
     db,
     deployment,
     deps,
@@ -497,6 +498,93 @@ class RunContextMiddleware:
             run_context.reset_parent_run_id(parent_token)
             run_context.reset_client_run_header(header_token)
             run_context.reset_run_id(run_token)
+
+
+class RefusalTraceMiddleware:
+    """Keep the newest refusal each agent account received (F15).
+
+    A refusal is an answer, so it is on no trail, and an operator could not tell
+    an agent refused on every call from one with nothing to do. Refusals are
+    raised from many places and answered by several handlers; every one of them
+    leaves through here as a 4xx JSON body with a registered ``code``, so this is
+    the one place that sees them all, whichever handler wrote the body.
+
+    Only a request a bearer token authenticated is traced (``current_actor``
+    names the account in the request's state), and only for an agent account,
+    which the command checks. The response is held until the row is written, so
+    a read that follows the refusal sees it; a refusal body is small, and one
+    that is not is passed through untraced. Tracing is best-effort: a failure
+    to record never changes the answer.
+
+    A replayed receipt does not pass through here: the idempotency middleware
+    answers it before the route runs. What is kept is what the routes refused.
+    """
+
+    _MAX_BODY_BYTES = 64 * 1024
+
+    def __init__(self, app, *, db_path):
+        self.app = app
+        self.db_path = db_path
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        held_start: dict | None = None
+        chunks: list[bytes] = []
+
+        async def traced_send(message):
+            nonlocal held_start
+            if message["type"] == "http.response.start":
+                actor_id = scope.get("state", {}).get("refusal_actor_id")
+                if actor_id is None or not 400 <= message["status"] <= 499:
+                    await send(message)
+                    return
+                held_start = message
+                return
+            if held_start is None or message["type"] != "http.response.body":
+                await send(message)
+                return
+            chunks.append(message.get("body", b""))
+            more = bool(message.get("more_body"))
+            body = b"".join(chunks)
+            if more and len(body) <= self._MAX_BODY_BYTES:
+                return
+            start, held_start = held_start, None
+            if not more:
+                await self._trace(scope, int(start["status"]), body)
+            await send(start)
+            await send({"type": "http.response.body", "body": body, "more_body": more})
+
+        await self.app(scope, receive, traced_send)
+
+    async def _trace(self, scope, status_code: int, body: bytes) -> None:
+        try:
+            code = json.loads(body).get("code")
+        except (ValueError, AttributeError):
+            return
+        if not isinstance(code, str) or not code:
+            return
+        try:
+            await asyncio.to_thread(
+                self._record,
+                user_id=int(scope["state"]["refusal_actor_id"]),
+                code=code,
+                status_code=status_code,
+                method=str(scope.get("method", "")),
+                path=str(scope.get("path", "")),
+            )
+        except Exception:  # noqa: BLE001 - the refusal must go out regardless
+            _logger.exception("could not record an agent's refusal")
+
+    def _record(self, **refusal) -> None:
+        # A connection of its own: the request's may hold the refused work's
+        # rolled-back transaction state, and this write must not depend on it.
+        conn = db.connect(self.db_path)
+        try:
+            agent_signal_commands.record_refusal(conn, **refusal)
+        finally:
+            conn.close()
 
 
 # Mutating REST APIs that support durable Idempotency-Key semantics. Browser and

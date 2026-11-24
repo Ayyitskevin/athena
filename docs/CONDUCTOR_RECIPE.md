@@ -297,7 +297,11 @@ blockers, `get_attention_ranking()` for actor-filtered questions/signals, and
 nothing and drops done issues; retain known issue IDs to inspect completed work.
 Without admin authority, attention exposes visible issue blockers, your own
 claim/control signals, and the claims on issues you can see and answer for: you are
-the assignee, or you delegated the issue to its holder. Empty or clipped results do not prove fleet health,
+the assignee, or you delegated the issue to its holder. A completion that reported
+`HOLD` or `BLOCKED` on such an issue is a `held_report` row, never for your own
+report: it stays until an account other than the reporter comments, changes the
+status or assignment or claims the issue, or anyone claims it again, so decide
+what happens to the work and say so on the issue. Empty or clipped results do not prove fleet health,
 process liveness or complete history.
 
 Narrow profiles carry `wait_for_events`, not `recent_events`. To drain immediately,

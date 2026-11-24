@@ -541,6 +541,7 @@ def test_pending_input_bounds_are_visible_on_both_surfaces(tmp_path, count):
         assert pending["href"] == "/admin/agents"
         assert [s["key"] for s in signals] == [
             "open_questions",
+            "held_reports",
             "claims_needing_attention",
             "pending_approvals",
             "unanswered_kills",

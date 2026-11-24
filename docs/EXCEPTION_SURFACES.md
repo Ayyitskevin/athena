@@ -17,6 +17,7 @@ On the dashboard, admin-only, above everything else:
 | Signal | Counts | Window |
 |---|---|---|
 | Questions waiting on you | Blocking questions from yielded claims nobody has resumed, less `needs_input` questions a person other than the asker has answered since | standing |
+| Reports of HOLD or BLOCKED | Completions that reported `HOLD` or `BLOCKED` on an open issue, with no answer and no new claim since | standing |
 | Claims needing attention | Rows the active-work projection marked `needs_attention` | the examined window |
 | Approvals waiting on you | Pending approval requests | standing |
 | Workers told to stop | Kill requests not yet confirmed | standing |
@@ -53,6 +54,19 @@ the count; it stays listed, marked "answered, waiting on the agent", until the
 agent resumes. The asker commenting again restates it. Another agent's reply
 answers nothing here, and a `blocked` yield's question is never marked answered.
 
+**A HOLD or BLOCKED report asks whoever answers for the work.** A completion
+carries a verdict. One that reports `HOLD` or `BLOCKED` left an issue with no
+lease and nothing asking for anyone. It is now a ranked row, `held_report`,
+`high`, in `GET /attention/ranking`: for an admin on every issue it may read,
+and for any other account on the issues it is the assignee of or delegated to
+the reporter, never for its own report. The row stays while the issue is
+neither done nor archived and nothing has taken the work up: it leaves when an
+account other than the reporter comments, changes the status, changes the
+assignment or claims the issue (the ready lane's answer rule), or when anyone,
+the reporter included, claims it again. The reporter commenting again answers
+nothing. A completion recorded before migration 0086 stored no verdict and is
+never listed.
+
 **Every count says what it counts.** Standing state — an approval nobody answered,
 a worker that never confirmed — is *not* window-bounded, because a month-old
 unanswered request is still unanswered. Event-counted signals *are*, because
@@ -65,6 +79,47 @@ implies a fleet-wide total it did not compute.
 you right now — that is what the last N hours recorded, not a promise that every
 agent is healthy." Athena does not observe agent processes; see
 [`WORKERS.md`](WORKERS.md) and [`ACTIVE_WORK.md`](ACTIVE_WORK.md) for why.
+
+## What an agent was last refused
+
+A refusal is an answer, and so is "nothing ready". Neither happened to
+anything, so neither is on the trail, and an operator looking at an idle agent
+could not tell one refused on every call from one with no work from one that
+is not running. The run-health read keeps the newest of each per agent
+account:
+
+```text
+GET /activity/agent-runs?agent_id=2
+get_agent_run_health(agent_id=2)
+GET /admin/agents/runs
+```
+
+```json
+{
+  "last_refusal": {
+    "code": "claim_held",
+    "status_code": 409,
+    "request": "POST /issues/7/claim",
+    "at": "2026-11-24T14:02:11Z"
+  },
+  "last_nothing_ready_at": "2026-11-24T14:05:40Z"
+}
+```
+
+- **The newest only, replaced in place.** One row per agent account. It says
+  what the agent is hitting now. It is not a history and a looping agent cannot
+  grow it.
+- **Every 4xx answer to a bearer request by an agent account**, whichever
+  handler wrote it, with its registered `code`, the status and the method and
+  path it answered. A person's refusal is not kept. A replayed idempotency
+  receipt is not a new refusal and is not kept.
+- **`last_nothing_ready_at`** moves when a pickup (`POST /issues/claim-next`,
+  `claim_next_ready`) answers `nothing_ready`. `already_holding` does not move
+  it, and reading the desk does not.
+- **Diagnosis, not record.** It is outside the activity trail and its hash
+  chain, and the agent's own calls move it. Decide nothing from it; the
+  refusals that matter to security are still events
+  ([Security signals](#security-signals)).
 
 ## Security signals
 
