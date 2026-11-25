@@ -69,6 +69,8 @@ jobs:
         run: .venv/bin/python scripts/check_template_styles.py
       - name: Check template routes
         run: .venv/bin/python scripts/check_template_routes.py
+      - name: Check surface parity
+        run: .venv/bin/python scripts/check_surface_parity.py
       - name: Record runner resources
         run: |
           nproc

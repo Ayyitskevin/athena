@@ -1,0 +1,326 @@
+# Every command function reached from only one of Athena's two transports, and
+# why (C10). scripts/check_surface_parity.py reads this file and fails the build
+# on a one-sided command no row names, and on a row that no longer describes the
+# tree: a function that does not exist, that no transport reaches, that both
+# reach now, or that is reached only from the side the row does not name. The
+# cockpit is everything under src/athena/web/; the API is every *_api.py and
+# api.py. MCP is a client of REST and is not compared.
+#
+# One [[row]] per capability. `cockpit` and `api` list functions as
+# <package>.<module>_commands.<function>, without the athena. prefix; a row
+# names one side, except a pair, which names both. `kind` is one of:
+#
+#   pair          one capability, reached under a different name on each side;
+#                 the check treats the functions as matched
+#   read          a read or predicate a transport uses to render or gate, not a
+#                 capability; the other transport reads the same facts its own way
+#   by-design     a capability that belongs to one transport, and the reason
+#   elsewhere     the other transport has it by a path the check does not count
+#                 (main.py's refusal handlers, a personal-state writer)
+#   missing-twin  a capability the other transport lacks and someone needs: the
+#                 reason says who and what. Building the twin deletes the row.
+#
+# Delete a row's function when the gap closes; the check says when one has.
+
+# --- reached from the cockpit only --------------------------------------------
+
+[[row]]
+kind = "pair"
+cockpit = ["aegis.issue_commands.attach_label_by_name"]
+api = ["aegis.issue_commands.attach_label", "core.label_commands.create_label"]
+reason = """
+The browser form takes a typed label name and find-or-creates the vocabulary
+entry inside the attach's transaction. REST does the same in two explicit steps:
+POST /labels (create_label) and then attach by id (attach_label). One
+capability; the vocabulary write is create_label on both, folded into the
+by-name command for the cockpit.
+"""
+
+[[row]]
+kind = "pair"
+cockpit = ["mentor.page_commands.attach_page_label_by_name"]
+api = ["mentor.page_commands.attach_page_label"]
+reason = """
+The Mentor twin of the issue-label pair: the cockpit attaches a typed name
+(find-or-create), REST attaches an existing label id after POST /labels.
+"""
+
+[[row]]
+kind = "read"
+cockpit = ["workflows.playbook_commands.parse_checklist"]
+reason = """
+The playbook page counts its unchecked steps before offering to start them, so
+the form says what it will make and is not shown for a page with nothing to
+start. REST starts the playbook and answers with what it made; the start
+command parses the same checklist itself.
+"""
+
+[[row]]
+kind = "read"
+cockpit = ["aegis.issue_commands.get_writable_issue"]
+reason = """
+A pre-check the issue edit and close-confirmation forms run before rendering, so
+a reader is not shown a form that would be refused. REST has no form to render:
+every write command repeats the same check inside its own transaction and
+answers the refusal.
+"""
+
+[[row]]
+kind = "by-design"
+cockpit = [
+  "aegis.room_commands.create_room",
+  "aegis.room_commands.stock_starter_rooms",
+  "aegis.room_commands.place_issue",
+]
+reason = """
+Rooms are flavor on the operator's floor page (docs/OFFICE.md): they group
+chairs and filter the floor and change no claim, lease, status or assignee.
+REST and MCP already read them (GET /projects/{id}/floor?room=, the
+get_project_floor tool); furnishing the floor is the operator's. Revisit if a
+conductor agent needs to place its slices in rooms for workers to filter on.
+"""
+
+[[row]]
+kind = "missing-twin"
+cockpit = ["workflows.fleet_assign_commands.assign_issue_to_seat"]
+reason = """
+Assigning an issue to a declared fleet seat by its roster slug, and radioing the
+seat over Buzz, is cockpit-only (Admin > Fleet assign, and a chair on the
+floor). REST has the two writes underneath (PATCH /issues/{id} assignee_id and
+the delegate route), but not the seat lookup or the radio, so a conductor agent
+handing a slice to a seat must already know the account id and cannot wake it.
+The C10 review found an admin-scope token answered 401 or 404 here.
+"""
+
+[[row]]
+kind = "elsewhere"
+cockpit = ["core.approval_commands.open_request"]
+reason = """
+Both transports open the pending ask for a gated act. The cockpit calls it when
+an undo refuses with ApprovalRequired, and says so on the page; REST reaches it
+through main.py's _approval_required exception handler, which answers the 202.
+main.py is the composition root, not a transport, so the check does not follow
+it.
+"""
+
+[[row]]
+kind = "by-design"
+cockpit = ["core.user_commands.change_own_password"]
+reason = """
+Self-service rotation needs the account's current password and keeps the
+caller's own browser session alive while revoking the others: a signed-in
+human's act. Agents have no password. REST has the admin reset,
+PUT /users/{id}/password (reset_user_password), on both sides.
+"""
+
+[[row]]
+kind = "by-design"
+cockpit = [
+  "core.oidc_commands.link_identity",
+  "core.oidc_commands.unlink_identity",
+]
+reason = """
+OIDC is a browser sign-in: linking happens in the redirect flow
+(oidc_flow.provision_or_link, from the cockpit's callback) and unlinking on the
+user's own /settings/identities page. A bearer-token agent never signs in
+through an identity provider.
+"""
+
+# --- reached from the REST API only -------------------------------------------
+
+[[row]]
+kind = "read"
+api = ["aegis.desk_commands.read_desk"]
+reason = """
+An agent's own desk packet (GET /desk): there is no cross-reader desk, by
+the command's design. The operator reads the fleet's state on the cockpit's
+dashboard and Admin > Agents pages instead.
+"""
+
+[[row]]
+kind = "read"
+api = ["aegis.issue_commands.eligible_accounts"]
+reason = """
+The REST page of accounts an issue may be assigned or delegated to, for an
+agent choosing a target. The cockpit's assignee picker lists users from its own
+read and lets the assignment command refuse an ineligible choice.
+"""
+
+[[row]]
+kind = "read"
+api = ["aegis.lease_commands.report_field_docs"]
+reason = """
+Documentation strings for the completion report's fields, published in the
+REST model's OpenAPI descriptions and the complete_claim tool's input schema.
+Not a capability; the cockpit's completion form does not render them.
+"""
+
+[[row]]
+kind = "read"
+api = [
+  "core.worker_commands.readable_workers",
+  "core.worker_commands.visible_worker",
+]
+reason = """
+An agent reads its own workers (to learn it was asked to stop); an admin reads
+the fleet. The cockpit renders workers on Admin > Agents and Fleet from the
+workers data module's reads, and requests and cancels kills through
+worker_commands on both sides.
+"""
+
+[[row]]
+kind = "read"
+api = ["core.run_control_commands.visible_control"]
+reason = """
+One run control, for an admin or the agent it is addressed to (GET
+/run-controls/{id}). The cockpit lists controls through readable_controls,
+which both transports reach.
+"""
+
+[[row]]
+kind = "by-design"
+api = [
+  "aegis.icarus_commands.request_dispatch",
+  "aegis.icarus_commands.deliver_dispatch",
+  "aegis.icarus_commands.apply_callback",
+]
+reason = """
+Icarus dispatch hands work to an external executor fleet: an agent's or
+conductor's request (approval-gated as dispatch.request), its post-commit
+delivery, and the executor's signed callback, which comes from no account at
+all. The operator's part is the approval decision, which the cockpit has.
+"""
+
+[[row]]
+kind = "by-design"
+api = ["aegis.lease_commands.decline_delegation"]
+reason = """
+Only an agent can be a delegate (the delegate route requires an agent target),
+so only an agent declines one. The cockpit removes a contributor through the
+ordinary contributor command.
+"""
+
+[[row]]
+kind = "missing-twin"
+api = ["aegis.lease_commands.resume_claim_handoff"]
+reason = """
+The cockpit can claim an issue and yield it with a handoff (the palette), but
+cannot resume one. An operator who takes over an issue with an open handoff
+cannot acknowledge the context in the browser, and their own yield with a
+handoff is then refused until the handoff is resumed over REST.
+"""
+
+[[row]]
+kind = "by-design"
+api = ["aegis.lease_lapse_commands.observe_lapses"]
+reason = """
+The lapse observer that records lease_lapsed (C4, D11) runs on the reads D11
+named: the attention ranking (GET /attention/ranking) and the event feed, through
+the feed observer main.py registers. It is a write a read performs, not an act
+anyone asks for; the cockpit shows the derived lease_expired signal.
+"""
+
+[[row]]
+kind = "by-design"
+api = ["aegis.ready_claim_commands.claim_next_ready"]
+reason = """
+Atomic pickup of the next ready issue is the agent loop's (docs/DESK.md). A
+person in the cockpit chooses the issue and claims it from the palette with
+claim_issue, which both transports reach.
+"""
+
+[[row]]
+kind = "by-design"
+api = ["aegis.review_request_commands.request_candidate_review"]
+reason = """
+Asking a named reviewer to review an exact candidate is a conductor step
+(docs/REVIEW_REQUEST_SPEC.md, docs/CONDUCTOR_RECIPE.md), exposed as a conductor
+and full-profile tool. The cockpit shows the request in the inbox.
+"""
+
+[[row]]
+kind = "missing-twin"
+api = ["aegis.sprint_commands.update_sprint"]
+reason = """
+The cockpit creates, starts, completes and deletes sprints but cannot edit one,
+so an operator who mistypes a sprint's name, goal or dates has to leave the
+browser for PATCH /sprints/{id}.
+"""
+
+[[row]]
+kind = "by-design"
+api = [
+  "core.agent_run_commands.heartbeat",
+  "core.worker_commands.heartbeat",
+]
+reason = """
+A running agent's check-ins: the run heartbeat refuses any caller without a
+bearer token, and the worker heartbeat is how a worker process learns it was
+asked to stop. Neither is something a person does from a browser.
+"""
+
+[[row]]
+kind = "by-design"
+api = [
+  "core.event_source_commands.register_source",
+  "core.event_source_commands.set_source_enabled",
+  "core.event_source_commands.delete_source",
+]
+reason = """
+Inbound forge sources are admin configuration done once with a script
+(docs/FORGE.md): registering returns a one-time secret for the forge's webhook
+settings. The cockpit reads only the registered hosts, to link forge URLs on
+an issue's trail; an admin page for sources would be a new page.
+"""
+
+[[row]]
+kind = "by-design"
+api = ["core.idempotency_commands.resolve"]
+reason = """
+Settling an idempotency key whose outcome is unknown is admin recovery,
+listed and settled together on the admin REST router and the matching tools
+(list_indeterminate_keys, resolve_idempotency_key). The cockpit has no read of
+indeterminate keys to act on.
+"""
+
+[[row]]
+kind = "elsewhere"
+api = ["core.notification_commands.acknowledge"]
+reason = """
+Marking notifications read: the cockpit's inbox does it through the
+personal-state writers notifications.mark_read and mark_all_read, which are not
+a command module. REST's acknowledge adds batches by id and through_id over the
+same rows.
+"""
+
+[[row]]
+kind = "by-design"
+api = [
+  "core.run_control_commands.acknowledge_control",
+  "core.run_control_commands.decline_control",
+  "core.run_control_commands.complete_control",
+]
+reason = """
+The bound agent's answers to a run control the operator issues from the
+cockpit (create_control, on both sides): it acknowledges, declines or completes
+what it was asked. An operator answering on an agent's behalf would make the
+trail lie.
+"""
+
+[[row]]
+kind = "by-design"
+api = ["core.user_commands.bootstrap_user"]
+reason = """
+The first administrator is created by POST /users carrying the
+process-configured one-time bootstrap credential, before any account or session
+exists to sign in to the cockpit with. The cockpit's login page points at the
+bootstrap runbook instead.
+"""
+
+[[row]]
+kind = "by-design"
+api = ["mentor.notebook_commands.ensure_agent_notebook"]
+reason = """
+Only an agent account has a notebook; the command refuses anyone else. The
+operator reads agents' notebooks in the cockpit as ordinary pages.
+"""

@@ -21,7 +21,10 @@ approval ask (`approval_commands.open_request`), budget exhaustion
 (`security_event_commands.record_failure`). The atomic side is enforced too:
 `scripts/check_transaction_commits.py` fails on a call inside a
 `db.transaction` block that commits, and `db.transaction` raises at exit if
-anything inside it committed.
+anything inside it committed. Parity between the transports is enforced as
+well: `scripts/check_surface_parity.py` fails when a command function is
+reached from only the cockpit or only the REST API and
+`scripts/surface_parity.toml` does not say why.
 
 ## Current inventory
 

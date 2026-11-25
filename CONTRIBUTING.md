@@ -128,12 +128,13 @@ python3.12 -m venv .venv
 .venv/bin/python scripts/check_write_ownership.py
 .venv/bin/python scripts/check_transaction_commits.py
 .venv/bin/python scripts/check_imported_at_guards.py
+.venv/bin/python scripts/check_surface_parity.py
 scripts/coverage.sh
 ```
 
 The constraints file is the exact verified Linux/Python 3.12 CI graph. The
 freeze diff rejects dependency drift; `pip check` rejects incompatible
-installed metadata. The four `check_*` scripts fail the build on doctrinal
+installed metadata. The five `check_*` scripts fail the build on doctrinal
 drift the tests cannot see: `check_import_contracts.py` keeps the layer
 direction (`web → aegis|mentor → core`), `check_write_ownership.py` keeps
 transports (every module that defines a router or registers routes or
@@ -148,7 +149,12 @@ declared beside their code, in the `imported_at_guards.toml` of their package
 (`src/athena/aegis/`, `src/athena/core/`): a new read of the activity table adds
 a `[[guarded]]` entry (the pattern its function must carry, and why) or an
 `[[exempt]]` entry (why foreign history is safe there) to that file, whose
-header describes both.
+header describes both. `check_surface_parity.py` fails when a command function
+is reached from only one transport, the cockpit (`web/`) or the REST API
+(`*_api.py`, `api.py`), and `scripts/surface_parity.toml` does not declare it
+with a kind and a reason (C10). A new one-sided command gets its twin or a row
+there; a row whose function is gone, or reached from both sides now, fails as
+stale. MCP is a client of REST and is not compared.
 `scripts/coverage.sh` runs the complete test suite with
 full-source branch coverage, writes evidence outside the checkout, and enforces
 the floors configured in `pyproject.toml`. The floors are a ratchet:

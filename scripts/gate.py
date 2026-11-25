@@ -164,6 +164,13 @@ STAGES = (
         (".venv/bin/python scripts/check_template_routes.py",),
     ),
     Stage(
+        "surface-parity",
+        (PYTHON, "scripts/check_surface_parity.py"),
+        True,
+        ("Check surface parity",),
+        (".venv/bin/python scripts/check_surface_parity.py",),
+    ),
+    Stage(
         "coverage",
         ("bash", "scripts/coverage.sh"),
         False,
