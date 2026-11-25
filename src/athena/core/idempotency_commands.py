@@ -40,8 +40,17 @@ class KeyNotIndeterminate(LookupError):
 
 def orphan_executing(conn: sqlite3.Connection) -> int:
     """Mark every executing key indeterminate; return how many. Only for a
-    process that has established no other process is serving the database."""
+    process that has established no other process is serving the database.
+
+    A database with no key table holds no keys: startup runs this on whatever
+    schema the migrations gave it, and must not fail where there is nothing
+    to mark."""
     with db.transaction(conn, immediate=True):
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' "
+            "AND name = 'idempotency_keys'"
+        ).fetchone():
+            return 0
         return conn.execute(
             "UPDATE idempotency_keys SET state = 'indeterminate', "
             "owner_token = NULL, lease_expires_at = NULL, failure_code = ?, "

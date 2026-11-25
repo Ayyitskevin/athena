@@ -116,6 +116,27 @@ def test_a_start_with_nothing_orphaned_says_nothing(instance, caplog):
     assert not [r for r in caplog.records if "idempotency:" in r.getMessage()]
 
 
+def test_a_start_on_a_schema_with_no_key_table_marks_nothing(tmp_path, monkeypatch):
+    # WHY: startup runs the orphan step on whatever schema the migrations gave
+    # it. The first version assumed Athena's own tables and failed the start of
+    # any app built on another migration set (the migration integrity tests).
+    migrations = tmp_path / "migrations"
+    migrations.mkdir()
+    (migrations / "0001_only.sql").write_text(
+        "CREATE TABLE only_this (id INTEGER PRIMARY KEY);"
+    )
+    monkeypatch.setattr(db, "MIGRATIONS_DIR", migrations)
+
+    with TestClient(create_app(tmp_path / "bare.db")) as client:
+        assert client.get("/healthz").status_code == 200
+
+    conn = db.connect(tmp_path / "bare.db")
+    try:
+        assert idempotency_commands.orphan_executing(conn) == 0
+    finally:
+        conn.close()
+
+
 def test_a_second_process_assumes_nothing_about_the_firsts_keys(instance):
     db_file, agent = instance
     identity = _token_identity(agent)
