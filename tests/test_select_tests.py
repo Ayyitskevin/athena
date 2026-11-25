@@ -7,6 +7,7 @@ and check that real one-file changes select the tests a person would expect.
 """
 
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -66,6 +67,24 @@ TREE = {
         "DATA = Path(__file__).parent / 'fixtures' / 'cases'\n"
     ),
     "tests/fixtures/cases/one.json": "{}\n",
+    # The generated map: what recorded coverage saw run through the app. It
+    # names a test that no longer exists, as a map recorded before a deletion
+    # does.
+    "scripts/test_map.json": json.dumps(
+        {
+            "about": "",
+            "recorded_test_files": 4,
+            "ubiquitous_share": 0.5,
+            "ubiquitous": {},
+            "map": {
+                "src/athena/core/widgets_api.py": [
+                    "tests/test_deleted.py",
+                    "tests/test_widgets.py",
+                ],
+                "src/athena/web/page.py": ["tests/test_web.py"],
+            },
+        }
+    ),
     "docs/GUIDE.md": "# Guide\n",
     "docs/NOTES.md": "# Notes\n",
     "data.txt": "x\n",
@@ -130,6 +149,7 @@ def test_composition_roots_are_not_followed(tmp_path):
 
 
 def test_the_http_map_selects_tests_the_graph_cannot_see(tmp_path):
+    # From the generated map; the test it names that no longer exists is not run.
     plan = select_tests.select(build(tmp_path), ["src/athena/core/widgets_api.py"])
     assert plan.test_files == ("tests/test_widgets.py",)
     assert dict(plan.by_rule)["map"] == 1
@@ -161,7 +181,7 @@ def test_safety_valves_select_the_full_suite_and_say_so(tmp_path, path):
 
 
 def _test_names():
-    return [Path(p).name for p in TREE if Path(p).name.startswith("test_")]
+    return [Path(p).name for p in TREE if p.startswith("tests/test_")]
 
 
 def test_a_module_only_the_app_imports_and_the_map_omits_runs_everything(tmp_path):
@@ -181,6 +201,86 @@ def test_a_module_only_the_app_imports_and_the_map_omits_runs_everything(tmp_pat
         "src/athena/core/base.py: unmapped (it reaches athena.middleware, which "
         "only a composition root imports and the map does not name its tests)",
     )
+
+
+def _map(ubiquitous=None, entries=None):
+    return json.dumps(
+        {
+            "about": "",
+            "recorded_test_files": 4,
+            "ubiquitous_share": 0.5,
+            "ubiquitous": ubiquitous or {},
+            "map": entries or {},
+        }
+    )
+
+
+def test_a_file_most_recorded_tests_run_runs_everything_when_it_changes(tmp_path):
+    # Every recorded test ran the middleware, so the map leaves it out: naming
+    # nearly the whole suite tells the selector nothing, and any test can be
+    # affected by a change to it.
+    overrides = {
+        "src/athena/main.py": "from athena import middleware\n",
+        "src/athena/middleware.py": "from athena.core import mid\n",
+        "scripts/test_map.json": _map({"src/athena/middleware.py": 4}),
+    }
+    plan = select_tests.select(build(tmp_path, overrides), ["src/athena/middleware.py"])
+    assert plan.full_suite == (
+        "src/athena/middleware.py: unmapped (4 of the 4 recorded test files run "
+        "it, so the map leaves it out)",
+    )
+    # A change the graph merely carries to it is bounded by its own tests.
+    plan = select_tests.select(tmp_path, ["src/athena/core/base.py"])
+    assert not plan.full_suite
+    assert "tests/test_base.py" in plan.test_files
+    assert "tests/test_app.py" not in plan.test_files
+
+
+def test_a_module_reached_only_through_the_app_and_never_recorded_runs_everything(
+    tmp_path,
+):
+    # A router added since the map was recorded: which tests reach it is
+    # unknown until the map is regenerated, so the full suite runs, not none.
+    build(tmp_path, {"scripts/test_map.json": _map()})
+    plan = select_tests.select(tmp_path, ["src/athena/core/widgets_api.py"])
+    assert plan.full_suite == (
+        "src/athena/core/widgets_api.py: unmapped (only a composition root "
+        "imports it and the map does not name its tests)",
+    )
+    # With no map file at all (a checkout that has none), the same holds.
+    (tmp_path / "scripts/test_map.json").unlink()
+    plan = select_tests.select(tmp_path, ["src/athena/core/widgets_api.py"])
+    assert plan.full_suite == (
+        "src/athena/core/widgets_api.py: unmapped (only a composition root "
+        "imports it and the map does not name its tests)",
+    )
+
+
+def test_a_recorded_module_its_importing_tests_cover_is_bounded_by_the_graph(
+    tmp_path,
+):
+    # An empty entry: recorded, and every test that ran it imports it.
+    overrides = {
+        "tests/test_widgets.py": "from athena.core import widgets_api\n",
+        "scripts/test_map.json": _map(entries={"src/athena/core/widgets_api.py": []}),
+    }
+    plan = select_tests.select(
+        build(tmp_path, overrides), ["src/athena/core/widgets_api.py"]
+    )
+    assert not plan.full_suite
+    assert plan.test_files == ("tests/test_widgets.py",)
+    assert dict(plan.by_rule) == {"graph": 1, "map": 0, "reference": 0}
+
+
+def test_an_unreadable_map_stops_the_selection(tmp_path):
+    broken = _map(entries={"src/athena/core/widgets_api.py": "tests/test_widgets.py"})
+    with pytest.raises(
+        select_tests.SelectionError, match="test_map.json is unreadable"
+    ):
+        select_tests.select(
+            build(tmp_path, {"scripts/test_map.json": broken}),
+            ["src/athena/core/mid.py"],
+        )
 
 
 def test_an_unmapped_file_runs_the_full_suite_and_names_it(tmp_path):
@@ -260,47 +360,44 @@ def test_every_map_entry_still_matches_real_files(entry):
         ), f"{entry.source}: {glob} matches no test file"
 
 
-def test_every_module_reached_over_http_has_mapped_tests():
-    tests = _real_tests()
-    http_modules = [
-        path
-        for path in _real_files()
-        if path.endswith(".py")
-        and (
-            select_tests.matches("src/athena/*/*_api.py", path)
-            or select_tests.matches("src/athena/web/*.py", path)
-            or select_tests.matches("src/athena/mcp/tools_*.py", path)
-        )
-        and select_tests.valve(path) is None
-    ]
-    assert len(http_modules) > 60
-    unmapped = [
-        path
-        for path in http_modules
-        if not any(
-            select_tests.map_tests(entry, path, tests)
-            for entry in select_tests.TEST_MAP
-        )
-    ]
-    assert unmapped == []
-
-
-def test_only_the_middleware_is_reached_through_the_app_and_unmapped(real_index):
-    # A module only a composition root imports runs on every request, or on many;
-    # each must be named by the map or knowingly run the full suite. A new one
-    # fails here so that choice is made, not defaulted.
+def test_every_module_only_the_app_reaches_is_mapped_or_runs_everything(real_index):
+    # Routers, pages and the app's own helpers: the tests that reach them come
+    # from the recorded map, or, for one it does not name (new since the map
+    # was recorded, or run by most tests), the full suite runs. None may select
+    # only what the graph or a reference happens to find.
     index = real_index
-    unmapped = sorted(
-        module
+    app_only = [
+        path
         for module, path in index.module_paths.items()
         if path.startswith("src/")
         and index.only_roots_import(module)
         and select_tests.valve(path) is None
-        and not any(select_tests.matches(e.source, path) for e in select_tests.TEST_MAP)
+    ]
+    assert len(app_only) > 50
+    for path in app_only:
+        plan = select_tests.select(ROOT, [path], index)
+        assert plan.full_suite or path in index.generated.tests, path
+        if not plan.full_suite:
+            assert set(index.generated.tests[path]) & set(index.test_files) <= set(
+                plan.test_files
+            ), path
+
+
+@pytest.mark.parametrize(
+    "path", ["src/athena/middleware.py", "src/athena/request_log.py"]
+)
+def test_the_request_wrappers_run_the_full_suite(real_index, path):
+    # Every request passes through both (the request log since H15), so the
+    # recorded coverage sees nearly every test run them and the map leaves them
+    # out: a change to either knowingly runs the full suite. agent_openapi.py
+    # stays out of the middleware's import graph for this reason.
+    generated = real_index.generated
+    assert path in generated.ubiquitous
+    plan = select_tests.select(ROOT, [path], real_index)
+    assert plan.full_suite == (
+        f"{path}: unmapped ({generated.ubiquitous[path]} of the "
+        f"{generated.recorded} recorded test files run it, so the map leaves it out)",
     )
-    # The request log (H15) wraps every request as the middleware does: a change
-    # to it knowingly runs the full suite.
-    assert unmapped == ["athena.middleware", "athena.request_log"]
 
 
 # --- real one-file changes ---------------------------------------------------
@@ -331,12 +428,44 @@ def test_a_router_change_selects_its_route_tests(real):
         "test_delegation_lease",
         "test_issue_contributors",
     } <= tests
-    assert len(plan.test_files) < plan.total_test_files / 3
+    # Bounded, not the full suite: the route tests come from the recorded map
+    # (every test file that called a claim route), which is under the ubiquity
+    # share by construction. How many that is, is the recording's answer.
+    assert len(plan.test_files) < plan.total_test_files
+    assert any(" map " in line for line in plan.explanations), plan.explanations
 
 
-def test_a_shared_helper_change_selects_every_surface_that_uses_it(real):
-    _, tests = real("src/athena/core/etag.py")
+def test_a_shared_helper_change_selects_every_surface_that_uses_it(real_index):
+    # By import, at any distance short of the app factory. (Whether the map
+    # adds more, or most recorded tests run it and the full suite runs, is the
+    # recorded coverage's answer.)
+    reached = real_index.reached("athena.core.etag")
+    tests = {Path(real_index.module_paths[module]).stem for module in reached}
     assert {"test_etag", "test_issue_etags", "test_page_etags"} <= tests
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (
+            "src/athena/aegis/dashboard.py",
+            {"test_dashboard", "test_access_dashboard", "test_web"},
+        ),
+        (
+            "src/athena/aegis/notification_state_api.py",
+            {"test_notifications", "test_inbox_target_state"},
+        ),
+    ],
+)
+def test_code_reached_only_through_the_app_selects_the_tests_that_ran_it(
+    real, path, expected
+):
+    # None of these tests imports the module: the app does. The recorded map is
+    # how they are found (G7), not their file names.
+    plan, tests = real(path)
+    assert expected <= tests
+    assert dict(plan.by_rule)["map"] >= len(expected)
+    assert len(plan.test_files) < plan.total_test_files / 3
 
 
 def test_a_document_change_selects_the_tests_that_read_it(real):

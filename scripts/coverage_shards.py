@@ -101,7 +101,7 @@ def head() -> str:
     return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
 
 
-def run(index: int, output: Path) -> None:
+def run(index: int, output: Path, contexts: bool = False) -> None:
     output = fresh_directory(output)
     ids = collect(output / "inventory.json")
     selected = partition(ids, index)
@@ -123,6 +123,9 @@ def run(index: int, output: Path) -> None:
             "--cov",
             "--cov-config=pyproject.toml",
             "--cov-report=",
+            # Per-test contexts feed scripts/generate_test_map.py (the scheduled
+            # Test map workflow); the required coverage gate records none.
+            *(["--cov-context=test"] if contexts else []),
             *selected,
         ],
         plugins=[outcomes],
@@ -211,6 +214,11 @@ def main() -> None:
     inventory = commands.add_parser("inventory")
     inventory.add_argument("output", type=Path)
     runner = commands.add_parser("run")
+    runner.add_argument(
+        "--contexts",
+        action="store_true",
+        help="record per-test coverage contexts (for scripts/generate_test_map.py)",
+    )
     runner.add_argument("index", type=int, choices=range(SHARDS))
     runner.add_argument("output", type=Path)
     merger = commands.add_parser("combine")
@@ -227,7 +235,7 @@ def main() -> None:
         partition(inventory_plugin.ids, 0)
         args.output.write_text(json.dumps(inventory_plugin.ids, indent=2) + "\n")
     elif args.command == "run":
-        run(args.index, args.output)
+        run(args.index, args.output, args.contexts)
     else:
         combine(args.input, args.output)
 
