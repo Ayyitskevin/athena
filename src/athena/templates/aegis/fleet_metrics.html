@@ -150,6 +150,7 @@
          role="region"
          aria-label="Completion events by visible actor"
          tabindex="0">
+        <div class="table-scroll">
         <table class="issues-table">
             <caption>Visible completion event performers for the selected period</caption>
             <thead>
@@ -175,6 +176,7 @@
                 {% endfor %}
             </tbody>
         </table>
+        </div>
     </div>
     {% else %}
     <p class="empty-state">No visible completion actors in this period.</p>

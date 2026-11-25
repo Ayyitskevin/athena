@@ -39,6 +39,7 @@
     <p class="empty-state">No issues in this filter match “{{ q }}”.</p>
     {% endif %}
 {% elif issues %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead>
         <tr>
@@ -62,12 +63,13 @@
             </td>
             <td><span class="chip" data-tone="{{ issue.status_category | category_tone }}">{{ issue.status }}</span></td>
             <td><span class="chip" data-tone="{{ issue.priority | priority_tone }}">{{ issue.priority }}</span></td>
-            <td class="{{ 'muted' if not issue.assignee_name else '' }}">{{ issue.assignee_name or "Unassigned" }}</td>
-            <td class="{{ 'muted' if not issue.project_name else '' }}">{{ issue.project_name or "—" }}</td>
+            <td class="cell-wrap {{ 'muted' if not issue.assignee_name else '' }}">{{ issue.assignee_name or "Unassigned" }}</td>
+            <td class="cell-wrap {{ 'muted' if not issue.project_name else '' }}">{{ issue.project_name or "—" }}</td>
         </tr>
     {% endfor %}
     </tbody>
 </table>
+</div>
 <p class="note">{{ total }} issue{{ "s" if total != 1 }} match this filter.</p>
 {% else %}
 <p class="empty-state">No issues match this filter.</p>

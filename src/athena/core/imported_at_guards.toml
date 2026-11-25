@@ -52,6 +52,15 @@ why = """\
 
 [[exempt]]
 module = "activity.py"
+function = "newest_target_events"
+why = """\
+    the newest event per target among the given verbs, native or imported: \
+    its one caller (authorship's text authors) reads imported_at on the \
+    event it returns and names no author for an imported one, as the \
+    per-issue lookup it batches did"""
+
+[[exempt]]
+module = "activity.py"
 function = "_validated_lineage"
 why = """\
     run/fork coordinates are validated by primary key for the native row \

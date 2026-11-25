@@ -23,6 +23,7 @@
 
 <h3>Issues <span class="muted">({{ issues | length }})</span></h3>
 {% if issues %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead><tr><th>Key</th><th>Issue</th><th>Status</th></tr></thead>
     <tbody>
@@ -35,12 +36,14 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
 <p class="note-small">No active issues carry this label.</p>
 {% endif %}
 
 <h3>Pages <span class="muted">({{ pages | length }})</span></h3>
 {% if pages %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead><tr><th>Page</th><th>Updated</th></tr></thead>
     <tbody>
@@ -52,6 +55,7 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
 <p class="note-small">No pages carry this label.</p>
 {% endif %}

@@ -119,7 +119,11 @@
         </div>
     </section>
     {% endfor %}
+    {% elif search or status_filter or project_filter or sprint_filter %}
+    <div class="empty-state">No issues match these filters. <a href="/aegis/boards">Clear the filters</a>.</div>
+    {% elif can_write %}
+    <div class="empty-state">No issues on the board yet. <a href="/aegis/issues/new">Create an issue</a>; it lands in its status's column.</div>
     {% else %}
-    <div class="board-empty empty">No issues match these filters.</div>
+    <div class="empty-state">No issues on the board yet. They appear here when a member or an agent creates one.</div>
     {% endif %}
 </div>

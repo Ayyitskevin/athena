@@ -105,6 +105,7 @@ from athena.web import admin_security as web_admin_security
 from athena.web import issue_actions as web_issue_actions
 from athena.web import issue_discussion as web_issue_discussion
 from athena.web import issues as web_issues
+from athena.web import live as web_live
 from athena.web import auth as web_auth
 from athena.web import boards as web_boards
 from athena.web import filters as web_filters
@@ -943,6 +944,9 @@ def create_app(
     # holding a year-long cached copy (see STATIC_CACHE_CONTROL).
     app.state.static_version = static_version(package_root / "static")
     templates.env.globals["static_version"] = app.state.static_version
+    # The navigation badge's refresh contract (U12), built per request by the
+    # shell; see web/live.py.
+    templates.env.globals["nav_live"] = web_live.nav
     init_templates(templates)
     browser_dependencies = [Depends(_require_browser_session)]
     app.include_router(web_router, dependencies=browser_dependencies)

@@ -176,7 +176,10 @@ def test_a_refresh_keeps_the_filter_the_operator_chose(tmp_path):
         # markup that a browser decodes before it parses the URL. Unescape it here
         # for the same reason, rather than "fixing" the template into emitting a raw
         # `&` that would be invalid HTML.
-        url = unescape(re.search(r'hx-get="([^"]+)"', page).group(1))
+        # The panel's own poll; the navigation badge polls too (U12).
+        url = unescape(
+            re.search(rf'hx-get="([^"]*panel={live.ACTIVE_WORK}[^"]*)"', page).group(1)
+        )
         assert "attention_state=needs_attention" in url
         assert f"panel={live.ACTIVE_WORK}" in url
 

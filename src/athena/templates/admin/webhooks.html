@@ -21,6 +21,7 @@
 {% endif %}
 
 {% if webhooks %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead>
         <tr>
@@ -65,11 +66,12 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
-<p class="empty-state">No webhooks yet.</p>
+<p class="empty-state">No webhooks yet. <a href="#new-webhook">Register one</a> to have each new event posted to a URL.</p>
 {% endif %}
 
-<div class="panel">
+<div class="panel" id="new-webhook">
     <h3>Register webhook</h3>
     <p class="note-small">Athena POSTs each new event to this URL, HMAC-signed. Delivery starts from now (not the backlog). Private/loopback URLs are refused.</p>
     <form method="post" action="/admin/webhooks" class="issue-form">

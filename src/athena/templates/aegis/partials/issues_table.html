@@ -1,5 +1,6 @@
 <div id="issues-table" hx-indicator="#issues-table">
 {% if issues %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead>
         <tr>
@@ -68,8 +69,13 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
+{% elif status_filter or priority_filter or assignee_filter or label_filter or project_filter or sprint_filter or search %}
+<p class="empty-state">No issues match the current filter. <a href="/aegis/issues">Clear the filters</a>.</p>
+{% elif can_write %}
+<p class="empty-state">No issues yet. <a href="/aegis/issues/new">Create the first issue</a>.</p>
 {% else %}
-<p class="empty-state">No issues match the current filter.</p>
+<p class="empty-state">No issues yet. They appear here when a member or an agent creates one.</p>
 {% endif %}
 
 {% if total is defined and total > 0 %}

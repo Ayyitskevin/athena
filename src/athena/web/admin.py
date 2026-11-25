@@ -24,6 +24,7 @@ from athena.core import (
 from athena.core.deps import get_conn
 from athena.web import redirects
 from athena.web.csrf import verify_csrf
+from athena.web.form_errors import BrowserRefusal
 from athena.web.router import get_templates
 
 router = APIRouter()
@@ -44,7 +45,7 @@ _USER_COMMAND_WEB_STATUS = {
 
 
 def _signin_required(verb: str) -> HTMLResponse:
-    return HTMLResponse(
+    return BrowserRefusal(
         f'<div class="blocked">Please <a href="/login">sign in</a> to {verb}.</div>',
         status_code=401,
     )
@@ -54,7 +55,7 @@ def admin_required(user: dict | None) -> HTMLResponse | None:
     if user is None:
         return _signin_required("use admin tools")
     if not identity.is_admin(user):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Admin role required.</div>', status_code=403
         )
     return None
@@ -64,7 +65,7 @@ def _write_required(user: dict | None, verb: str) -> HTMLResponse | None:
     if user is None:
         return _signin_required(verb)
     if not identity.can_write(user):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Viewer role is read-only.</div>', status_code=403
         )
     return None
@@ -151,7 +152,7 @@ def set_theme(
     if user is None:
         return _signin_required("change the theme")
     if theme not in _THEMES:
-        return HTMLResponse("unknown theme", status_code=400)
+        return BrowserRefusal("unknown theme", status_code=400)
     response = RedirectResponse(_safe_next(next), status_code=303)
     if theme == "system":
         # No cookie IS the system setting; deleting beats storing a synonym.
@@ -179,7 +180,7 @@ def set_rail(
     if user is None:
         return _signin_required("collapse the rail")
     if state not in ("collapsed", "open"):
-        return HTMLResponse("unknown rail state", status_code=400)
+        return BrowserRefusal("unknown rail state", status_code=400)
     response = RedirectResponse(_safe_next(next), status_code=303)
     if state == "open":
         response.delete_cookie("athena_rail", path="/")
@@ -331,7 +332,7 @@ def unlink_identity(
     # so this is the authorization check, not just a 404 guard).
     owns_it = any(i["issuer"] == issuer and i["subject"] == subject for i in identities)
     if not owns_it:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">No such linked sign-in.</div>', status_code=404
         )
 
@@ -430,7 +431,7 @@ def revoke_token(
         return err
     assert user is not None, "_write_required accepted a missing user"
     if not token_commands.revoke_token(conn, actor_id=user["id"], token_id=token_id):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">No such live token.</div>', status_code=404
         )
     return RedirectResponse("/settings/tokens", status_code=303)
@@ -542,7 +543,7 @@ def update_user_password(
         return err
     target = users.get_user(conn, user_id)
     if target is None:
-        return HTMLResponse('<div class="error">No such user.</div>', status_code=404)
+        return BrowserRefusal('<div class="error">No such user.</div>', status_code=404)
     password = password.strip()
     if not password:
         return templates.TemplateResponse(
@@ -561,7 +562,7 @@ def update_user_password(
         )
     except user_commands.UserCommandError as exc:
         if exc.kind == "not_found":
-            return HTMLResponse(
+            return BrowserRefusal(
                 '<div class="error">No such user.</div>', status_code=404
             )
         return templates.TemplateResponse(
@@ -596,7 +597,7 @@ def update_user_role(
         )
     except user_commands.UserCommandError as exc:
         if exc.kind == "not_found":
-            return HTMLResponse(
+            return BrowserRefusal(
                 '<div class="error">No such user.</div>', status_code=404
             )
         # last-admin (409) keeps its fixed message; an invalid role re-renders at 400
@@ -640,7 +641,7 @@ def update_user_agent(
             is_agent=is_agent == "1",
         )
     except user_commands.UserCommandError:
-        return HTMLResponse('<div class="error">No such user.</div>', status_code=404)
+        return BrowserRefusal('<div class="error">No such user.</div>', status_code=404)
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -746,7 +747,7 @@ def toggle_webhook(
             conn, actor_id=actor["id"], webhook_id=webhook_id, active=active == "1"
         )
     except webhook_commands.WebhookCommandError:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">No such webhook.</div>', status_code=404
         )
     return RedirectResponse("/admin/webhooks", status_code=303)
@@ -770,7 +771,7 @@ def delete_webhook(
     if not webhook_commands.delete_webhook(
         conn, actor_id=actor["id"], webhook_id=webhook_id
     ):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">No such webhook.</div>', status_code=404
         )
     return RedirectResponse("/admin/webhooks", status_code=303)

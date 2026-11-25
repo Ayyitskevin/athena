@@ -497,7 +497,10 @@ the event feed, the notification, run-control and delegation inboxes, and the
 conductor's project brief, floor, review queue, issue history and attention ranking.
 A write answer that returns one of their objects (a claim answers the lease) follows
 them. The issue, comment, page, label, project and search reads keep their own
-shapes; the issue's ETag covers its representation exactly.
+shapes; the issue's ETag covers its representation exactly. An issue read also
+carries `authored_by`, who wrote its current text as you may see it; it depends on
+the reader, so it is outside the representation and the ETag, and a write's answer
+does not carry it.
 
 - **One timestamp shape.** Every timestamp in an agent packet is RFC 3339 UTC to the
   second: `2026-11-21T18:19:13Z`. `/openapi-agent.json` declares each one

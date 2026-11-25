@@ -100,6 +100,7 @@
         own claims, and expired means the clock ran out with no answer.
     </p>
     {% if controls %}
+    <div class="table-scroll">
     <table>
         <thead>
             <tr><th>Kind</th><th>State</th><th>Requested</th><th>Expires</th><th>Answer</th></tr>
@@ -145,6 +146,7 @@
             {% endfor %}
         </tbody>
     </table>
+    </div>
     {% else %}
     <p class="muted">No controls recorded for this run.</p>
     {% endif %}
@@ -217,5 +219,4 @@ X-Athena-Fork-From-Event: {{ contract.headers["X-Athena-Fork-From-Event"] }}</te
 <p class="muted">This run spawned no child runs.</p>
 {% endif %}
 
-<p class="note">Lineage from the API.</p>
 {% endblock %}

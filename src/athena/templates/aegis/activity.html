@@ -72,9 +72,15 @@
     {% endif %}
 </form>
 
+{% if events %}
 {% with events=events, show_target=True %}
 {% include "aegis/partials/activity_list.html" %}
 {% endwith %}
+{% elif f_actor or f_actor_type or f_verb or f_kind or f_target or f_q %}
+<p class="empty-state">No activity matches these filters. <a href="/aegis/activity">Clear the filters</a>.</p>
+{% else %}
+<p class="empty-state">No activity yet. Every change a person or an agent makes is recorded here, starting with the first <a href="/aegis/issues">issue</a>.</p>
+{% endif %}
 
 {% if next_before %}
 {# Carry the active filters into the Older link so paging stays within the
@@ -91,5 +97,4 @@
 </p>
 {% endif %}
 
-<p class="note">Activity from the API.</p>
 {% endblock %}

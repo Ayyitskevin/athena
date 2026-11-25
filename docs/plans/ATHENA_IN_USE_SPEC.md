@@ -2,7 +2,7 @@
 
 Date: 2026-11-22. Review baseline: `0b42d40` (`main` after Waves 0, 0b, 1 and 2
 of [the agentic-use specification](AGENTIC_USE_SPEC_ATHENA.md)).
-Status: **decisions accepted by standing instruction; Waves 3 and 4 built; Waves 5, 6, 7 and 8 begun.**
+Status: **decisions accepted by standing instruction; Waves 3, 4 and 5 built; Waves 6, 7 and 8 begun; Wave 9 begun.**
 Evidence: [reports/repo-review-2026-11-22-round2.md](reports/repo-review-2026-11-22-round2.md).
 Finding IDs such as `FLEET-4`, `OPS-5`, `PERF-1` and `COCKPIT-2` refer to that
 report. Requirement IDs that begin A, B or C are carried from the first
@@ -84,9 +84,7 @@ Nothing has been re-graded since.
    steps at 50,000 issues) and the project brief is still linear in the
    issues of its own project (3.1 M, from 10.6 M): what is left of H5.
    `/desk/since` without a cursor still grows with history.
-4. Three operator steps cannot be done in the browser (U5).
-   At phone width the navigation row runs off the right edge on every page.
-5. Assignment answers with the name of an account that cannot see the issue's
+4. Assignment answers with the name of an account that cannot see the issue's
    project, so a member can learn that the account exists (found in Wave 4;
    the owner's question below).
 
@@ -130,8 +128,13 @@ with no inline script, handler or blocked style, the claim holder on
 boards and in the issue list, seats declared as data, a token for an
 existing agent, a restore and a playbook start in the browser, an inbox
 grouped by what its rows are about, an agents page with one section per
-agent, board columns that page, and the parity gate between the cockpit and
-the API. "Wave 8 results" says the same for each. From Wave 5: the prior text of an edit, its
+agent, board columns that page, the parity gate between the cockpit and
+the API, a refused form that renders in its page with what was typed, a
+comment draft that survives a sign-in, a navigation badge and an issue page
+that refresh themselves, and a cockpit that fits a phone and a long name.
+"Wave 8 results" says the same for each. From Wave 9: the cockpit's JSON
+refusals with registered codes, `authored_by` on issue lists, single reads
+and searches, and `valid_statuses` on a bulk row. From Wave 5: the prior text of an edit, its
 read and its undo, `If-Match` for a bearer edit of a title or body, and the
 idempotency fence scoped to the issue a key names, a key that survives a
 restart with replays marked for the agent, the leases of a stopped
@@ -145,9 +148,10 @@ an idempotency key's state, and learnings that reach an issue's parent and
 siblings. Wave 5 is built. "Wave 5 results" says the same for
 each.
 
-**Next step.** Nothing built is waiting. What is left of Wave 8 is U11,
-U12 and U15; then the idle sort that H5 left, the three missing twins the
-parity gate names, and Wave 9 (G8 is built). Each requirement that removes calls lowers the fleet trial's ceilings
+**Next step.** G2 (writers that commit on their own) is being built. Wave 8
+is built except the idle sort that H5 left and the three missing twins the
+parity gate names; what is left of Wave 9 is G1, G3, G5, G6, G7, G9 and B6b
+(G4, G8 and G10 are built; B11 is blocked). Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
 
 **How work is done here.** One requirement, one commit, with the test that
@@ -208,6 +212,72 @@ property a test can hold.
     operator's loop can be done in the browser, or is on a declared list with
     its reason.
 
+### Wave 8 results (fourth lanes) and Wave 9 results (first lanes)
+
+This is U11, U12 and U15 from Wave 8 and the debts G4 and G10, one commit
+each. U11 and U15 were built by a delegated builder from the lead's brief
+and read, probed and re-run by the lead; U12, G4 and G10 were built by the
+lead. U12 and U15 were driven in Chromium against a seeded instance.
+
+| Measure | Before | After |
+|---|---|---|
+| A refused plain form post | A bare fragment such as `<div class="error">Label name is required.</div>`: no stylesheet, no navigation, and what was typed lost | The same words and status inside the page shell, with a same-origin way back; htmx still receives the fragment byte for byte. 222 refusals in `web/` converted (U11) |
+| A validation refusal on the issue, Mentor page, space, filter, fleet seat or agent mint forms | The typed values lost | The form re-renders with the error and the typed values (U11) |
+| A comment submitted after the session expired | Lost | The refusal shows the text that was not posted, and `static/drafts.js` keeps a comment box's text in the tab until the comment is accepted (U11) |
+| The "needs you" badge | Changed only on the dashboard or on a reload | Refreshes itself on every page, through the live-panel mechanism; a reader with no session polls nothing (U12) |
+| The issue page's claim, run and last event | As of the moment the page loaded | Refresh themselves; in Chromium, "unclaimed" became "Sol Builder live lease" with no reload (U12) |
+| Pages that scroll sideways, of 109 a signed-in admin reaches | 109 at 390 px (the navigation alone was 490 px); 37 at 1,280 px with long names | 0 at either width; tables scroll inside their own box (U15) |
+| The default button | The accent reserved for "an agent is waiting on the human" | Ink (U15) |
+| A skip link; route paths and developer notes in the interface; a next step on an empty page | None; printed; none | The first thing Tab reaches; gone; offered to a viewer who may take it (U15) |
+| The cockpit's JSON refusals (the palette, `/admin/fleet.json`, a run's `replay.json`, a project's `floor.json`) | A detail and no code; the palette sent the internal kind `invalid` | The registered code a REST route would send; the refusal-code check holds `web/` to its JSON-body rules (G4) |
+| `authored_by` on `GET /issues`, `GET /issues/{ref}`, `GET /issues/{id}/children`, `GET /issues/search` and `GET /search` | Absent: an agent listing work read another account's prose with nothing saying it was data | Present on each row or hit; for a comment hit, the comment's author. Looked up in one batch per page. Write answers do not carry it, so the ETag is unchanged (G10) |
+| A `POST /issues/bulk` row refused for a status the project does not offer | The sentence alone | The sentence and `valid_statuses`, as the single write gives them (G10) |
+| The contract seat run | 55 calls, 110,771 bytes | 55 calls, 111,011 bytes: the issue reads carry `authored_by` (G10) |
+
+Decisions the lead took while building, each reversible by the owner:
+
+- **A refusal decides its shape when it is sent (U11):** htmx gets the
+  fragment, anything else the page. Hidden and missing objects still answer
+  alike.
+- **A draft lives in the tab's session storage (U11)**, keyed by the form's
+  action, and is forgotten only on a clean load of the same form with no
+  refusal on the page.
+- **The badge is a panel of the dashboard route (U12)**, answered before
+  anything else is read. The issue page's poll is built from the issue's
+  id, so a page re-rendered by a refused POST still polls the GET route.
+- **`authored_by` is not in a write's answer (G10).** It depends on the
+  reader (a hidden edit reads as null), so it stays out of the
+  representation the ETag is computed from.
+- **A bulk row names statuses and nothing more (G10).** The first build
+  also gave every refused row a registered `code`; five tests pin the
+  legacy row shape, so it was taken out. Only a policy refusal carries a
+  code on a bulk row, as before.
+
+Found while building, and fixed before each was committed:
+
+- **U12.** A test took the page's first poll, which became the badge's;
+  it now names the panel. One mutant survived (the poll built from the
+  request's path), caught by a refused-POST test.
+- **G4.** One mutant survived (the whole-tree check not switching the JSON
+  rules on), caught by a test that writes a `web/` module into a tree.
+- **G10.** The wider run found the five pinned bulk-row tests and the
+  contract seat's byte ceiling; the first is the narrowing above, the
+  second is raised by 240 bytes with its reason in the ceilings file. The
+  product gate then found what that run's file list missed: the batched
+  author read undeclared in the `imported_at` guard file, three tests that
+  compare a read whole with a write's answer, and the fleet trial's
+  conductor ceiling (raised by 234 bytes, with its reason).
+- **The coverage floors rose to 94.34, 86.27 and 92.49**, as the ratchet
+  requires when coverage passes a floor by more than half a point (line
+  94.59, branch 86.52, combined 92.74 on hosted CI).
+
+Found and not fixed:
+
+- **U11.** Forms beyond the first tier still answer a refusal in the page
+  shell without the typed values.
+- **U12.** The board and the inbox do not refresh themselves.
+- **C10's three missing twins** remain, as above.
+
 ## Scorecard
 
 Baselines are measured at `0b42d40`. A target that is arithmetic and not yet a
@@ -230,9 +300,9 @@ loosened without a line in the wave's results.
 | The operator's priority inbox, median at 50,000 issues | 1,875 ms | 100 ms. Measured after Wave 6: 7 ms. | 6 |
 | Webhook deliveries after three duplicate starts over 30 events | 47 | 30 | 7 |
 | Routes that answer without a credential on a default instance | 74 of 156, reported nowhere | Counted and printed by `athena-doctor`; tailnet mode refuses to start without an explicit setting. After Wave 7: both hold. The doctor counts what the credential gate admits, 111 of 162 GET routes, which is more than answer. | 7 |
-| Operator steps that cannot be done in the browser | 4 | 0, or each on a declared list. After Wave 8's first lanes: 3 (U5 remains). | 8 |
+| Operator steps that cannot be done in the browser | 4 | 0, or each on a declared list. After Wave 8's first lanes: 3 (U5 remains). After U5: 0. | 8 |
 | Issues an agent holds by lease that the board files under "Unassigned" | 16 of 18 | 0 | 8 |
-| Capabilities on one surface only | 5 groups cockpit-only, 6 API-only | 0, or each on a declared list a gate check reads | 8 |
+| Capabilities on one surface only | 5 groups cockpit-only, 6 API-only | 0, or each on a declared list a gate check reads. After C10: 42 one-sided command functions, each declared; three are missing twins. | 8 |
 | Commands that take a bare actor id; writes outside a command | 42; 23 | Lower each wave, held by a ratchet | 9 |
 
 ### Wave 3 results

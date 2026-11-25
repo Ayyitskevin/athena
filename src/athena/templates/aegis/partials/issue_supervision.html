@@ -1,0 +1,99 @@
+{# The issue page's supervision block, refreshing itself (U12): who holds the
+   work, under which run, and when it last moved, which an agent changes while
+   the page is open. The issue route answers ?panel=issue-supervision with this
+   alone, past the same visibility gate as the page (web/live.py); the root's
+   attributes re-arm the poll. `live` is None for a reader with no session:
+   the block renders as before and nothing is armed. #}
+{% import "partials/live.html" as live_ui %}
+<section id="issue-supervision" aria-label="Supervision"{{ live_ui.live_attrs(live) }}>
+    {# Supervision before human metadata: who holds this, under which run,
+       and when it last moved. Every figure is scoped to what THIS page
+       already loaded — the bounded activity window — and says so; a
+       fleet-wide claim would belong to Mission Control, not here. #}
+    {# Claim, not assignment (DESIGN_SYSTEM.md): the Claim cell reads the
+       LEASE — the expiring possession the agent protocol runs on — and the
+       Assignee cell reads the accountable owner. An expired lease nobody
+       released is "lapsed": it holds nothing, but it still names its last
+       holder. Times are the lease row's own UTC stamps. #}
+    {% set latest_run = (activity | selectattr("run_id") | list | first) if activity else none %}
+    {% set lease_holder = (users | selectattr("id", "equalto", lease.holder_id) | first) if lease else none %}
+    <div class="supervision">
+        <div>
+            <span class="k">Claim</span>
+            {# A live lease comes first: a handoff stays open until its new
+               holder resumes it, so the two can hold at once, and the page
+               must not read "yielded" while somebody holds the work. #}
+            {% if lease and lease.active %}
+            <span class="v">{{ lease.holder_name }}</span>
+            <div class="sub">
+                <span class="chip" data-tone="{{ 'active' | checkin_tone }}">live lease</span>
+                {% if lease_holder and lease_holder.is_agent %}<span class="chip" data-tone="agent">agent</span>{% endif %}
+            </div>
+            <div class="sub">expires {{ lease.expires_at }} UTC</div>
+            <div class="sub">claimed or renewed {{ lease.claimed_at }} UTC</div>
+            {% if open_claim_handoff %}
+            <div class="sub">handoff open · {{ open_claim_handoff.reason }} · not resumed</div>
+            {% endif %}
+            {% if is_admin %}
+            {# U3: an admin ends this one live lease through complete_claim, the
+               command REST uses. The form carries the generation of the
+               possession shown here (GET /issues/{id}/lease serves it to any
+               reader); the command's fence refuses any other possession.
+               Recorded as lease_released, not a completion. Nothing is swept (K1). #}
+            <form method="post" action="/aegis/issues/{{ issue.id }}/lease/release" class="lease-release"
+                  data-confirm="Release {{ lease.holder_name }}'s live lease on {{ issue.key or '#' ~ issue.id }}? Their claim ends now; it is recorded as a release by you, not as completed work, and they are told. Status and assignee stay as they are, so they may claim it again if they are still its assignee or a contributor.">
+                {% include "partials/csrf.html" %}
+                <input type="hidden" name="generation" value="{{ lease.generation }}">
+                <button type="submit" class="button danger small">Release lease</button>
+            </form>
+            {% endif %}
+            {% elif open_claim_handoff %}
+            <span class="v">yielded</span>
+            <div class="sub">handoff open · {{ open_claim_handoff.reason }}</div>
+            {% elif lease %}
+            {# Unclaimed, as is:unclaimed reads it (QUERY.md): a lapsed
+               lease holds nothing, but its last holder is still the fact. #}
+            <span class="v">unclaimed</span>
+            <div class="sub">
+                <span class="chip" data-tone="{{ 'expired' | checkin_tone }}">lapsed lease</span>
+                last held by {{ lease.holder_name }}
+            </div>
+            <div class="sub">expired {{ lease.expires_at }} UTC · not released</div>
+            {% else %}
+            <span class="v">unclaimed</span>
+            <div class="sub">no lease</div>
+            {% endif %}
+        </div>
+        <div>
+            <span class="k">Assignee</span>
+            {% if issue.assignee_name %}
+            <span class="v">{{ issue.assignee_name }}</span>
+            <div class="sub">{{ "agent" if issue.assignee_is_agent else "human" }} assignee · accountable owner</div>
+            {% else %}
+            <span class="v">unassigned</span>
+            <div class="sub">no accountable owner</div>
+            {% endif %}
+        </div>
+        <div>
+            <span class="k">Run</span>
+            {% if latest_run %}
+            <span class="v"><span class="run-id">{{ latest_run.run_id }}</span></span>
+            <div class="sub"><a href="/aegis/activity/runs/{{ latest_run.run_id }}/lineage">latest tagged event → lineage</a></div>
+            {% else %}
+            <span class="v">—</span>
+            <div class="sub">no tagged run in the loaded window</div>
+            {% endif %}
+        </div>
+        <div>
+            <span class="k">Last event</span>
+            {% if activity %}
+            <span class="v">{{ activity[0].created_at }}</span>
+            <div class="sub">newest of {{ activity | length }} loaded</div>
+            {% else %}
+            <span class="v">—</span>
+            <div class="sub">no visible events</div>
+            {% endif %}
+        </div>
+    </div>
+    {% if live %}{{ live_ui.live_stamp(live) }}{% endif %}
+</section>

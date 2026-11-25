@@ -7,12 +7,11 @@ module.
 
 from __future__ import annotations
 
-import html
 import sqlite3
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 
 from athena.aegis import (
     dependencies,
@@ -30,9 +29,11 @@ from athena.core import (
 )
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
+from athena.web.form_errors import BrowserRefusal
 from athena.web.issue_html import (
     authorize_issue_write,
     issue_command_response,
+    issue_form_refusal,
     issue_visible_or_404,
     render_issue_detail,
 )
@@ -58,7 +59,7 @@ def change_issue_status(
     refused and an eligible human must explicitly request the audited override."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to change status.</div>',
             status_code=401,
         )
@@ -128,7 +129,7 @@ def change_issue_priority(
     PRIORITIES, then 303 back to the issue."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to change priority.</div>',
             status_code=401,
         )
@@ -156,7 +157,7 @@ def change_issue_assignee(
     "Unassigned" (None); otherwise the value must be a real user id."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to assign.</div>',
             status_code=401,
         )
@@ -171,7 +172,7 @@ def change_issue_assignee(
         try:
             target = int(assignee_id)
         except ValueError:
-            return HTMLResponse(
+            return BrowserRefusal(
                 '<div class="error">Invalid user.</div>', status_code=400
             )
 
@@ -196,7 +197,7 @@ def change_issue_project(
     otherwise the value must be a real project id."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to change project.</div>',
             status_code=401,
         )
@@ -208,7 +209,7 @@ def change_issue_project(
     if project_id == "":
         target: int | None = None
     elif not project_id.isdigit():
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">No such project.</div>', status_code=400
         )
     else:
@@ -240,7 +241,7 @@ def change_issue_placement(
     """
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> '
             "to change placement.</div>",
             status_code=401,
@@ -253,7 +254,7 @@ def change_issue_placement(
     if project_id == "":
         project_target: int | None = None
     elif not project_id.isdigit():
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">No such project.</div>', status_code=400
         )
     else:
@@ -263,7 +264,9 @@ def change_issue_placement(
     if sprint_id == "":
         sprint_target: int | None = None
     elif not sprint_id.isdigit():
-        return HTMLResponse('<div class="error">No such sprint.</div>', status_code=400)
+        return BrowserRefusal(
+            '<div class="error">No such sprint.</div>', status_code=400
+        )
     else:
         sprint_target = int(sprint_id)
 
@@ -294,7 +297,7 @@ def change_issue_sprint(
     here as a 400."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to change sprint.</div>',
             status_code=401,
         )
@@ -306,7 +309,9 @@ def change_issue_sprint(
     if sprint_id == "":
         target: int | None = None
     elif not sprint_id.isdigit():
-        return HTMLResponse('<div class="error">No such sprint.</div>', status_code=400)
+        return BrowserRefusal(
+            '<div class="error">No such sprint.</div>', status_code=400
+        )
     else:
         target = int(sprint_id)
 
@@ -330,7 +335,7 @@ def change_issue_parent(
     write gate as status/labels. Self/cycle/unknown parents are rejected with a 400."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to set a parent.</div>',
             status_code=401,
         )
@@ -343,8 +348,12 @@ def change_issue_parent(
         # a HIDDEN issue is caught by the command's see-the-parent check, which
         # collapses to the same "No such parent issue." — no existence probe.
         if parent is None:
-            return HTMLResponse(
-                '<div class="error">No such parent issue.</div>', status_code=400
+            return issue_form_refusal(
+                request,
+                conn,
+                issue_id,
+                "No such parent issue.",
+                typed={"parent_ref": parent_ref},
             )
         parent_id = parent["id"]
     # The command owns the see-the-parent check, self/cycle validation, the write,
@@ -354,6 +363,16 @@ def change_issue_parent(
             conn, actor=user, issue_id=issue_id, parent_id=parent_id
         )
     except issue_commands.IssueCommandError as exc:
+        if exc.kind == "invalid":
+            # The same words issue_command_response gives, in the page: a
+            # hidden parent and an unknown one stay one answer.
+            return issue_form_refusal(
+                request,
+                conn,
+                issue_id,
+                f"{exc.detail.capitalize()}.",
+                typed={"parent_ref": parent_ref},
+            )
         return issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
@@ -370,15 +389,13 @@ def add_issue_label(
     label change is a write. Empty name → 400."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to label issues.</div>',
             status_code=401,
         )
     name = name.strip()
     if not name:
-        return HTMLResponse(
-            '<div class="error">Label name is required.</div>', status_code=400
-        )
+        return issue_form_refusal(request, conn, issue_id, "Label name is required.")
     # One command owns the whole write: the gate FIRST, then find-or-create, the
     # attach, and its atomic 'labeled' event — one transaction, like REST. When
     # the find-or-create ran here (before the gate), a refused request still
@@ -406,7 +423,7 @@ def remove_issue_label(
     HTML forms can't issue DELETE."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to label issues.</div>',
             status_code=401,
         )
@@ -437,14 +454,14 @@ def add_issue_contributor(
     labels/status. An unknown user is a 400; idempotent re-add is a no-op."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to add contributors.</div>',
             status_code=401,
         )
     try:
         target = int(user_id)
     except ValueError:
-        return HTMLResponse('<div class="error">Pick a user.</div>', status_code=400)
+        return issue_form_refusal(request, conn, issue_id, "Pick a user.")
     # The command owns the gate, the user-exists check, the add + auto-watch, and
     # the atomic 'added_contributor' event — the same one REST calls.
     try:
@@ -470,7 +487,7 @@ def remove_issue_contributor(
     can't issue DELETE."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to manage contributors.</div>',
             status_code=401,
         )
@@ -501,7 +518,7 @@ def add_issue_link(
     returns a reason we surface as a 400."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to link issues.</div>',
             status_code=401,
         )
@@ -521,9 +538,13 @@ def add_issue_link(
     except issue_commands.IssueCommandError as exc:
         # Only the target/relation validation and the block-each-other contradiction
         # reach here (the issue gate ran above); render the raw reason at 400, exactly
-        # as the pre-command handler did.
-        return HTMLResponse(
-            f'<div class="error">{html.escape(exc.detail)}</div>', status_code=400
+        # as the pre-command handler did — in the page, with what was typed.
+        return issue_form_refusal(
+            request,
+            conn,
+            issue_id,
+            exc.detail,
+            typed={"target_ref": target_ref.strip(), "relation": relation},
         )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
@@ -543,7 +564,7 @@ def remove_issue_link(
     can't issue DELETE. relation is the user-facing form used to create it."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to link issues.</div>',
             status_code=401,
         )
@@ -572,7 +593,7 @@ def archive_issue_web(
     and boards until restored. 303 back to the issue (now shown as archived)."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to archive.</div>',
             status_code=401,
         )
@@ -596,7 +617,7 @@ def unarchive_issue_web(
     gate as archive."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to restore.</div>',
             status_code=401,
         )
@@ -640,7 +661,7 @@ def release_issue_lease(
     releases. A hidden issue reads as missing before anything else is said."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to release a'
             " lease.</div>",
             status_code=401,
@@ -649,7 +670,7 @@ def release_issue_lease(
     if err is not None:
         return err
     if not identity.is_admin(user):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Only an admin may release another holder\'s'
             " lease.</div>",
             status_code=403,
@@ -696,7 +717,7 @@ def watch_issue(
     personal subscription, not a write to shared state)."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to watch.</div>',
             status_code=401,
         )
@@ -716,7 +737,7 @@ def unwatch_issue(
     """Stop watching an issue."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )

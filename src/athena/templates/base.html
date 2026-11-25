@@ -22,15 +22,23 @@
     <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false}'>
     <script src="/static/htmx.min.js?v={{ static_version }}"></script>
     <script src="/static/confirm.js?v={{ static_version }}"></script>
+    {# Keeps a comment box's text in this tab until the comment is accepted, so
+       a sign-in in between does not lose it (U11). After confirm.js, so a
+       submit cancelled there is seen as cancelled. #}
+    <script src="/static/drafts.js?v={{ static_version }}" defer></script>
 </head>
 <body>
+{# The first thing Tab reaches on every page (U15): past the app bar's rail
+   toggle, five navigation groups, search and user menu, straight to the work.
+   Hidden until focused; #main takes the focus (tabindex="-1"). #}
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="app"{% if request.cookies.get("athena_rail") == "collapsed" %} data-rail="collapsed"{% endif %}>
 
     <header class="app-bar">
         {% if request.state.user %}
         <form method="post" action="/settings/rail" class="inline-form">
             {% include "partials/csrf.html" %}
-            <input type="hidden" name="next" value="{{ request.url.path }}">
+            <input type="hidden" name="next" value="{{ return_path | default(request.url.path, true) }}">
             <input type="hidden" name="state" value="{{ 'open' if request.cookies.get('athena_rail') == 'collapsed' else 'collapsed' }}">
             <button type="submit" class="button ghost small" aria-label="{{ 'Show' if request.cookies.get('athena_rail') == 'collapsed' else 'Hide' }} navigation rail">&#8801;</button>
         </form>
@@ -48,13 +56,13 @@
                 <summary>Direct <span aria-hidden="true">&#9662;</span></summary>
                 <div class="nav-menu">
                     <p>Projects, issues, docs — what the fleet is pointed at.</p>
-                    <a href="/aegis/dashboard">Dashboard <span class="route">/aegis/dashboard</span></a>
-                    <a href="/aegis/boards">Boards <span class="route">/aegis/boards</span></a>
-                    <a href="/aegis">Issues <span class="route">/aegis</span></a>
-                    <a href="/aegis/projects">Projects <span class="route">/aegis/projects</span></a>
-                    <a href="/mentor">Mentor <span class="route">/mentor</span></a>
-                    <a href="/aegis/labels">Labels <span class="route">/aegis/labels</span></a>
-                    <a href="/aegis/filters">Filters <span class="route">/aegis/filters</span></a>
+                    <a href="/aegis/dashboard">Dashboard</a>
+                    <a href="/aegis/boards">Boards</a>
+                    <a href="/aegis">Issues</a>
+                    <a href="/aegis/projects">Projects</a>
+                    <a href="/mentor">Mentor</a>
+                    <a href="/aegis/labels">Labels</a>
+                    <a href="/aegis/filters">Filters</a>
                 </div>
             </details>
 
@@ -65,11 +73,11 @@
                 <summary>Observe <span aria-hidden="true">&#9662;</span></summary>
                 <div class="nav-menu">
                     <p>What happened, in the order it happened.</p>
-                    <a href="/aegis/activity">Activity <span class="route">/aegis/activity</span></a>
-                    <a href="/aegis/fleet-metrics">Throughput <span class="route">/aegis/fleet-metrics</span></a>
+                    <a href="/aegis/activity">Activity</a>
+                    <a href="/aegis/fleet-metrics">Throughput</a>
                     {% if request.state.user and request.state.user.role == "admin" %}
-                    <a href="/admin/agents/runs">Mission Control <span class="route">/admin/agents/runs</span></a>
-                    <a href="/admin/webhooks">Webhooks <span class="route">/admin/webhooks</span></a>
+                    <a href="/admin/agents/runs">Mission Control</a>
+                    <a href="/admin/webhooks">Webhooks</a>
                     {% endif %}
                 </div>
             </details>
@@ -81,11 +89,11 @@
                 <div class="nav-menu">
                     <p>Who may act, with what scope.</p>
                     {% if request.state.user.role == "admin" %}
-                    <a href="/admin/agents">Agents <span class="route">/admin/agents</span></a>
-                    <a href="/admin/fleet">Fleet <span class="route">/admin/fleet</span></a>
-                    <a href="/admin/automation">Automation <span class="route">/admin/automation</span></a>
+                    <a href="/admin/agents">Agents</a>
+                    <a href="/admin/fleet">Fleet</a>
+                    <a href="/admin/automation">Automation</a>
                     {% endif %}
-                    <a href="/settings/tokens">Tokens <span class="route">/settings/tokens</span></a>
+                    <a href="/settings/tokens">Tokens</a>
                 </div>
             </details>
 
@@ -102,11 +110,11 @@
             <details class="nav-group" name="athena-nav">
                 <summary>
                     Intervene
-                    {{ intervene_counts(request.state.nav) }}
+                    {{ intervene_counts(request.state.nav, live=nav_live(request)) }}
                 </summary>
                 <div class="nav-menu">
                     <p>Recorded inbox and attention signals, shown apart. Counts only — each links to the surface that owns it.</p>
-                    <a href="/inbox">Inbox{% if request.state.nav.unread_count %} <span class="chip" data-tone="neutral">{{ request.state.nav.unread_count }} unread</span>{% endif %} <span class="route">/inbox</span></a>
+                    <a href="/inbox">Inbox{% if request.state.nav.unread_count %} <span class="chip" data-tone="neutral">{{ request.state.nav.unread_count }} unread</span>{% endif %}</a>
                     {% for signal in request.state.nav.attention_signals %}{% if signal.count or signal.key in ('pending_approvals', 'unanswered_kills') %}
                     <a href="{{ signal.href }}">{{ signal.label }} <span class="chip" data-tone="accent">{{ signal.count }}</span> <span class="muted">{{ signal.scope }}</span></a>
                     {% endif %}{% endfor %}
@@ -114,7 +122,7 @@
                     <p>Standing queues are not time-windowed; event counts use their stated windows.
                         Counts sum signals, not unique tasks or fleet health.
                         Input caps alone prove neither overflow nor completeness.</p>
-                    <a href="/admin/run-controls">Run controls <span class="route">/admin/run-controls</span></a>
+                    <a href="/admin/run-controls">Run controls</a>
                     {% endif %}
                 </div>
             </details>
@@ -125,8 +133,8 @@
                 <summary>Trust <span aria-hidden="true">&#9662;</span></summary>
                 <div class="nav-menu">
                     <p>Evidence you can hand to someone else.</p>
-                    <a href="/admin/security">Security signals <span class="route">/admin/security</span></a>
-                    <a href="/admin/users">Users <span class="route">/admin/users</span></a>
+                    <a href="/admin/security">Security signals</a>
+                    <a href="/admin/users">Users</a>
                 </div>
             </details>
             {% endif %}
@@ -149,14 +157,14 @@
                 {{ request.state.user.name }}
             </summary>
             <div class="nav-menu nav-menu-right">
-                <a href="/settings/password">Password <span class="route">/settings/password</span></a>
-                {% if request.state.oidc_enabled %}<a href="/settings/identities">Sign-ins <span class="route">/settings/identities</span></a>{% endif %}
+                <a href="/settings/password">Password</a>
+                {% if request.state.oidc_enabled %}<a href="/settings/identities">Sign-ins</a>{% endif %}
                 {# Theme cycles system → dark → light → system; the label names
                    what you are ON, the arrow what you get. #}
                 {% set current_theme = request.cookies.get("athena_theme") if request.cookies.get("athena_theme") in ("dark", "light") else "system" %}
                 <form method="post" action="/settings/theme" class="inline-form menu-form">
                     {% include "partials/csrf.html" %}
-                    <input type="hidden" name="next" value="{{ request.url.path }}">
+                    <input type="hidden" name="next" value="{{ return_path | default(request.url.path, true) }}">
                     <input type="hidden" name="theme" value="{{ {'system': 'dark', 'dark': 'light', 'light': 'system'}[current_theme] }}">
                     <button type="submit" class="button ghost small">Theme: {{ current_theme }} &#8594; {{ {'system': 'dark', 'dark': 'light', 'light': 'system'}[current_theme] }}</button>
                 </form>
@@ -186,7 +194,7 @@
         {% endif %}
         {% endblock %}
 
-        <main class="work" id="main">
+        <main class="work" id="main" tabindex="-1">
             {% block content %}{% endblock %}
         </main>
     </div>
@@ -208,7 +216,7 @@
     <div class="palette-panel">
         <label class="visually-hidden" for="palette-input">Filter actions or type an issue ref</label>
         <input id="palette-input" class="palette-input" type="text" autocomplete="off"
-               placeholder="Type to filter actions, or an issue ref to inspect (MWS-18, 42)">
+               placeholder="Type to filter actions, or an issue key or number to inspect">
         <ul class="palette-actions" role="listbox" aria-label="Available actions"></ul>
         <div class="palette-detail"></div>
         <p class="palette-status" role="status" aria-live="polite"></p>

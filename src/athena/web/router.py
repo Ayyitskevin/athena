@@ -39,6 +39,7 @@ from athena.core.deps import get_conn
 from athena.web import inbox as inbox_view
 from athena.web import live
 from athena.web.csrf import verify_csrf
+from athena.web.form_errors import BrowserRefusal
 from athena.web.render import (
     render_snippet,
 )
@@ -82,6 +83,15 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
     from aegis.delegations, so this route only lays them out. Open to read, like the
     issue list."""
     user = getattr(request.state, "user", None)
+    # The navigation badge's poll (U12), answered before anything else is read:
+    # the badge sits on every page and this is the one route it asks. Its counts
+    # are gated by the session exactly as the badge is (web/nav.py): nothing
+    # signed out, the unread inbox for a member, and the "needs you" number for
+    # an admin. Signed out, the answer carries no poll, so the tab stops asking.
+    if live.wants_panel(request, live.NAV_COUNTS):
+        return get_templates().TemplateResponse(
+            request=request, name="partials/intervene_counts_panel.html"
+        )
     # The steer-by-exception rollup, admin-only because every input is already an
     # admin-scoped read. It is counts and links only — it computes no state of its
     # own, so it can never disagree with the surfaces it points at.
@@ -164,7 +174,7 @@ def mark_since_seen(
     which refuses to move backward. Never called by a page load."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
@@ -207,7 +217,7 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     label_filter = (request.query_params.get("label") or "").strip()
     project_filter = (request.query_params.get("project") or "").strip()
     if project_filter and issues.parse_project_filter(project_filter) is None:
-        return HTMLResponse("<h1>Invalid project filter</h1>", status_code=400)
+        return BrowserRefusal("<h1>Invalid project filter</h1>", status_code=400)
     filtered_mode = bool(status_filter or label_filter or project_filter)
     # The box speaks the work query grammar, through the same parser and compiler
     # as GET /issues?q=. A typo is shown as the compiler's error, never as "no
@@ -376,7 +386,7 @@ def inbox(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """The signed-in user's notification inbox — what changed on things they watch."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to see your inbox.</div>',
             status_code=401,
         )
@@ -413,7 +423,7 @@ def mark_inbox_read(
     """Mark one notification read, then back to the inbox."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
@@ -426,7 +436,7 @@ def mark_inbox_all_read(request: Request, conn: sqlite3.Connection = Depends(get
     """Mark every notification read, then back to the inbox."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )

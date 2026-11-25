@@ -13,6 +13,7 @@
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
 {% if rules %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead>
         <tr>
@@ -124,11 +125,12 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
-<p class="empty-state">No automation rules yet.</p>
+<p class="empty-state">No automation rules yet. <a href="#new-rule">Create a rule</a> to act on an event or a schedule.</p>
 {% endif %}
 
-<div class="panel">
+<div class="panel" id="new-rule">
     <h3>New rule</h3>
     <p class="note-small">Choose an event trigger or a fixed UTC schedule. Each rule performs one bounded action as the Automation user; schedule catch-up is bounded and visible below.</p>
     <form method="post" action="/admin/automation" class="issue-form">

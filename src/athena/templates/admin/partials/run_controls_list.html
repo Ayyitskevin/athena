@@ -9,6 +9,7 @@
 {% if clipped %}
 <p class="muted">Showing the newest {{ limit }} — older controls exist beyond this page.</p>
 {% endif %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead>
         <tr>
@@ -54,6 +55,7 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
 <p class="muted">
     No {{ "" if selected_state == "all" else selected_state + " " }}controls recorded.

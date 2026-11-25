@@ -750,8 +750,7 @@ def test_rest_and_web_are_admin_only_and_share_projection(tmp_path):
         assert "Implement the slice" in page.text
         assert "run-claim" in page.text
         assert (
-            "Evidence exists, but current path routes cannot address this run ID."
-            in page.text
+            "Evidence exists, but this run ID cannot be opened as a page." in page.text
         )
         active_work_html = page.text.split('<h2 id="fleet-active-work-heading">', 1)[
             1

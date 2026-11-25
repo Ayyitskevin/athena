@@ -35,6 +35,7 @@ from athena.core import access, fleet_roster, identity, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.browsing import readonly_response
+from athena.web.form_errors import BrowserRefusal
 from athena.web.router import get_templates
 from athena.workflows import fleet_assign_commands
 
@@ -87,7 +88,7 @@ def project_floor(
     user = getattr(request.state, "user", None)
     floor = office.build_floor(conn, project_id=project_id, actor=user, room_slug=room)
     if floor is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">No such project.</div>', status_code=404
         )
     notice = None
@@ -133,7 +134,7 @@ def project_floor_assign(
     """Sit a declared seat in this chair. Same command as Admin → Fleet assign."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to assign a chair.</div>',
             status_code=401,
         )
@@ -141,7 +142,7 @@ def project_floor_assign(
         return readonly_response()
     floor = office.build_floor(conn, project_id=project_id, actor=user)
     if floor is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">No such project.</div>', status_code=404
         )
     on_floor = {int(chair["issue_id"]) for chair in floor["chairs"]}
@@ -283,7 +284,9 @@ def project_floor_json(
     user = getattr(request.state, "user", None)
     floor = office.build_floor(conn, project_id=project_id, actor=user, room_slug=room)
     if floor is None:
-        return JSONResponse({"detail": "no such project"}, status_code=404)
+        return JSONResponse(
+            {"detail": "no such project", "code": "not_found"}, status_code=404
+        )
     return floor
 
 
@@ -302,7 +305,7 @@ def create_project(
     duplicate name or key → 409; otherwise 303 back to the projects list."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to create projects.</div>',
             status_code=401,
         )
@@ -310,22 +313,22 @@ def create_project(
         return readonly_response()
     name = name.strip()
     if not name:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Project name is required.</div>', status_code=400
         )
     normalized_key = projects.normalize_key(key)
     if normalized_key is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Key must start with a letter and be 1–10 letters/digits.</div>',
             status_code=400,
         )
     if projects.get_project_by_name(conn, name) is not None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">A project with that name already exists.</div>',
             status_code=409,
         )
     if projects.get_project_by_key(conn, normalized_key) is not None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">That project key is already in use.</div>',
             status_code=409,
         )
@@ -347,7 +350,7 @@ def _authorize_project_write(conn, project_id: int, user: dict):
     check stays at each call site, before this."""
     project = projects.get_project(conn, project_id)
     if project is None:
-        return None, HTMLResponse(
+        return None, BrowserRefusal(
             '<div class="error">No such project.</div>', status_code=404
         )
     # The visibility-first + creator-only rule is shared with the REST gate (and the
@@ -361,13 +364,13 @@ def _authorize_project_write(conn, project_id: int, user: dict):
         created_by=project["created_by"],
     )
     if reason == "not_visible":
-        return None, HTMLResponse(
+        return None, BrowserRefusal(
             '<div class="error">No such project.</div>', status_code=404
         )
     if not identity.can_write(user):
         return None, readonly_response()
     if reason == "not_owner":
-        return None, HTMLResponse(
+        return None, BrowserRefusal(
             '<div class="blocked">Only the project creator may edit it.</div>',
             status_code=403,
         )
@@ -384,7 +387,7 @@ def project_edit_form(
     still owns issues (the API would refuse that delete with a 409)."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit projects.</div>',
             status_code=401,
         )
@@ -439,7 +442,7 @@ def project_edit_save(
     project → 409; otherwise 303 back to the projects list."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit projects.</div>',
             status_code=401,
         )
@@ -448,24 +451,24 @@ def project_edit_save(
         return err
     name = name.strip()
     if not name:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Project name is required.</div>', status_code=400
         )
     normalized_key = projects.normalize_key(key)
     if normalized_key is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Key must start with a letter and be 1–10 letters/digits.</div>',
             status_code=400,
         )
     clash = projects.get_project_by_name(conn, name)
     if clash is not None and clash["id"] != project_id:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">A project with that name already exists.</div>',
             status_code=409,
         )
     key_clash = projects.get_project_by_key(conn, normalized_key)
     if key_clash is not None and key_clash["id"] != project_id:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">That project key is already in use.</div>',
             status_code=409,
         )
@@ -494,7 +497,7 @@ def project_delete(
     ``project_commands.delete_project``'s, the same one the REST twin maps."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to delete projects.</div>',
             status_code=401,
         )
@@ -509,7 +512,7 @@ def project_delete(
         )
     except project_commands.ProjectLifecycleCommandError as exc:
         detail = exc.detail[:1].upper() + exc.detail[1:]
-        return HTMLResponse(
+        return BrowserRefusal(
             f'<div class="error">{html.escape(detail)}.</div>',
             status_code=_PROJECT_LIFECYCLE_WEB_STATUS[exc.kind],
         )
@@ -531,13 +534,13 @@ def _authorize_project_manage(conn, project_id: int, user: dict):
     site, before this."""
     project = projects.get_project(conn, project_id)
     if project is None or not access.can_see_project(conn, user, project_id):
-        return None, HTMLResponse(
+        return None, BrowserRefusal(
             '<div class="error">No such project.</div>', status_code=404
         )
     if not identity.can_write(user):
         return None, readonly_response()
     if project["created_by"] != user["id"] and not identity.is_admin(user):
-        return None, HTMLResponse(
+        return None, BrowserRefusal(
             '<div class="blocked">Only the project creator or an admin may manage access.</div>',
             status_code=403,
         )
@@ -552,7 +555,7 @@ def project_access(
     — when private — the member roster with add/remove. Creator-or-admin (401/403/404)."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to manage access.</div>',
             status_code=401,
         )
@@ -591,7 +594,7 @@ def project_set_visibility(
     regardless). 303 back to the access page."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
@@ -600,7 +603,7 @@ def project_set_visibility(
         return err
     visibility = visibility.strip().lower()
     if visibility not in ("public", "private"):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Visibility must be public or private.</div>',
             status_code=400,
         )
@@ -645,13 +648,13 @@ def project_set_policy(
     """Configure blocked-close governance through the shared project command."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
     value = block_agent_closes_when_blocked.strip().lower()
     if value not in ("true", "false"):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Policy value must be true or false.</div>',
             status_code=400,
         )
@@ -670,7 +673,7 @@ def project_set_policy(
         elif exc.kind == "precondition_failed":
             detail = "Project settings changed. Reload and try again."
         headers = {"ETag": exc.current_etag} if exc.current_etag is not None else None
-        return HTMLResponse(
+        return BrowserRefusal(
             f'<div class="error">{html.escape(detail)}</div>',
             status_code=_PROJECT_POLICY_WEB_STATUS[exc.kind],
             headers=headers,
@@ -691,7 +694,7 @@ def project_add_member(
     400 on a missing/blank user; a re-add is idempotent. 303 back to the access page."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
@@ -700,7 +703,7 @@ def project_add_member(
         return err
     member = users.get_user(conn, int(user_id)) if user_id.strip().isdigit() else None
     if member is None:
-        return HTMLResponse('<div class="error">No such user.</div>', status_code=400)
+        return BrowserRefusal('<div class="error">No such user.</div>', status_code=400)
     # The command owns the grant and its atomic audit event — the same one REST calls.
     project_commands.add_project_member(
         conn,
@@ -726,7 +729,7 @@ def project_remove_member(
     no-op (they weren't a member) still 303s back — the roster simply reflects reality."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
@@ -750,7 +753,7 @@ def project_remove_member(
 
 
 def _sprints_signin(verb: str = "manage sprints") -> HTMLResponse:
-    return HTMLResponse(
+    return BrowserRefusal(
         f'<div class="blocked">Please <a href="/login">sign in</a> to {verb}.</div>',
         status_code=401,
     )
@@ -762,7 +765,7 @@ def _authorize_sprint_write(conn, sprint_id: int, user: dict):
     project creator's call — it reuses the project gate."""
     sprint = sprints.get_sprint(conn, sprint_id)
     if sprint is None:
-        return None, HTMLResponse(
+        return None, BrowserRefusal(
             '<div class="error">No such sprint.</div>', status_code=404
         )
     _, err = _authorize_project_write(conn, sprint["project_id"], user)
@@ -787,7 +790,7 @@ def project_timeline(
     project = projects.get_project(conn, project_id)
     # A private project the viewer can't see is a 404, like a missing one.
     if project is None or not access.can_see_project(conn, user, project_id):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">No such project.</div>', status_code=404
         )
     return get_templates().TemplateResponse(
@@ -814,7 +817,7 @@ def project_sprints(
     project = projects.get_project(conn, project_id)
     # A private project the viewer can't see is a 404, like a missing one.
     if project is None or not access.can_see_project(conn, user, project_id):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">No such project.</div>', status_code=404
         )
     sprint_list = sprints.list_sprints(conn, project_id=project_id)
@@ -858,7 +861,7 @@ def create_sprint_web(
         return err
     name = name.strip()
     if not name:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Sprint name is required.</div>', status_code=400
         )
     # The command owns the row and its atomic 'sprint_created' event — the same one
@@ -888,7 +891,7 @@ def start_sprint_web(
     try:
         sprint_commands.start_sprint(conn, actor_id=user["id"], sprint_id=sprint_id)
     except sprints.SprintStateError as exc:
-        return HTMLResponse(
+        return BrowserRefusal(
             f'<div class="error">{html.escape(str(exc))}</div>', status_code=409
         )
     except sprint_commands.SprintCommandError:
@@ -912,7 +915,7 @@ def complete_sprint_web(
     try:
         sprint_commands.complete_sprint(conn, actor_id=user["id"], sprint_id=sprint_id)
     except sprints.SprintStateError as exc:
-        return HTMLResponse(
+        return BrowserRefusal(
             f'<div class="error">{html.escape(str(exc))}</div>', status_code=409
         )
     except sprint_commands.SprintCommandError:
@@ -934,7 +937,7 @@ def delete_sprint_web(
     if err is not None:
         return err
     if sprints.count_issues_in_sprint(conn, sprint_id) > 0:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Move its issues out of the sprint first.</div>',
             status_code=409,
         )
@@ -955,7 +958,7 @@ def _status_refusal(exc: status_commands.StatusCommandError) -> HTMLResponse:
     this form answered before the migration.
     """
     code = {"forbidden": 403, "not_found": 404}.get(exc.kind, 400)
-    return HTMLResponse(
+    return BrowserRefusal(
         f'<div class="error">{html.escape(str(exc))}</div>', status_code=code
     )
 
@@ -975,7 +978,7 @@ def add_project_status_web(
     event; this surfaces its refusal reason."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
@@ -1002,7 +1005,7 @@ def remove_project_status_web(
     the last status or still in use by issues."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )

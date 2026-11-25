@@ -34,6 +34,7 @@ from athena.core import (
 from athena.core.deps import get_conn
 from athena.web import redirects
 from athena.web.csrf import verify_csrf
+from athena.web.form_errors import BrowserRefusal
 from athena.web.router import get_templates
 
 router = APIRouter()
@@ -199,7 +200,7 @@ def login(
     # attacker can't auto-submit their own credentials and silently log the victim into an
     # attacker-controlled account (SameSite=Lax does not stop this — login needs no cookie).
     if _is_cross_site_post(request):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Cross-site login blocked.</div>', status_code=403
         )
 
@@ -212,7 +213,7 @@ def login(
         client_ip = request.client.host if request.client else "unknown"
         decision = limiter.check(client_ip)
         if not decision.allowed:
-            return HTMLResponse(
+            return BrowserRefusal(
                 '<div class="error">Too many login attempts. Please wait and try again.</div>',
                 status_code=429,
                 headers={"Retry-After": str(decision.retry_after_seconds)},
@@ -235,7 +236,7 @@ def login(
     if account_limiter is not None:
         account_decision = account_limiter.check(email)
         if not account_decision.allowed:
-            throttled = HTMLResponse(
+            throttled = BrowserRefusal(
                 '<div class="error">Too many login attempts. Please wait and try again.</div>',
                 status_code=429,
                 headers={"Retry-After": str(account_decision.retry_after_seconds)},
@@ -343,7 +344,7 @@ def login_sso(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     templates = get_templates()
     settings = _oidc_settings()
     if settings is None:
-        return HTMLResponse("Not found", status_code=404)
+        return BrowserRefusal("Not found", status_code=404)
     issuer, client_id, _client_secret, redirect_url = settings
     if getattr(request.state, "user", None) is not None:
         return RedirectResponse(redirects.LANDING, status_code=303)
@@ -381,7 +382,7 @@ def auth_callback(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     templates = get_templates()
     settings = _oidc_settings()
     if settings is None:
-        return HTMLResponse("Not found", status_code=404)
+        return BrowserRefusal("Not found", status_code=404)
     issuer, client_id, client_secret, redirect_url = settings
 
     params = request.query_params

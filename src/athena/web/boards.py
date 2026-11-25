@@ -23,10 +23,11 @@ from athena.aegis import (
     sprints,
     statuses,
 )
-from athena.core import access
+from athena.core import access, identity
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.browsing import attach_claims, attach_labels, statuses_in_use
+from athena.web.form_errors import BrowserRefusal
 from athena.web.router import get_templates
 
 router = APIRouter()
@@ -117,7 +118,7 @@ def _render_board(
     """
     scope = _board_scope(project_filter, sprint_filter)
     if scope is None:
-        return HTMLResponse("<h1>Invalid project filter</h1>", status_code=400)
+        return BrowserRefusal("<h1>Invalid project filter</h1>", status_code=400)
     project_id, backlog, sprint_id = scope
 
     # Same data-layer path as the issues list and API: every filter is applied by
@@ -282,6 +283,8 @@ def _render_board(
             "group": group,
             "column_page": COLUMN_PAGE,
             "move_conflict": move_conflict,
+            # An empty board offers "create an issue" only to whoever may.
+            "can_write": identity.can_write(getattr(request.state, "user", None)),
         },
     )
 
@@ -353,11 +356,11 @@ def board_move_issue(
     # Validate before the write: a forged, malformed filter must not mutate an issue
     # and only then fail while re-rendering its response.
     if _board_scope(project, sprint, strict_sprint=True) is None:
-        return HTMLResponse("<h1>Invalid board filter</h1>", status_code=400)
+        return BrowserRefusal("<h1>Invalid board filter</h1>", status_code=400)
 
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to move cards.</div>',
             status_code=401,
         )

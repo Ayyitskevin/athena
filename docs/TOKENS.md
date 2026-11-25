@@ -41,7 +41,7 @@ metadata, help text, counts, run ids, timestamps and footers.
 
 | Token | Dark | Light | Use |
 |---|---|---|---|
-| `--accent` | `#C7F24A` | `#9BD316` | **Fill only.** Buttons, badges, active pills, brand mark, rail indicator. Always with `--accent-ink`. |
+| `--accent` | `#C7F24A` | `#9BD316` | **Fill only.** Badges, active pills, brand mark, rail indicator. Never the default button (DESIGN_SYSTEM.md, "The default button"). Always with `--accent-ink`. |
 | `--accent-text` | `#C7F24A` | `#3F6212` | **Foreground.** Text, icons, chart strokes, focus ring, the hero numeral. |
 | `--accent-ink` | `#0C1200` | `#101A00` | Text on an accent fill |
 | `--accent-soft` | 13% lime | `#EEF9CE` | Chip and row tints |

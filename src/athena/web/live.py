@@ -1,4 +1,4 @@
-"""Self-refreshing panels for the three cockpit surfaces that answer "right now".
+"""Self-refreshing panels for the cockpit surfaces that answer "right now".
 
 VISION's Observe promise is that an operator can see what each agent is doing at
 this moment. Three surfaces carry that weight — the dashboard's fleet-attention
@@ -22,6 +22,15 @@ could forget a gate the page remembers. A viewer who may not see a surface canno
 poll it either, because the polling markup lives inside the surface they were
 refused. That includes paused accounts: the session middleware treats a paused user
 as signed out, so the admin-gated panels never render for them at all.
+
+Two more surfaces refresh the same way (U12). The issue page's supervision
+block (who holds the work, under which run, when it last moved) answers as a
+panel of the issue page itself. The navigation's "needs you" badge sits on
+every page, so it cannot re-enter "its" page without rebuilding whichever page
+that was; it is a panel of the dashboard, which answers a named panel before
+it builds anything else, and its counts are gated by the session exactly as
+the badge is (web/nav.py). Still no partial-only endpoint: a route that serves
+a page serves its panels.
 
 **Staleness is shown, not implied.** Every panel renders the instant it was built,
 and says how often it will rebuild. A panel that has silently stopped refreshing —
@@ -50,6 +59,10 @@ PANEL_PARAM = "panel"
 FLEET_ATTENTION = "fleet-attention"
 ACTIVE_WORK = "active-work"
 RUN_CONTROLS = "run-controls"
+ISSUE_SUPERVISION = "issue-supervision"
+#: The navigation badge: a panel of the dashboard route (see the module text).
+NAV_COUNTS = "nav-counts"
+NAV_COUNTS_HOME = "/aegis/dashboard"
 
 _TS_FORMAT = "%H:%M:%S"
 
@@ -94,6 +107,36 @@ def build(request: Request, panel: str) -> Live:
     """The refresh contract for one panel of the page being rendered."""
     return Live(
         url=refresh_url(request, panel),
+        seconds=config.LIVE_REFRESH_SECONDS,
+        observed_at=utc_now().strftime(_TS_FORMAT),
+    )
+
+
+def issue_supervision(request: Request, issue_id: int) -> Live | None:
+    """The issue page's supervision block's refresh contract, for a signed-in
+    viewer only. Its URL is built from the issue's id, not from this request:
+    the page is also rendered by POST routes (a refused form, the warning before
+    a close), and a poll aimed at a POST address would be refused every time."""
+    if getattr(request.state, "user", None) is None:
+        return None
+    return Live(
+        url=f"/aegis/issues/{int(issue_id)}?"
+        f"{urlencode([(PANEL_PARAM, ISSUE_SUPERVISION)])}",
+        seconds=config.LIVE_REFRESH_SECONDS,
+        observed_at=utc_now().strftime(_TS_FORMAT),
+    )
+
+
+def nav(request: Request) -> Live | None:
+    """The badge's refresh contract, for a signed-in viewer only.
+
+    Signed out (and paused, which the session middleware reads as signed out)
+    there is nothing to count and no poll is armed; a poll answered for a
+    viewer who has since signed out comes back without one, and stops."""
+    if getattr(request.state, "user", None) is None:
+        return None
+    return Live(
+        url=f"{NAV_COUNTS_HOME}?{urlencode([(PANEL_PARAM, NAV_COUNTS)])}",
         seconds=config.LIVE_REFRESH_SECONDS,
         observed_at=utc_now().strftime(_TS_FORMAT),
     )

@@ -10,7 +10,7 @@ import html
 import sqlite3
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 
 from athena import config
 from athena.aegis import (
@@ -28,7 +28,9 @@ from athena.web.browsing import (
     readonly_response,
 )
 from athena.web.csrf import verify_csrf
+from athena.web.form_errors import BrowserRefusal
 from athena.web.issue_html import (
+    issue_form_refusal,
     issue_visible_or_404,
 )
 
@@ -47,9 +49,13 @@ def add_issue_comment(
     issue so the new comment shows."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        # The session expired under a comment: the answer shows what was
+        # written so it is not lost, and static/drafts.js keeps it for the box.
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to comment.</div>',
             status_code=401,
+            unposted=body,
+            back=f"/aegis/issues/{issue_id}",
         )
     if not identity.can_write(user):
         return readonly_response()
@@ -58,9 +64,7 @@ def add_issue_comment(
         return err
     body = body.strip()
     if not body:
-        return HTMLResponse(
-            '<div class="error">Comment cannot be empty.</div>', status_code=400
-        )
+        return issue_form_refusal(request, conn, issue_id, "Comment cannot be empty.")
 
     # The command owns the insert AND its atomic 'commented' event (auto-watch + mentions).
     comment_commands.create_comment(conn, actor=user, issue_id=issue_id, body=body)
@@ -75,13 +79,13 @@ def _own_comment_or_response(conn, issue_id, comment_id, user, *, allow_admin=Fa
     stays author-only."""
     existing = comments.get_comment(conn, comment_id)
     if existing is None or existing["issue_id"] != issue_id:
-        return None, HTMLResponse(
+        return None, BrowserRefusal(
             '<div class="error">Comment not found.</div>', status_code=404
         )
     if existing["author_id"] != user["id"] and not (
         allow_admin and identity.is_admin(user)
     ):
-        return None, HTMLResponse(
+        return None, BrowserRefusal(
             '<div class="error">You can only change your own comments.</div>',
             status_code=403,
         )
@@ -103,7 +107,7 @@ def edit_issue_comment(
     author-ownership (you may only edit your own), then 303 back to the issue."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit comments.</div>',
             status_code=401,
         )
@@ -117,9 +121,7 @@ def edit_issue_comment(
         return err
     body = body.strip()
     if not body:
-        return HTMLResponse(
-            '<div class="error">Comment cannot be empty.</div>', status_code=400
-        )
+        return issue_form_refusal(request, conn, issue_id, "Comment cannot be empty.")
     # The command owns the edit AND its atomic 'comment_edited' event — this web path
     # previously rewrote the body with NO audit trail at all.
     try:
@@ -133,7 +135,7 @@ def edit_issue_comment(
     except comment_commands.CommentCommandError:
         # vanished between the author check and the write (a race) — 404, not a
         # silent "success" redirect.
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Comment not found.</div>', status_code=404
         )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
@@ -153,7 +155,7 @@ def delete_issue_comment(
     Uses POST (not DELETE) because HTML forms can't issue DELETE."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to delete comments.</div>',
             status_code=401,
         )
@@ -172,7 +174,7 @@ def delete_issue_comment(
     if not comment_commands.delete_comment(
         conn, actor=user, issue_id=issue_id, comment_id=comment_id
     ):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Comment not found.</div>', status_code=404
         )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
@@ -191,7 +193,7 @@ def add_issue_attachment(
     Empty file → 400, oversize → 413; otherwise 303 back to the issue."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to attach files.</div>',
             status_code=401,
         )
@@ -202,9 +204,11 @@ def add_issue_attachment(
         return err
     data = file.file.read()
     if not data:
-        return HTMLResponse('<div class="error">File is empty.</div>', status_code=400)
+        return BrowserRefusal(
+            '<div class="error">File is empty.</div>', status_code=400
+        )
     if len(data) > config.ATTACH_MAX_BYTES:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">File is too large.</div>', status_code=413
         )
     try:
@@ -219,7 +223,7 @@ def add_issue_attachment(
             attach_dir=config.ATTACH_DIR,
         )
     except attachment_commands.AttachmentCommandError as exc:
-        return HTMLResponse(
+        return BrowserRefusal(
             f'<div class="error">{html.escape(str(exc).capitalize())}.</div>',
             status_code=ATTACHMENT_STATUS_BY_KIND[exc.kind],
         )
@@ -240,7 +244,7 @@ def remove_issue_attachment(
     comment ownership). POST, not DELETE, because HTML forms can't issue DELETE."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to remove files.</div>',
             status_code=401,
         )
@@ -251,11 +255,11 @@ def remove_issue_attachment(
         return err
     att = attachments.get(conn, attachment_id)
     if att is None or att["target_kind"] != "issue" or att["target_id"] != issue_id:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Attachment not found.</div>', status_code=404
         )
     if att["uploaded_by"] != user["id"]:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Only the uploader may remove this file.</div>',
             status_code=403,
         )
@@ -267,7 +271,7 @@ def remove_issue_attachment(
             attach_dir=config.ATTACH_DIR,
         )
     except attachment_commands.AttachmentCommandError as exc:
-        return HTMLResponse(
+        return BrowserRefusal(
             f'<div class="error">{html.escape(str(exc).capitalize())}.</div>',
             status_code=ATTACHMENT_STATUS_BY_KIND[exc.kind],
         )

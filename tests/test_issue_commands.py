@@ -1519,7 +1519,9 @@ def test_hidden_and_missing_sprints_collapse_across_rest_web_and_bulk(tmp_path):
                 follow_redirects=False,
             )
             assert response.status_code == 400
-            assert response.text == '<div class="error">No such sprint.</div>'
+            # A plain form post's refusal renders inside the shell (U11); the
+            # words, and their sameness for hidden and missing, are unchanged.
+            assert '<div class="error">No such sprint.</div>' in response.text
 
         visible_wrong_web = client.post(
             f"/aegis/issues/{source_issue['id']}/sprint",
@@ -1527,10 +1529,10 @@ def test_hidden_and_missing_sprints_collapse_across_rest_web_and_bulk(tmp_path):
             follow_redirects=False,
         )
         assert visible_wrong_web.status_code == 400
-        assert visible_wrong_web.text == (
+        assert (
             '<div class="error">Sprint belongs to a different project '
             "than the issue.</div>"
-        )
+        ) in visible_wrong_web.text
 
     conn = db.connect(db_file)
     unchanged = issues.get_issue(conn, source_issue["id"])

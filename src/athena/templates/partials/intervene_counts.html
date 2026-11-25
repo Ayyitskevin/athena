@@ -3,9 +3,16 @@
    htmx swaps it in by its id, so a refreshed card never sits beside a stale
    badge (U6). The badge is the "needs you" number alone (needs_you); the unread
    inbox is its own labelled count beside it, never added to it, and is hidden
-   on a narrow screen rather than widening the nav. #}
-{% macro intervene_counts(nav, oob=False) -%}
-<span id="intervene-counts" class="nav-counts"{% if oob %} hx-swap-oob="true"{% endif %}>
+   on a narrow screen rather than widening the nav.
+
+   It also refreshes itself (U12): `live` is web/live.py's nav() contract, a
+   panel of the dashboard route, and the answer is this same span carrying the
+   same attributes, which re-arms the poll. The card's out-of-band copy carries
+   them too, or the badge would stop polling after the card's first refresh.
+   Signed out there is no contract and no poll. #}
+{% import "partials/live.html" as live_ui %}
+{% macro intervene_counts(nav, oob=False, live=None) -%}
+<span id="intervene-counts" class="nav-counts"{% if oob %} hx-swap-oob="true"{% endif %}{{ live_ui.live_attrs(live) }}>
     {%- if nav.attention_total %}
     <span class="nav-count" aria-label="{{ nav.attention_total }} need you: recorded attention signals, not unique tasks or fleet health">{{ nav.attention_total }}</span>
     {%- endif %}

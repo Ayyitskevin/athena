@@ -373,7 +373,7 @@ def test_api_mcp_and_web_error_translation_never_echo_or_log_refused_text(
             issue_commands.IssueCommandError("invalid", detail)
         )
         assert web.status_code == 422
-        assert json.loads(web.body) == {"detail": detail, "code": "invalid"}
+        assert json.loads(web.body) == {"detail": detail, "code": "validation_error"}
         assert (
             token
             not in response.text + str(caught.value) + web.body.decode() + caplog.text

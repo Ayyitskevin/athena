@@ -190,6 +190,9 @@ class BulkResult(BaseModel):
     error: str | None = None
     # Stable machine-readable refusal code when the command provides one.
     code: str | None = None
+    # On a row refused for a status the project does not offer: the names it
+    # does offer, as a single write's refusal lists them (G10).
+    valid_statuses: list[str] | None = None
     # The issue's ETag after this change, on an applied row: the next guarded
     # write on it needs no read (C9).
     etag: str | None = None
@@ -243,6 +246,27 @@ class IssueOut(BaseModel):
     # When the issue was archived (soft-deleted), or null if it's active.
     archived_at: str | None = None
     labels: list[LabelOut] = []
+
+
+class IssueReadOut(IssueOut):
+    """An issue as a read answers it: the issue, and who wrote its current text
+    (G10). Write answers stay ``IssueOut``: the author is a reader-dependent
+    fact (a hidden edit reads as null), so it is not part of the representation
+    the ETag is computed from, and is added after it."""
+
+    authored_by: AuthoredBy | None = authorship.field(authorship.ISSUE_DESCRIPTION)
+
+
+def _with_text_authors(
+    conn: sqlite3.Connection, rows: list[dict], actor: dict | None
+) -> list[dict]:
+    """Set ``authored_by`` on issue rows, one batch for the whole page (G10)."""
+    authors = authorship.issue_text_authors(
+        conn, [row["id"] for row in rows], actor=actor
+    )
+    for row in rows:
+        row[authorship.KEY] = authors.get(row["id"])
+    return rows
 
 
 class SimilarOpenOut(BaseModel):
@@ -444,7 +468,7 @@ class IssueListOut(BaseModel):
     """One page of issues, paged as every new list is (D2): while `has_more` is
     true, send `next_cursor` back as `cursor` with the same filters or query."""
 
-    issues: list[IssueOut]
+    issues: list[IssueReadOut]
     # Opaque: pass it back unchanged. Null on the last page.
     next_cursor: str | None
     has_more: bool
@@ -547,7 +571,7 @@ def index(
         except issue_query.QueryCompileError as exc:
             raise _query_refusal(exc, exc.atom) from exc
         return {
-            "issues": _with_labels_many(conn, rows),
+            "issues": _with_text_authors(conn, _with_labels_many(conn, rows), actor),
             "next_cursor": None if last is None else list_cursor.encode(tag, last),
             "has_more": last is not None,
         }
@@ -597,7 +621,7 @@ def index(
     has_more = len(rows) > limit
     rows = rows[:limit]
     return {
-        "issues": _with_labels_many(conn, rows),
+        "issues": _with_text_authors(conn, _with_labels_many(conn, rows), actor),
         "next_cursor": list_cursor.encode(_ISSUE_CURSOR, [rows[-1]["id"]])
         if has_more
         else None,
@@ -653,6 +677,7 @@ class IssueSearchHit(BaseModel):
     snippet: str
     key: str | None = None
     status: str | None = None
+    authored_by: AuthoredBy | None = authorship.field(authorship.ISSUE_DESCRIPTION)
 
 
 @router.get("/search", response_model=list[IssueSearchHit])
@@ -681,7 +706,7 @@ def search_issues_endpoint(
     # /{ref} so the literal path wins over the issue-ref parameter.
     if project is not None:
         _parse_project_filter(project)  # raises 422 on an unparseable filter
-    return issue_search.search_issues(
+    hits = issue_search.search_issues(
         conn,
         q,
         status=status,
@@ -693,9 +718,10 @@ def search_issues_endpoint(
         offset=offset,
         actor=actor,
     )
+    return authorship.stamp_search_hits(conn, hits, actor=actor)
 
 
-@router.get("/{ref}", response_model=IssueOut)
+@router.get("/{ref}", response_model=IssueReadOut)
 def show(
     ref: str,
     response: Response,
@@ -713,7 +739,8 @@ def show(
         conn, actor, issue["project_id"]
     ):
         raise Refusal(status_code=404, detail="no such issue", code="not_found")
-    return _tagged_issue(conn, issue, response)
+    public = _tagged_issue(conn, issue, response)
+    return _with_text_authors(conn, [public], actor)[0]
 
 
 @router.get("/{issue_id}/backlinks", response_model=list[LinkOut])
@@ -1164,6 +1191,11 @@ def bulk_update(
             }
             if exc.code is not None:
                 result["code"] = exc.code
+            # A row refused for a status the project does not offer lists the
+            # statuses it does offer, as a single write's refusal does (G10).
+            valid = (exc.extra or {}).get(issue_commands.VALID_STATUSES_FIELD)
+            if valid is not None:
+                result["valid_statuses"] = list(valid)
             results.append(result)
 
     updated = sum(1 for r in results if r["ok"])
@@ -1241,7 +1273,7 @@ def set_parent(
     return _tagged_issue(conn, updated, response)
 
 
-@router.get("/{issue_id}/children", response_model=list[IssueOut])
+@router.get("/{issue_id}/children", response_model=list[IssueReadOut])
 def list_children(
     issue_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
@@ -1256,7 +1288,7 @@ def list_children(
     children = issues.list_children(
         conn, issue_id, visible_project_ids=access.visible_project_filter(conn, actor)
     )
-    return _with_labels_many(conn, children)
+    return _with_text_authors(conn, _with_labels_many(conn, children), actor)
 
 
 @router.post("/{issue_id}/comments", response_model=CommentOut, status_code=201)

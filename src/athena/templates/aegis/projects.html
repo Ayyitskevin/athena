@@ -11,6 +11,7 @@
 </div>
 
 {% if projects %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead>
         <tr>
@@ -31,7 +32,7 @@
                 {% endif %}
             </td>
             <td class="muted"><code>{{ p.key }}</code></td>
-            <td class="muted">{{ p.description or "—" }}</td>
+            <td class="muted cell-wrap">{{ p.description or "—" }}</td>
             <td class="muted">{{ counts[p.id] }}</td>
             <td class="muted">
                 <a href="/aegis/projects/{{ p.id }}/floor">Floor</a>
@@ -48,11 +49,16 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
-<p class="empty-state">No projects yet.</p>
+{% if can_write %}
+<p class="empty-state">No projects yet. <a href="#new-project">Create the first project</a> to group issues under a key.</p>
+{% else %}
+<p class="empty-state">No projects yet. They appear here when a member creates one.</p>
+{% endif %}
 {% endif %}
 
-<div class="panel">
+<div class="panel" id="new-project">
     {% if can_write %}
     <h3>New Project</h3>
     <form method="post" action="/aegis/projects" class="issue-form">
@@ -83,5 +89,4 @@
     {% endif %}
 </div>
 
-<p class="note">Data from the Aegis projects API.</p>
 {% endblock %}

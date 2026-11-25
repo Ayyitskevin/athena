@@ -32,6 +32,7 @@ from athena.core.deps import get_conn
 from athena.mentor import run_learning_commands, run_learnings, spaces
 from athena.web.csrf import verify_csrf
 from athena.web.browsing import int_or_none
+from athena.web.form_errors import BrowserRefusal
 from athena.web.router import get_templates
 
 router = APIRouter()
@@ -90,7 +91,9 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     kind = (request.query_params.get("kind") or "").strip() or None
     q = (request.query_params.get("q") or "").strip()
     if target_id is not None and kind is None:
-        return HTMLResponse("<h1>Invalid activity target filter</h1>", status_code=400)
+        return BrowserRefusal(
+            "<h1>Invalid activity target filter</h1>", status_code=400
+        )
 
     # Fetch one extra row to know whether an older page exists without a count
     # query; if we got it, there's more — trim it off and remember the cursor. The
@@ -177,7 +180,7 @@ def undo_event_web(
     redirect."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to undo.</div>',
             status_code=401,
         )
@@ -230,7 +233,9 @@ def activity_export_csv(
     kind = (request.query_params.get("kind") or "").strip() or None
     q = (request.query_params.get("q") or "").strip()
     if target_id is not None and kind is None:
-        return HTMLResponse("<h1>Invalid activity target filter</h1>", status_code=400)
+        return BrowserRefusal(
+            "<h1>Invalid activity target filter</h1>", status_code=400
+        )
 
     user = getattr(request.state, "user", None)
     rows = activity.list_activity(
@@ -299,7 +304,7 @@ def activity_run_lineage(
     user = getattr(request.state, "user", None)
     lineage = activity.run_lineage(conn, run_id, actor=user)
     if lineage is None:
-        return HTMLResponse("<h1>No such run</h1>", status_code=404)
+        return BrowserRefusal("<h1>No such run</h1>", status_code=404)
     fork_contracts = []
     for event in lineage["run"]["events"]:
         contract = activity.run_fork_contract(
@@ -387,7 +392,7 @@ def create_run_control_web(
     filing a second one — the same single-flight contract the API offers."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to issue a'
             " run control.</div>",
             status_code=401,
@@ -445,7 +450,7 @@ def record_run_learning_web(
     form and submitted it. Nothing about finishing a run promotes anything."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to record a'
             " learning.</div>",
             status_code=401,

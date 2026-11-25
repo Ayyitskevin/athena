@@ -164,10 +164,10 @@ skip_empty = false
 # half a point above its floor fails with "raise the floor to X", where X is the
 # measurement minus 0.25, rounded down to two decimals, so one paste passes both
 # a local run and CI's combined shards, which measure up to ~0.09 points higher.
-# Floors only rise. Last raised 2026-11-24 from hosted CI's combined shards
-# measuring 94.31919/86.20879/92.44574 (previously 93.86/85.56/91.90).
+# Floors only rise. Last raised 2026-11-25 from hosted CI's combined shards
+# measuring 94.59236/86.52380/92.74456 (previously 94.06/85.95/92.19).
 [tool.athena.coverage]
-line_floor = 94.06
-branch_floor = 85.95
-combined_floor = 92.19
+line_floor = 94.34
+branch_floor = 86.27
+combined_floor = 92.49
 excluded_line_count = 2

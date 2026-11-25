@@ -277,12 +277,13 @@ _DECLARED: tuple[Setting, ...] = (
     Setting(
         "ATHENA_LIVE_REFRESH_SECONDS",
         10,
-        "How often the three self-refreshing cockpit panels (fleet attention, "
-        "active claimed work, run controls) re-ask the server for their own "
-        "markup. `0` turns polling off — the pages still render and say so, they "
-        "just stop updating themselves. Any other value must be 5–3600; the floor "
-        "is a load bound, since each polling admin costs roughly "
-        "`0.5 ms / interval` of server time.",
+        "How often the self-refreshing cockpit panels (fleet attention, active "
+        "claimed work, run controls, an issue page's supervision block, and the "
+        "navigation badge on every page) re-ask the server for their own markup. "
+        "`0` turns polling off — the pages still render and say so, they just "
+        "stop updating themselves. Any other value must be 5–3600; the floor is a "
+        "load bound, since each polling admin costs roughly `0.5 ms / interval` "
+        "of server time, and every signed-in tab now polls its badge.",
         "server",
     ),
     Setting(

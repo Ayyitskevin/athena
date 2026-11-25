@@ -13,6 +13,7 @@
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
 {% if identities %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead>
         <tr>
@@ -42,6 +43,7 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% if not has_password %}
 <p class="note-small">SSO is your only way to sign in. <a href="/settings/password">Set a password</a> to be able to unlink your last identity.</p>
 {% endif %}

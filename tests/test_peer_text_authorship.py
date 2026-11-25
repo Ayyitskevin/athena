@@ -29,12 +29,13 @@ from typing import Any, Literal, Union, get_args, get_origin
 from pydantic import BaseModel
 
 from athena.aegis import work_context_api
-from athena.aegis.api import CommentListOut
+from athena.aegis.api import CommentListOut, IssueListOut, IssueReadOut, IssueSearchHit
 from athena.aegis.api import CommentOut as IssueCommentOut
 from athena.aegis.api import IssuePriorTextOut
 from athena.aegis.notification_priority_api import PriorityInboxOut, PrioritySummaryOut
 from athena.aegis.project_brief_models import Excerpt
 from athena.core.notifications_api import NotificationOut
+from athena.core.search_api import SearchHit
 from athena.main import create_app
 from athena.mentor.api import PageCommentOut, PageListOut, PageOut, PageVersionOut
 
@@ -59,6 +60,12 @@ READS: dict[tuple[str, str], tuple[type[BaseModel], ...]] = {
     ("get", "/notifications"): (NotificationOut,),
     ("get", "/notifications/priority"): (PriorityInboxOut,),
     ("get", "/notifications/priority/summary"): (PrioritySummaryOut,),
+    # G10: the issue reads, the children list and both searches.
+    ("get", "/issues"): (IssueListOut,),
+    ("get", "/issues/{ref}"): (IssueReadOut,),
+    ("get", "/issues/{issue_id}/children"): (IssueReadOut,),
+    ("get", "/issues/search"): (IssueSearchHit,),
+    ("get", "/search"): (SearchHit,),
 }
 
 #: Containers whose text belongs to the object holding them.
@@ -186,6 +193,10 @@ NOT_PEER_WRITTEN: dict[str, tuple[str, str]] = {
     "mentor.api.PageListOut.next_cursor": (ID, "the list's opaque cursor (H6)"),
     "mentor.api.LabelOut.name": (NAME, "a label's name"),
     "mentor.api.LabelOut.color": (ID, "a label's colour token"),
+    # G10: the issue list's page and its labels.
+    "aegis.api.IssueListOut.next_cursor": (ID, "the list's opaque cursor (H6)"),
+    "aegis.api.LabelOut.name": (NAME, "a label's name"),
+    "aegis.api.LabelOut.color": (ID, "a label's colour token"),
     # --- the desk (no response model: keyed by lane path) ------------------------
     "desk:.schema": (ID, "the desk's contract version"),
     "desk:.identity.name": (NAME, "the reader's own display name"),

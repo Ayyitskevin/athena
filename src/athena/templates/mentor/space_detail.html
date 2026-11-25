@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 
+{# The page's own address for the rail and theme toggles to come back to:
+   a refused form re-renders this page at the address it posted to, which
+   answers a GET with 405 (U11). #}
+{% set return_path = "/mentor/spaces/" ~ space.id %}
+
 {% block title %}{{ space.name }} — Mentor{% endblock %}
 
 {% block content %}
@@ -34,6 +39,9 @@
     </div>
 </div>
 
+{# A refused form on this page says why here, and keeps what was typed (U11). #}
+{% if error %}<div data-refused><div class="error">{{ error }}</div></div>{% endif %}
+
 <p class="filter-bar muted">
     {% if include_archived %}
     Showing archived pages · <a href="/mentor/spaces/{{ space.id }}">Hide archived</a>
@@ -43,6 +51,7 @@
 </p>
 
 {% if tree %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead>
         <tr><th>Page</th><th>Last updated</th></tr>
@@ -60,8 +69,9 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
-<p class="empty-state">No pages in this space yet.</p>
+<p class="empty-state">No pages in this space yet.{% if can_write %} <a href="#new-page">Write the first page</a>.{% endif %}</p>
 {% endif %}
 
 {% if can_write %}
@@ -95,13 +105,14 @@
             <label for="tmpl-id">Template</label>
             <select id="tmpl-id" name="template_id">
                 {% for t in templates %}
-                <option value="{{ t.id }}">{{ t.title }}</option>
+                <option value="{{ t.id }}"{% if typed.template_id == t.id ~ '' %} selected{% endif %}>{{ t.title }}</option>
                 {% endfor %}
             </select>
         </div>
         <div class="form-group">
             <label for="tmpl-title">New page title</label>
             <input type="text" id="tmpl-title" name="title" required
+                   value="{{ typed.template_title or '' }}"
                    placeholder="e.g. Postmortem 2026-07-27">
         </div>
         <div class="form-actions">
@@ -113,7 +124,7 @@
 {% endif %}
 {% endif %}
 
-<div class="panel">
+<div class="panel" id="new-page">
     <div class="panel-body">
     {% if can_write %}
     <h3>New Page</h3>
@@ -121,20 +132,21 @@
         {% include "partials/csrf.html" %}
         <div class="form-group">
             <label for="page-title">Title</label>
-            <input type="text" id="page-title" name="title" required placeholder="e.g. Deployment runbook">
+            {# A refused page comes back with what was typed (U11). #}
+            <input type="text" id="page-title" name="title" required value="{{ typed.title or '' }}" placeholder="e.g. Deployment runbook">
         </div>
         <div class="form-group">
             <label for="page-parent">Nest under (optional)</label>
             <select id="page-parent" name="parent_id">
                 <option value="">— Top level —</option>
                 {% for p in all_pages %}
-                <option value="{{ p.id }}">{{ p.title }}</option>
+                <option value="{{ p.id }}"{% if typed.parent_id == p.id ~ '' %} selected{% endif %}>{{ p.title }}</option>
                 {% endfor %}
             </select>
         </div>
         <div class="form-group">
             <label for="page-body">Body</label>
-            <textarea id="page-body" name="body" rows="6" placeholder="Write the page..."></textarea>
+            <textarea id="page-body" name="body" rows="6" placeholder="Write the page...">{{ typed.body or '' }}</textarea>
         </div>
         <div class="form-actions">
             <button type="submit" class="button">Create Page</button>
@@ -179,5 +191,4 @@
 </section>
 {% endif %}
 
-<p class="note">Data from the Mentor pages API.</p>
 {% endblock %}
