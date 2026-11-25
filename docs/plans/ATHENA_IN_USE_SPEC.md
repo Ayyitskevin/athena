@@ -2,7 +2,7 @@
 
 Date: 2026-11-22. Review baseline: `0b42d40` (`main` after Waves 0, 0b, 1 and 2
 of [the agentic-use specification](AGENTIC_USE_SPEC_ATHENA.md)).
-Status: **decisions accepted by standing instruction; Waves 3, 4 and 5 built; Waves 6, 7 and 8 begun; Wave 9 begun.**
+Status: **decisions accepted by standing instruction; Waves 3 to 9 built, but for the owner's items named under Next step.**
 Evidence: [reports/repo-review-2026-11-22-round2.md](reports/repo-review-2026-11-22-round2.md).
 Finding IDs such as `FLEET-4`, `OPS-5`, `PERF-1` and `COCKPIT-2` refer to that
 report. Requirement IDs that begin A, B or C are carried from the first
@@ -140,8 +140,8 @@ document's scopes, 404 and 428 and its build at start, one clock the lease
 lifecycle reads and tests move, imported comments and pages that name
 no author, seat documents held to their profile with the desk loop executed
 and the settings tables generated, the surface's size held to a tracked
-file, and command-migration debts that can only go down, with the sprint
-commands paid. From Wave 5: the prior text of an edit, its
+file, command-migration debts that can only go down, with the sprint
+commands paid, and a test map recorded from per-test coverage. From Wave 5: the prior text of an edit, its
 read and its undo, `If-Match` for a bearer edit of a title or body, and the
 idempotency fence scoped to the issue a key names, a key that survives a
 restart with replays marked for the agent, the leases of a stopped
@@ -155,10 +155,10 @@ an idempotency key's state, and learnings that reach an issue's parent and
 siblings. Wave 5 is built. "Wave 5 results" says the same for
 each.
 
-**Next step.** G7 (a generated test map) is next. Wave 8 is built except the
-idle sort that H5 left and the three missing twins the parity gate names;
-what is left of Wave 9 is G7 (G1 to G6, G8 to G10 and B6b are built; B11 is
-blocked). Each requirement that removes calls lowers the fleet trial's ceilings
+**Next step.** Waves 3 to 9 are built, but for what the owner decides: the
+idle sort that H5 left, the three missing twins the parity gate names, B11
+(blocked on D9), and the actor the operator CLI, demo and smoke script mint
+tokens as, which the next command-debt payment needs. Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
 
 **How work is done here.** One requirement, one commit, with the test that
@@ -402,6 +402,47 @@ Found and not fixed:
   between meets the foreign key and answers 500, not 409. The API-token
   commands are the next natural payment; the operator CLI, the demo and a
   smoke script also mint tokens and need an actor decided.
+
+### Wave 9 results (fourth lane)
+
+This is G7. It was built by a delegated builder from the lead's brief; the
+lead read and re-ran it and recorded the committed map from the whole suite.
+
+| Measure | Before | After |
+|---|---|---|
+| Where the changed profile learns which tests reach code only through the app | A hand-kept map of 19 file-name globs | `scripts/test_map.json`, generated from coverage recorded per test: 220 source files, 6,253 test-file entries, recorded from all 452 test files (6,957 tests); 42 files that more than half the suite runs are listed as ubiquitous and run the full suite when changed. Four hand entries remain, for what coverage cannot measure (templates, static assets, the field guide, documents) |
+| Telling when the map is stale | Nothing | A weekly read-only workflow records the suite in four shards and fails with the diff, uploading the regenerated map; a person commits it (`generate_test_map.py --record`) |
+| A change to `aegis/claims_api.py` | 83 test files, 57 of them matched by name | 219: the 196 test files that called a claim route, the 2 that import it and 26 that read the source tree |
+
+Decisions the lead took while building, each reversible by the owner:
+
+- **The map stores, per file, the tests that ran it and do not import it**;
+  the selector adds the import graph back. A file more than half the
+  recorded suite runs gets no entry and a change to it runs everything.
+- **The workflow never pushes**: no `contents: write`, so a person reviews
+  and commits each regenerated map. It runs weekly, so it will often report
+  a stale map after a week of active work.
+- **The committed map was recorded in this session** at `4fd15d5`, without
+  the two tests that cannot run outside the main checkout (the gate
+  wrapper's import refusal and its refused-gate receipt); both are gate
+  plumbing that reaches no app module.
+
+Found while building, and fixed before it was committed:
+
+- One mutant survived the first tests (the ubiquity bound as `>=`); it has
+  a test. With the whole suite recorded, a test that capped a router
+  change at a third of the suite failed: the claim routes really are called
+  by 196 test files. It now asserts the selection is bounded and comes from
+  the map.
+
+Found and not fixed:
+
+- Code a test runs in a subprocess, and what a module does at import time,
+  stay invisible to the map; both are written down as blind spots in the
+  selector and in `CONTRIBUTING.md`. The sdist does not carry the map
+  (`MANIFEST.in` ships `scripts/*.py` only); the selector then reads it as
+  empty. `agent_openapi.Transport`'s docstring still explains a rule about
+  the middleware that the ubiquity rule has replaced.
 
 ## Scorecard
 
