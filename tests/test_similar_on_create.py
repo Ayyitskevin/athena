@@ -183,6 +183,9 @@ def test_the_response_is_the_issue_representation_plus_only_similar_open(tmp_pat
         _create(client, "Login page crashes on submit", pid)
         created = _create(client, "Login page crash when submitting", pid)
         fetched = client.get(f"/issues/{created['id']}", headers=H1).json()
+        # A read adds authored_by (G10), which depends on the reader and is no
+        # part of the representation.
+        fetched.pop("authored_by")
         assert set(created) == set(fetched) | {"similar_open"}
         assert {k: v for k, v in created.items() if k != "similar_open"} == fetched
     finally:
