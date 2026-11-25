@@ -37,6 +37,8 @@ router = APIRouter()
 # well above any board a person can actually scan, so the cap is a safety bound
 # rather than a routine truncation; when it does bite, the board says so.
 BOARD_CARD_CAP = 500
+#: How many cards a column shows before the rest go behind "Show N more" (U13).
+COLUMN_PAGE = 20
 
 
 def _board_scope(
@@ -278,6 +280,7 @@ def _render_board(
             "all_sprints": all_sprints,
             "sprint_filter": sprint_filter,
             "group": group,
+            "column_page": COLUMN_PAGE,
             "move_conflict": move_conflict,
         },
     )

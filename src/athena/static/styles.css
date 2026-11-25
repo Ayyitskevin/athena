@@ -1128,6 +1128,9 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 .board-column-head .count { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-3); }
 
 .board-cards { display: flex; flex-direction: column; gap: 10px; min-height: 64px; }
+/* The rest of a long column, behind "Show N more" (U13). */
+.board-more > summary { cursor: pointer; padding: var(--sp-2) 0; font-size: var(--fs-sm); color: var(--text-2); }
+.board-more[open] > summary { margin-bottom: 10px; }
 
 .board-card {
   background: var(--surface);
