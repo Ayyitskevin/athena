@@ -24,6 +24,7 @@ are the only per-document knowledge.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+import dataclasses
 import re
 from typing import Any
 
@@ -74,7 +75,19 @@ DEFAULT_PROFILE = {
     "QUICKSTART.md": "seat",
     "RUNTIME_RECIPE.md": "seat+knowledge",
     "SYNTHETIC.md": "seat",
+    "SYNTHETIC_LOOP.md": "seat",
+    # The prompt the recipe hands its agent, which carries the recipe's profile.
+    "desk_loop.md": "seat+knowledge",
 }
+
+# examples/desk_loop.md is the prompt RUNTIME_RECIPE.md step 4 pastes into the
+# agent it onboarded: a sequence of steps, each a call the agent makes. G9: it
+# was checked for tool names and never run, so it told a `seat+knowledge` agent
+# to call `begin_run`, which that profile does not carry, and to pick work from
+# a `delegated` lane the desk does not have. It now runs, writes included, in
+# the workspace the recipe leaves (test below).
+DESK_LOOP = "desk_loop.md"
+DESK_LOOP_PATH = harness.REPO / "examples" / DESK_LOOP
 
 # --- blocks that are not requests --------------------------------------------------
 #
@@ -149,8 +162,24 @@ def _guide_yield_issue(ws: Workspace) -> None:
     _hold(ws, 4)
 
 
+def _operator_steers_the_run(ws: Workspace) -> None:
+    """RUNTIME_RECIPE step 5: "While the agent is working, send a steer", to
+    the agent's session run, which step 7 of the prompt then answers."""
+    sent = ws.client.post(
+        "/run-controls",
+        headers=ws.as_admin(),
+        json={
+            "run_id": ws.facts["run_id"],
+            "kind": "steer",
+            "payload": "Narrow the scope: just the stale steps, leave the wording alone.",
+        },
+    )
+    assert sent.status_code == 201, sent.text
+
+
 PRECONDITIONS: dict[tuple[str, str], Callable[[Workspace], None]] = {
     ("AGENT_GUIDE.md", "POST /issues/4/yield"): _guide_yield_issue,
+    (DESK_LOOP, "record_run_learning("): _operator_steers_the_run,
 }
 
 
@@ -226,10 +255,41 @@ def _current_issue(ws: Workspace) -> dict | None:
     return ws.client.get(f"/issues/{ws.issue_id}", headers=ws.bearer()).json()
 
 
+def _issue_etag(ws: Workspace) -> str | None:
+    """The issue's current ETag, as the caller reads it ("<the issue's current
+    ETag>")."""
+    if ws.issue_id is None:
+        return None
+    return ws.client.get(f"/issues/{ws.issue_id}", headers=ws.bearer()).headers.get(
+        "ETag"
+    )
+
+
+def _held_generation(ws: Workspace) -> str | None:
+    """The generation of the caller's lease on the issue ("<the lease generation
+    you were given>"); None when the caller holds none."""
+    if ws.issue_id is None:
+        return None
+    lease = ws.client.get(f"/issues/{ws.issue_id}/lease", headers=ws.bearer())
+    held = lease.json() if lease.status_code == 200 else None
+    return held.get("generation") if isinstance(held, dict) else None
+
+
+def _open_control(ws: Workspace) -> int | None:
+    """The oldest control in the caller's inbox nobody has settled."""
+    inbox = ws.client.get(
+        "/run-controls", params={"state": "open"}, headers=ws.bearer()
+    ).json()
+    return min((control["id"] for control in inbox), default=None)
+
+
 FILLERS: dict[str, Callable[[Workspace], Any]] = {
     "issue_id": lambda ws: ws.issue_id,
     "ref": lambda ws: (_current_issue(ws) or {}).get("key"),
     "project_id": lambda ws: (_current_issue(ws) or {}).get("project_id"),
+    "if_match": _issue_etag,
+    "generation": _held_generation,
+    "control_id": _open_control,
 }
 
 TABLES = harness.Tables(
@@ -240,6 +300,7 @@ TABLES = harness.Tables(
     provoked=PROVOKED,
     arguments=ARGUMENTS,
     fillers=FILLERS,
+    runs_writes=frozenset({DESK_LOOP}),
 )
 
 
@@ -332,8 +393,144 @@ def test_each_document_runs_its_agent_on_the_profile_it_names():
     names it; that block is compared with the config Athena emits (above)."""
     recipe = (harness.DOCS / "RUNTIME_RECIPE.md").read_text(encoding="utf-8")
     assert '"ATHENA_MCP_PROFILE": "seat+knowledge"' in recipe
-    assert set(DEFAULT_PROFILE) - {"SYNTHETIC.md"} == set(ENTRY_DOCUMENTS)
+    assert DEFAULT_PROFILE[DESK_LOOP] == DEFAULT_PROFILE["RUNTIME_RECIPE.md"]
+    synthetic = {"SYNTHETIC.md", "SYNTHETIC_LOOP.md", DESK_LOOP}
+    assert set(DEFAULT_PROFILE) - synthetic == set(ENTRY_DOCUMENTS)
     assert set(WORKSPACE) == set(ENTRY_DOCUMENTS)
+
+
+# --- the desk-loop prompt, run where the recipe leaves its agent ------------------------
+
+
+def _lane(desk: dict, path: str) -> object:
+    value: object = desk
+    for key in path.split("."):
+        if not isinstance(value, dict) or key not in value:
+            return None
+        value = value[key]
+    return value
+
+
+def test_the_desk_loop_prompt_runs_where_the_recipe_leaves_its_agent(
+    workspace, schemas
+):
+    """RUNTIME_RECIPE.md onboards an agent, delegates an issue to it and hands
+    it examples/desk_loop.md. Here the recipe runs, then the prompt runs as
+    that agent's session (the profile its printed config names, and a run
+    identity of its own as athena-mcp gives every session): every call each
+    step shows is made in order, writes included, and must succeed."""
+    ws = workspace("bootstrapped")
+    recipe = harness.run_document(
+        "RUNTIME_RECIPE.md", _read("RUNTIME_RECIPE.md"), ws, TABLES, schemas
+    )
+    assert recipe.failures == [], "\n".join(recipe.failures)
+    env = ws.facts["mcp_config"]["mcpServers"]["athena"]["env"]
+    ws.facts["run_id"] = "mcp-0123456789ab"
+    ws.session = harness.session_for(
+        ws.app,
+        env["ATHENA_TOKEN"],
+        env["ATHENA_MCP_PROFILE"],
+        run_id=ws.facts["run_id"],
+    )
+    ws.issue_id = None  # the prompt picks its issue from the desk
+    ws.facts["answers"] = []
+
+    prompt = DESK_LOOP_PATH.read_text(encoding="utf-8")
+    report = harness.run_document(DESK_LOOP, prompt, ws, TABLES, schemas)
+    assert report.failures == [], "\n".join(report.failures)
+    seen = len(report.executed) + len(report.validated) + len(report.excluded)
+    assert seen == report.blocks, report
+    assert len(report.calls_run) + len(report.calls_validated) == report.calls
+
+    # Each step's call ran: the loop is executed, not only named.
+    ran = [tool for tool, _ in ws.facts["answers"]]
+    for step in (
+        "my_desk",
+        "current_run",
+        "heartbeat_agent_run",
+        "get_issue_work_context",
+        "get_issue_lease",
+        "claim_issue",
+        "record_run_learning",
+        "complete_claim",
+        "list_run_controls",
+        "acknowledge_run_control",
+        "complete_run_control",
+    ):
+        assert step in ran, (step, report.calls_validated)
+    # ...on the issue the recipe delegated, which the desk offered.
+    assert ws.issue_id == 1
+
+    # The lanes the prompt names are lanes of the desk it read.
+    desk = next(answer for tool, answer in ws.facts["answers"] if tool == "my_desk")
+    lanes = re.findall(r"`([a-z_]+(?:\.[a-z_]+)*)` lane", prompt)
+    assert lanes, "the prompt no longer names a desk lane"
+    assert [lane for lane in lanes if _lane(desk, lane) is None] == []
+    # ...and the runbook fields it reads are fields of the work context it read.
+    context = next(
+        answer
+        for tool, answer in ws.facts["answers"]
+        if tool == "get_issue_work_context"
+    )
+    fields = re.findall(r"`(runbook\.[a-z_]+)`", prompt)
+    assert fields, "the prompt no longer says how a first learning finds its space"
+    assert [path for path in fields if _lane(context, path) is None] == []
+
+    # What the trail now holds is what the recipe says the operator will see.
+    admin = ws.as_admin()
+    assert ws.client.get("/issues/1/lease", headers=admin).json() in (None, {})
+    controls = ws.client.get(
+        "/run-controls", params={"run_id": ws.facts["run_id"]}, headers=admin
+    ).json()
+    assert [control["state"] for control in controls] == ["completed"]
+
+
+SYNTHETIC_LOOP = """# A synthetic prompt whose steps no longer run
+
+Claim the issue you already hold:
+
+```
+claim_issue(issue_id=<id>, if_match="<the issue's current ETag>")
+```
+
+```
+my_desk()
+then watch the loop close
+```
+
+Decline what you will not do with `decline_run_control(control_id=..., ...)`,
+which shows no reason, so it is checked and not sent.
+
+Then switch runs with `begin_run(run_id="x")`.
+"""
+
+
+def test_a_prompt_step_that_no_longer_runs_fails(workspace, schemas):
+    """The desk-loop run fails on a step the agent could not take: a write the
+    server refuses (a renewal without the generation), a fenced line that is
+    not a call, and a tool the prompt's profile does not carry. A call that
+    elides a required argument is checked and not sent, so it adds nothing."""
+    ws = workspace("demo")
+    ws.issue_id = ws.facts["seeded"]["ids"]["command_issue"]  # Sol holds it
+    tables = dataclasses.replace(
+        TABLES, runs_writes=TABLES.runs_writes | {"SYNTHETIC_LOOP.md"}
+    )
+    report = harness.run_document(
+        "SYNTHETIC_LOOP.md", SYNTHETIC_LOOP, ws, tables, schemas
+    )
+    failures = "\n".join(report.failures)
+    assert "claim_issue(issue_id=<id>" in failures
+    assert "lease_generation_required" in failures
+    assert "a ``` block whose lines are not each one tool call" in failures
+    assert "begin_run is not in the document's `seat` profile" in failures
+    assert len(report.failures) == 3, failures
+    assert any("decline_run_control" in call for call in report.calls_validated)
+    assert any("my_desk()" in call for call in report.calls_run)
+    # Without runs_writes the same claim is only checked, never sent.
+    checked = harness.run_document(
+        "SYNTHETIC_LOOP.md", SYNTHETIC_LOOP, ws, TABLES, schemas
+    )
+    assert not any("lease_generation_required" in f for f in checked.failures)
 
 
 # --- the harness fails on what it is for -----------------------------------------------

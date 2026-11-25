@@ -88,7 +88,8 @@ versions+restore, page comments, labels, wikilinks/backlinks/title addressing
 **page watches already exist** (`notifications.WATCHABLE_KINDS`). Fleet: the
 whole A–L loop, `examples/icarus_executor.py`, `scripts/field_exercise.py` as
 a CI gate. Platform: 68 migrations, 2,300 tests, enforced coverage floors
-(92.60/82.30/90.30), release evidence in `RELEASE_READINESS.md`.
+(`[tool.athena.coverage]` in `pyproject.toml`; 92.60/82.30/90.30 on this
+guide's date), release evidence in `RELEASE_READINESS.md`.
 
 Extension points you will use, verified present:
 - `web/render.py:render_body` — the one markdown pipeline; wikilink/issue-key

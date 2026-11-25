@@ -167,13 +167,18 @@ Athena forwarding capability names it has never heard of and cannot reason about
 
 ## Configuration
 
-| Variable | Default | Means |
-|---|---|---|
-| `ATHENA_ICARUS_URL` | *(unset)* | Executor base URL; `POST {URL}/dispatch` |
-| `ATHENA_ICARUS_SECRET` | *(unset)* | Shared HMAC secret, both directions |
-| `ATHENA_ICARUS_TIMEOUT_SECONDS` | 10 | Per-request outbound timeout |
-| `ATHENA_EGRESS_PRIVATE_HOSTS` | *(empty)* | Exact hostnames Athena may POST to even though they resolve private/loopback (see below) |
-| `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | Shared direct-peer-IP limit for optional-identity REST reads and every callback attempt; not a global browser-request ceiling |
+The table is generated from the settings registry (`src/athena/config.py`), as
+the full tables in [OPERATIONS.md](OPERATIONS.md#runtime-configuration) are:
+
+<!-- BEGIN GENERATED settings:dispatch (scripts/generate_settings_doc.py; do not edit by hand) -->
+| Variable | Default | Secret | Use |
+|----------|---------|--------|-----|
+| `ATHENA_ICARUS_URL` | *(empty)* | no | Dispatch executor base URL (`POST {URL}/dispatch`). Dispatch is refused unless this and `ATHENA_ICARUS_SECRET` are both set. See DISPATCH.md. |
+| `ATHENA_ICARUS_SECRET` | *(empty)* | yes | Shared HMAC secret for dispatch and its callbacks, both directions. |
+| `ATHENA_ICARUS_TIMEOUT_SECONDS` | `10` | no | Per-request timeout in seconds for outbound dispatch. |
+| `ATHENA_EGRESS_PRIVATE_HOSTS` | *(empty)* | no | Exact hostnames (comma-separated, case-insensitive, no wildcards) outbound webhook/dispatch POSTs may reach even though they resolve to private, loopback, or link-local addresses. Empty keeps the SSRF policy absolute. Set it when your webhook receiver or execution fleet legitimately lives on your own machine, LAN, or tailnet — e.g. `127.0.0.1` — and name only hosts you operate. Delivery still pins the connection to the resolved address. |
+| `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | no | Per-client-IP ceiling used by optional-identity REST reads and each signed-inbound attempt (forge and Icarus callbacks). It is not a global browser-request ceiling. Keyed by the accepted direct peer, never forwarding headers. Tailnet mode requires a positive value. |
+<!-- END GENERATED settings:dispatch -->
 
 Both the URL and the secret must be set. A URL without a secret would mean sending
 unsigned work to an unauthenticated endpoint.

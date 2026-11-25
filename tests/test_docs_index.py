@@ -21,6 +21,7 @@ existing file (a directory row to an existing directory).
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 import re
 
@@ -128,3 +129,46 @@ def test_the_link_extractor_sees_what_it_must():
     rows that went missing."""
     targets = set(_links(INDEX))
     assert {"VISION.md", "../AGENTS.md", "plans/", "GLOSSARY.md"} <= targets
+
+
+# --- no document keeps a hand table of settings (G9) ----------------------------
+#
+# The settings registry (src/athena/config.py) owns each variable's default and
+# meaning; scripts/generate_settings_doc.py renders them into the generated
+# blocks of OPERATIONS.md, DISPATCH.md and WORKERS.md. DISPATCH.md and WORKERS.md
+# had kept hand tables beside the generated ones. A table row naming a variable
+# outside a generated block, anywhere under docs/, is that second inventory.
+
+
+def _generated_blocks():
+    path = REPO / "scripts" / "generated_blocks.py"
+    spec = importlib.util.spec_from_file_location("athena_generated_blocks", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _hand_setting_rows(text: str) -> list[str]:
+    prose = _generated_blocks().outside_blocks(text)
+    return [line for line in prose.splitlines() if line.startswith("| `ATHENA_")]
+
+
+def test_no_document_keeps_a_hand_table_of_settings():
+    found = {
+        path.relative_to(REPO).as_posix(): rows
+        for path in _documents()
+        if path.suffix == ".md" and (rows := _hand_setting_rows(path.read_text()))
+    }
+    assert found == {}, "generate the table: scripts/generate_settings_doc.py"
+
+
+def test_the_hand_table_guard_would_catch_a_hand_row():
+    text = (
+        "## Configuration\n\n| Variable | Default |\n|---|---|\n"
+        "| `ATHENA_WORKER_STALE_SECONDS` | 90 |\n\n"
+        "<!-- BEGIN GENERATED settings:workers (x; do not edit by hand) -->\n"
+        "| `ATHENA_WORKER_MAX_PER_AGENT` | `50` | no | Ceiling. |\n"
+        "<!-- END GENERATED settings:workers -->\n"
+    )
+    assert _hand_setting_rows(text) == ["| `ATHENA_WORKER_STALE_SECONDS` | 90 |"]

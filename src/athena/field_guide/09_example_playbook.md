@@ -1,4 +1,5 @@
-This page carries the `playbook` label, so it can be turned into real work:
+This page carries the `playbook` label, so it can be turned into real work with
+the full profile's `start_playbook` (or `POST /pages/{page_id}/start-playbook`):
 
 ```
 start_playbook(<this page's id>)

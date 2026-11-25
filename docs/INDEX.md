@@ -106,9 +106,10 @@ directory listed below with its rule — and every link resolves;
 ## Looking for something that isn't where you expected?
 
 - **API bearer tokens** (minting, scopes, revocation): [QUICKSTART.md](QUICKSTART.md) path B and [OPERATIONS.md](OPERATIONS.md) — not [TOKENS.md](TOKENS.md), which is CSS.
-- **The REST routes**: the app's own `/openapi.json` (browse at `/redoc`) is
-  the full reference, `/openapi-agent.json` the part an agent token can call
-  (with the headers and refusal body each operation takes), and
+- **The REST routes**: `/openapi-agent.json` is the REST surface an agent
+  token can call (with the scope, headers and refusal body each operation
+  takes), `/openapi.json` (browse at `/redoc`) the whole app's document,
+  browser routes included and none of the headers Athena enforces, and
   [AGENT_API.md](AGENT_API.md) maps MCP tools to scopes and routes; `/aegis/*`
   browser paths are session+CSRF web routes, *not* the API an agent token can
   call.

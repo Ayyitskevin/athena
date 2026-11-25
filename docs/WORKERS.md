@@ -129,10 +129,15 @@ up to 50. Both lists disclose clipping when more matching workers exist.
 
 ## Configuration
 
-| Variable | Default | Means |
-|---|---|---|
-| `ATHENA_WORKER_STALE_SECONDS` | 90 | Older than this reports as `stale` |
-| `ATHENA_WORKER_MAX_PER_AGENT` | 50 | Registry ceiling per agent |
+The table is generated from the settings registry (`src/athena/config.py`), as
+the full tables in [OPERATIONS.md](OPERATIONS.md#runtime-configuration) are:
+
+<!-- BEGIN GENERATED settings:workers (scripts/generate_settings_doc.py; do not edit by hand) -->
+| Variable | Default | Secret | Use |
+|----------|---------|--------|-----|
+| `ATHENA_WORKER_STALE_SECONDS` | `90` | no | Maximum worker-heartbeat age still labeled `reporting_recently`; older workers are `stale`. Cooperative presence, never process liveness. |
+| `ATHENA_WORKER_MAX_PER_AGENT` | `50` | no | Worker-registry ceiling per agent. Existing workers stay refreshable at the ceiling; a new one is refused. |
+<!-- END GENERATED settings:workers -->
 
 The ceiling bounds growth, not refreshes: a looping or compromised token may
 refresh the rows it has forever and still never add another.

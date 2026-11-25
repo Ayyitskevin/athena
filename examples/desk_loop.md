@@ -23,8 +23,8 @@ the product, and a misleading entry is worse than no entry.
 Call `my_desk()`. It is one bounded read that tells you who you are, what is
 delegated to you, what you are already holding, what the operator has asked you,
 and what has changed since you last looked. Start here every session — do not
-reconstruct it from separate `whoami` / `list_my_delegated_work` /
-`list_run_controls` / `list_notifications` calls.
+reconstruct it from separate `list_my_delegated_work` / `list_run_controls` /
+`list_notifications` calls.
 
 Read the `identity` lane first. It tells you your scopes, your budget, and which
 actions are gated behind an operator's approval. **Discover your limits by
@@ -33,22 +33,25 @@ looking, not by hitting them.**
 If your desk has nothing delegated, stop and say so. An empty desk is a correct
 answer, not a problem to route around: do not go find work you were not given.
 
-## 2. Name your run
+## 2. Know your run
 
-Call `begin_run(run_id="<something-descriptive>")` — for example
-`desk-loop-2026-08-13`. Every write you make from now on is tagged with it, which
-is what makes your work replayable as a unit and distinguishable from another
-agent's. If you were already given a run id, use that one.
+`athena-mcp` gave this session a run identity when it started; `current_run()`
+shows it. Every write you make is tagged with it, which is what makes your work
+replayable as a unit and distinguishable from another agent's. A run id the
+operator chose for you is set as `ATHENA_RUN_ID` in your MCP config before the
+session starts: this prompt's `seat+knowledge` profile cannot switch runs
+mid-session (the full profile's `begin_run(run_id=...)` can).
 
-Call `heartbeat_agent_run()` now and again as you work: it reports on the run
-you just named, so pass no `run_id` (one that is not your session's run is
+Call `heartbeat_agent_run()` now and again as you work: it reports on your
+session's run, so pass no `run_id` (one that is not your session's run is
 refused). It is how the
 operator's Mission Control knows you are alive rather than hung. It is a claim
 about you, made by you — so do not send it if you are not actually working.
 
 ## 3. Take exactly one thing
 
-Pick one issue from the `delegated` lane. Read it properly before you touch it:
+Pick one issue from the `work.delegations` lane. Read it properly before you
+touch it:
 
 - `get_issue_work_context(issue_id)` — the bounded packet: the issue, its
   neighbours, its blockers, its runbook. Prefer this over reading five things.
@@ -97,6 +100,12 @@ This is the step agents skip and operators miss most. A learning is promoted int
 the issue's **runbook**, so the next agent to touch this work — possibly you next
 week, with none of this context — starts where you finished instead of where you
 started.
+
+The first learning on an issue starts its runbook, a page in a space. When the
+work context's `runbook.exists` is false and its `runbook.suggested_spaces` lists
+more than one space, add `space_id=` with the one the runbook belongs in. With
+exactly one it is chosen for you; with none the learning is refused, so say so
+in your report.
 
 Write it for that reader. "Fixed the thing" helps nobody. "The stale steps were
 in the release checklist's section 3; section 4 looks stale but is load-bearing

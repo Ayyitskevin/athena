@@ -86,6 +86,19 @@ curl -sS -X POST http://127.0.0.1:8000/issues/1/delegate \
 Delegation is what makes the issue appear on the agent's desk. An agent that was
 never delegated anything has an empty desk, which is the correct answer.
 
+What the agent learns goes into the issue's **runbook**, a page in a space.
+Athena has no default space and will not choose one, so a new instance needs a
+space the agent can see before its first learning can land:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/spaces \
+  -H 'Content-Type: application/json' -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN" \
+  -d '{"key": "RUN", "name": "Runbooks"}'
+```
+
+When the agent can see exactly one space, its first learning starts the runbook
+there; with more than one it names the space (the prompt says how).
+
 ## 3. Point Claude Code at Athena
 
 Athena hands you this config already filled in — it is the `mcp_config` field of

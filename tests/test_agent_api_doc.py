@@ -95,3 +95,22 @@ def test_generated_exact_version_guidance_preserves_the_completion_boundary():
         "These associations grant no acceptance or external-action authority."
         in content
     )
+
+
+def test_the_page_sends_an_agent_to_the_document_its_token_can_call():
+    """G9: the intro called `/openapi.json` "the full REST reference". It is the
+    whole app's document, browser routes included and without the headers
+    Athena enforces; the operations an agent's token can call, with their
+    scopes, headers and refusal body, are `/openapi-agent.json`. The intro and
+    docs/INDEX.md name both for what each is."""
+    sys.path.insert(0, str(REPO / "src"))
+    from athena.agent_openapi import AGENT_OPENAPI_URL
+
+    intro = _load_generator().render().split("\n## ", 1)[0]
+    index = (REPO / "docs" / "INDEX.md").read_text()
+    routes = next(line for line in index.split("\n- ") if "The REST routes" in line)
+    for text in (intro, routes):
+        flat = " ".join(text.split())
+        assert f"`{AGENT_OPENAPI_URL}`" in flat and "REST surface an agent" in flat
+        assert "`/openapi.json`" in flat and "browser routes included" in flat
+        assert "full reference" not in flat and "full REST reference" not in flat
