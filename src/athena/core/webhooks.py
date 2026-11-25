@@ -371,13 +371,13 @@ def _record_success(
 ) -> None:
     """Advance the cursor past a delivered event and clear any failure state."""
     stamp = _stamp(now)
-    conn.execute(
-        "UPDATE webhooks SET cursor = ?, failure_count = 0, last_error = NULL, "
-        "last_attempt_at = ?, last_success_at = ?, next_attempt_at = NULL "
-        "WHERE id = ?",
-        (cursor, stamp, stamp, webhook_id),
-    )
-    conn.commit()
+    with db.transaction(conn):
+        conn.execute(
+            "UPDATE webhooks SET cursor = ?, failure_count = 0, last_error = NULL, "
+            "last_attempt_at = ?, last_success_at = ?, next_attempt_at = NULL "
+            "WHERE id = ?",
+            (cursor, stamp, stamp, webhook_id),
+        )
 
 
 def _record_failure(
@@ -391,12 +391,12 @@ def _record_failure(
     it was so the same event is retried (at-least-once, in order)."""
     new_count = failure_count + 1
     next_at = _stamp(now + timedelta(seconds=_backoff_seconds(new_count)))
-    conn.execute(
-        "UPDATE webhooks SET failure_count = ?, last_error = ?, "
-        "last_attempt_at = ?, next_attempt_at = ? WHERE id = ?",
-        (new_count, error[:500], _stamp(now), next_at, webhook_id),
-    )
-    conn.commit()
+    with db.transaction(conn):
+        conn.execute(
+            "UPDATE webhooks SET failure_count = ?, last_error = ?, "
+            "last_attempt_at = ?, next_attempt_at = ? WHERE id = ?",
+            (new_count, error[:500], _stamp(now), next_at, webhook_id),
+        )
 
 
 # A poster sends one delivery and reports (ok, error). Injected so deliver_pending

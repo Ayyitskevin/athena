@@ -14,6 +14,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from athena import config
+from athena.core import db
 from athena.core._util import utc_now
 
 # SQLite stores our timestamps as "YYYY-MM-DD HH:MM:SS" UTC (datetime('now')).
@@ -35,12 +36,12 @@ def create_session(conn: sqlite3.Connection, user_id: int) -> str:
     raw = secrets.token_urlsafe(32)
     csrf = secrets.token_urlsafe(32)
     expires = (utc_now() + timedelta(days=config.SESSION_TTL_DAYS)).strftime(_TS_FMT)
-    conn.execute(
-        "INSERT INTO sessions (user_id, session_hash, expires_at, csrf_token)"
-        " VALUES (?, ?, ?, ?)",
-        (user_id, _hash(raw), expires, csrf),
-    )
-    conn.commit()
+    with db.transaction(conn):
+        conn.execute(
+            "INSERT INTO sessions (user_id, session_hash, expires_at, csrf_token)"
+            " VALUES (?, ?, ?, ?)",
+            (user_id, _hash(raw), expires, csrf),
+        )
     return raw
 
 
@@ -92,8 +93,8 @@ def destroy_session(conn: sqlite3.Connection, raw: str | None) -> None:
     """Delete the session a cookie names (logout). No-op if it doesn't exist."""
     if not raw:
         return
-    conn.execute("DELETE FROM sessions WHERE session_hash = ?", (_hash(raw),))
-    conn.commit()
+    with db.transaction(conn):
+        conn.execute("DELETE FROM sessions WHERE session_hash = ?", (_hash(raw),))
 
 
 def revoke_other_sessions(

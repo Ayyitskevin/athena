@@ -5,7 +5,6 @@ the same typed refusal as a renewal that was already expired when first read.
 """
 
 import sqlite3
-import threading
 
 from fastapi.testclient import TestClient
 import pytest
@@ -14,36 +13,11 @@ from athena.aegis import issue_commands, issue_etags, issues, lease_commands, le
 from athena.core import activity, db
 from athena.main import create_app
 
-
-@pytest.fixture
-def lease_clock(monkeypatch):
-    """Advance SQLite's now deterministically without replacing writes/triggers.
-
-    Every date expression is still evaluated by SQLite, with only its `now`
-    argument controlled. This keeps the expiry interleaving independent of CPU
-    scheduling and avoids sleeping in the suite.
-    """
-    current = ["2040-01-01 00:00:00"]
-    original_connect = db.connect
-    resolver = sqlite3.connect(":memory:", check_same_thread=False)
-    lock = threading.Lock()
-
-    def sql_datetime(*args):
-        if args and args[0] == "now":
-            args = (current[0], *args[1:])
-        with lock:
-            return resolver.execute(
-                f"SELECT datetime({','.join('?' for _ in args)})", args
-            ).fetchone()[0]
-
-    def connect(*args, **kwargs):
-        conn = original_connect(*args, **kwargs)
-        conn.create_function("datetime", -1, sql_datetime)
-        return conn
-
-    monkeypatch.setattr(db, "connect", connect)
-    yield current
-    resolver.close()
+# The expiry is crossed by the app's one clock (the ``clock`` fixture, G6): the
+# lease code reads it, and SQLite's ``datetime('now')`` in the generation
+# trigger reads it too while it is replaced. Every date expression is still
+# evaluated by SQLite, so the interleaving is independent of CPU scheduling and
+# the suite never sleeps.
 
 
 def _seed(conn):
@@ -71,7 +45,7 @@ def _row(conn, issue_id):
 
 @pytest.mark.parametrize("transport", ["command", "REST"])
 def test_renewal_crossing_expiry_is_a_typed_refusal_with_no_write(
-    tmp_path, monkeypatch, lease_clock, transport
+    clock, tmp_path, monkeypatch, transport
 ):
     db_file = tmp_path / "expiry.db"
     with TestClient(create_app(db_file), raise_server_exceptions=False) as client:
@@ -96,7 +70,7 @@ def test_renewal_crossing_expiry_is_a_typed_refusal_with_no_write(
             def expire_before_upsert(db_conn, *args, **write_kwargs):
                 assert write_kwargs["generation"] == generation
                 assert leases.get_lease(db_conn, issue_id)["active"] is True
-                lease_clock[0] = "2040-01-01 00:01:00"
+                clock.advance(seconds=60)
                 assert leases.get_lease(db_conn, issue_id)["active"] is False
                 return original_upsert(db_conn, *args, **write_kwargs)
 

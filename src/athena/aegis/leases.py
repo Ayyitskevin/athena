@@ -9,6 +9,10 @@ crashed holder's lease simply expires and the work becomes reclaimable, with no 
 sweeper. The first read that observes the lapse records it once per generation
 (``lease_lapse_commands``, C4); recording releases nothing.
 
+The clock is the app's one clock (``core/clock.py``, G6): every comparison and
+every stamp below binds its time from it, never from SQLite's ``datetime('now')``.
+A reader that takes ``now`` defaults to it.
+
 All lease SQL lives here; the conflict/eligibility rules and audit events live in
 aegis/lease_commands.py, the same split every other Aegis write uses (data layer owns the
 row, the command owns the policy + event).
@@ -17,7 +21,7 @@ row, the command owns the policy + event).
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import datetime, timedelta
 import json
 import re
 import secrets
@@ -26,7 +30,7 @@ from typing import TypeGuard
 
 from athena import config
 from athena.aegis import statuses
-from athena.core import access, coordination_roots
+from athena.core import access, clock, coordination_roots
 
 # A claim lasts this long by default before it must be renewed (re-claimed). Long enough
 # for a real work session, short enough that an abandoned claim frees the work within the
@@ -66,17 +70,11 @@ def is_valid_generation(value: object) -> TypeGuard[str]:
     )
 
 
-_SELECT = (
-    "SELECT l.issue_id, l.holder_id, u.name AS holder_name, "
-    "l.claimed_at, l.expires_at, l.generation, l.declared_paths, l.coordination_root, "
-    "(l.expires_at > datetime('now')) AS active "
-    "FROM issue_leases l JOIN users u ON u.id = l.holder_id"
-)
-
-#: The same projection as ``_SELECT`` with the clock supplied as a PARAMETER
-#: rather than ``datetime('now')``, so a holder read derives ``active`` from the
-#: caller's injected stamp — the one the desk already uses for its other lanes.
-#: Callers append their own WHERE/ORDER/LIMIT and pass the stamp first.
+#: The lease projection, with the clock supplied as a PARAMETER rather than
+#: ``datetime('now')``, so every read derives ``active`` from one stamp of the
+#: app's clock, or from the caller's injected one: the one the desk already
+#: uses for its other lanes. Callers append their own WHERE/ORDER/LIMIT and
+#: pass the stamp first.
 _HELD_SELECT = (
     "SELECT l.issue_id, l.holder_id, u.name AS holder_name, "
     "l.claimed_at, l.expires_at, l.generation, l.declared_paths, l.coordination_root, "
@@ -87,7 +85,7 @@ _HELD_SELECT = (
 
 def _clock_stamp(now: datetime | None) -> str:
     """The comparison stamp in the storage format ``expires_at`` uses."""
-    return (now or datetime.now(UTC)).strftime("%Y-%m-%d %H:%M:%S")
+    return (now or clock.now()).strftime("%Y-%m-%d %H:%M:%S")
 
 
 _COLUMN_REF = re.compile(r"[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*")
@@ -203,13 +201,10 @@ def get_lease(
     still present until the next claim overwrites it, but no longer holding the issue.
 
     ``now`` is the caller's clock read, so a packet that also counts the seconds
-    to expiry derives both from one instant; omitted, SQLite's clock decides."""
-    if now is None:
-        row = conn.execute(f"{_SELECT} WHERE l.issue_id = ?", (issue_id,)).fetchone()
-    else:
-        row = conn.execute(
-            f"{_HELD_SELECT}WHERE l.issue_id = ?", (_clock_stamp(now), issue_id)
-        ).fetchone()
+    to expiry derives both from one instant; omitted, the app's clock decides."""
+    row = conn.execute(
+        f"{_HELD_SELECT}WHERE l.issue_id = ?", (_clock_stamp(now), issue_id)
+    ).fetchone()
     return _row_to_lease(row) if row is not None else None
 
 
@@ -234,7 +229,7 @@ def leases_held_by(
     never existed. The ``active`` flag is the caller's to read.
     """
     bounded = max(1, min(int(limit), 100))
-    stamp = (now or datetime.now(UTC)).strftime("%Y-%m-%d %H:%M:%S")
+    stamp = _clock_stamp(now)
     rows = conn.execute(
         "SELECT l.issue_id, l.holder_id, u.name AS holder_name, "
         "l.claimed_at, l.expires_at, l.generation, l.declared_paths, l.coordination_root, "
@@ -255,8 +250,9 @@ def list_active_leases(
     ``get_lease``. Ordered by issue id, so a fence refusal names the same lease
     every time.
     """
-    sql = f"{_SELECT} WHERE l.expires_at > datetime('now')"
-    params: list[object] = []
+    stamp = _clock_stamp(None)
+    sql = f"{_HELD_SELECT}WHERE l.expires_at > ?"
+    params: list[object] = [stamp, stamp]
     if except_issue_id is not None:
         sql += " AND l.issue_id != ?"
         params.append(except_issue_id)
@@ -468,7 +464,8 @@ def upsert_lease(
     stable. The command owns that mode decision under the same writer transaction.
     This function performs the unconditional upsert once those checks pass.
 
-    Set ``holder_id`` and an ``expires_at`` of now + ``lease_seconds``, replacing
+    Set ``holder_id``, a ``claimed_at`` of now and an ``expires_at`` of now +
+    ``lease_seconds``, both from one read of the app's clock, replacing
     any existing row (the PRIMARY KEY makes this one lease).
     The CONFLICT check — refusing to steal another holder's ACTIVE lease — is the
     command's job, run under the same write lock; this is the unconditional write it
@@ -482,10 +479,11 @@ def upsert_lease(
     if not is_valid_generation(lease_generation):
         raise ValueError("invalid issue lease generation")
     paths_json = json.dumps(list(declared_paths or []))
+    claimed = clock.now()
     conn.execute(
         "INSERT INTO issue_leases "
         "(issue_id, holder_id, claimed_at, expires_at, generation, declared_paths, coordination_root) "
-        "VALUES (?, ?, datetime('now'), datetime('now', ?), ?, ?, ?) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(issue_id) DO UPDATE SET "
         "holder_id = excluded.holder_id, claimed_at = excluded.claimed_at, "
         "expires_at = excluded.expires_at, generation = excluded.generation, "
@@ -495,7 +493,8 @@ def upsert_lease(
         (
             issue_id,
             holder_id,
-            f"+{lease_seconds} seconds",
+            _clock_stamp(claimed),
+            _clock_stamp(claimed + timedelta(seconds=lease_seconds)),
             lease_generation,
             paths_json,
             coordination_roots.encode_binding(coordination_root, lease_generation),
@@ -505,7 +504,7 @@ def upsert_lease(
     )
     if commit:
         conn.commit()
-    lease = get_lease(conn, issue_id)
+    lease = get_lease(conn, issue_id, now=claimed)
     assert lease is not None
     return lease
 

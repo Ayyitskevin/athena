@@ -55,10 +55,11 @@ def _card(body: str, issue_id: int) -> str:
 
 
 @pytest.fixture
-def floor(tmp_path):
+def floor(clock, tmp_path):
     """Five issues: A unassigned and claimed by the agent Sol, B assigned to a
     human, C neither, D assigned to Sol and not claimed, E assigned to a human
-    and claimed by Sol."""
+    and claimed by Sol. A's lease is the shortest there is, so the app's clock
+    (held still) can pass it and leave E's live."""
     app, db_file = make_app(tmp_path)
     with TestClient(app) as client:
         bootstrap(client)
@@ -95,7 +96,7 @@ def floor(tmp_path):
             ).json()
             claimed = client.post(
                 f"/issues/{ids[name]}/claim",
-                json={},
+                json={"lease_seconds": 60} if name == "A" else {},
                 headers={**bearer(sol), "If-Match": packet["issue_etag"]},
             )
             assert claimed.status_code == 201, claimed.text
@@ -180,9 +181,9 @@ def test_a_claim_by_a_person_is_human_work_and_holder_lanes_go_by_name(floor):
     ]
 
 
-def test_a_lapsed_lease_is_not_a_claim(floor):
+def test_a_lapsed_lease_is_not_a_claim(clock, floor):
     browser, ids, sol_id, db_file = floor
-    lapse_lease(db_file, ids["A"])
+    lapse_lease(clock, db_file, ids["A"])
 
     body = browser.get("/aegis/boards").text
     by_claim = browser.get("/aegis/boards?group=claim").text

@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from support import lapse_lease
 
 from athena.aegis import dependencies, ready_queue
 from athena.core import db, users, work_query
@@ -250,7 +251,7 @@ def test_the_blocker_rule_is_the_open_blocker_reads_own(tmp_path):
 
 
 def test_a_leased_issue_is_not_ready_and_a_lapsed_one_is_with_its_last_holder(
-    tmp_path,
+    clock, tmp_path
 ):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
@@ -263,11 +264,7 @@ def test_a_leased_issue_is_not_ready_and_a_lapsed_one_is_with_its_last_holder(
         _claim(c, first, held["id"])
 
         assert held["id"] not in _ids(_lane(c, headers=_bearer(second)))
-        _sql(
-            db_file,
-            "UPDATE issue_leases SET expires_at = ? WHERE issue_id = ?",
-            (_ago(hours=2), held["id"]),
-        )
+        lapse_lease(clock, db_file, held["id"])
         conn = db.connect(db_file)
         before = [tuple(r) for r in conn.execute("SELECT * FROM issue_leases")]
         changes = conn.total_changes

@@ -71,21 +71,36 @@ def _issue_for(client, agent, *, title, project_id=None) -> dict:
     return issue
 
 
-def _take(client, agent, issue, run_id, *, generation=None) -> dict:
+def _take(client, agent, issue, run_id, *, generation=None, lease_seconds=None) -> dict:
     read = client.get(f"/issues/{issue['id']}", headers=bearer(agent))
+    body = {} if generation is None else {"generation": generation}
+    if lease_seconds is not None:
+        body["lease_seconds"] = lease_seconds
     claimed = client.post(
         f"/issues/{issue['id']}/claim",
-        json={} if generation is None else {"generation": generation},
+        json=body,
         headers={**bearer(agent, run=run_id), "If-Match": read.headers["ETag"]},
     )
     assert claimed.status_code in (200, 201), claimed.text
     return claimed.json()
 
 
-def _claim(client, agent, *, title, project_id=None, run: str | None = "auto"):
+def _claim(
+    client,
+    agent,
+    *,
+    title,
+    project_id=None,
+    run: str | None = "auto",
+    lease_seconds=None,
+):
     issue = _issue_for(client, agent, title=title, project_id=project_id)
     run_id = f"run-{issue['id']}" if run == "auto" else run
-    return issue, _take(client, agent, issue, run_id), run_id
+    return (
+        issue,
+        _take(client, agent, issue, run_id, lease_seconds=lease_seconds),
+        run_id,
+    )
 
 
 def _beat(client, agent, run_id):
@@ -207,7 +222,7 @@ def test_renewing_never_resets_the_grace(tmp_path):
         assert "checkin_missing" in row["attention_reasons"]
 
 
-def test_a_new_possession_restarts_the_grace(tmp_path):
+def test_a_new_possession_restarts_the_grace(clock, tmp_path):
     """A re-claim after the lease lapsed is a new acquisition: its grace starts
     again, even under a run whose last check-in is an hour old."""
     app, db_file = make_app(tmp_path)
@@ -224,7 +239,7 @@ def test_a_new_possession_restarts_the_grace(tmp_path):
         _acquired_long_ago(db_file, issue["id"])
         assert "checkin_stale" in _row(db_file, issue["id"])["attention_reasons"]
 
-        lapse_lease(db_file, issue["id"])
+        lapse_lease(clock, db_file, issue["id"])
         _take(client, agent, issue, run_id)
         again = _row(db_file, issue["id"], _acquired_at(db_file, issue["id"]))
         assert again["run"]["reporting_state"] == "stale"  # the check-in's own age
@@ -309,24 +324,22 @@ def _pending_approval(client, *, email="nyx@e.com", name="Nyx", title="Gated clo
     return gated
 
 
-def test_a_pending_approval_outranks_every_missed_check_in(tmp_path):
+def test_a_pending_approval_outranks_every_missed_check_in(clock, tmp_path):
     app, db_file = make_app(tmp_path)
     with TestClient(app) as client:
         bootstrap(client)
         agent = onboard_agent(client)
         for n in range(12):
             _claim(client, agent, title=f"Silent {n}")
-        lapsed, _, _ = _claim(client, agent, title="Lapsed")
-        _sql(
-            db_file,
-            "UPDATE issue_leases SET expires_at = datetime('now', '-1 second') "
-            "WHERE issue_id = ?",
-            (lapsed["id"],),
-        )
+        # The shortest lease there is, so the clock can pass it and leave the
+        # others live.
+        lapsed, _, _ = _claim(client, agent, title="Lapsed", lease_seconds=60)
+        lapse_lease(clock, db_file, lapsed["id"])
         _pending_approval(client)
 
         # Every claim is long past its grace; the approval is the newest row.
-        later = datetime.now(UTC) + timedelta(seconds=STALE * 10)
+        later = clock.now() + timedelta(seconds=STALE * 10)
+
         items = _ranking(db_file, now=later)
         signals = [item["signal"] for item in items]
         approval = signals.index("pending_approval")

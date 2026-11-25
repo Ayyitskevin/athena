@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import sqlite3
 
-from athena.core import passwords
+from athena.core import db, passwords
 
 ADMIN_ROLE = "admin"
 MEMBER_ROLE = "member"
@@ -139,11 +139,11 @@ def verify_credentials(
     # rather than replacing it, so there is no lifecycle change to attribute (the
     # audited replacements live in user_commands), per docs/COMMAND_MIGRATION.md.
     if passwords.needs_rehash(row["password_hash"]):
-        conn.execute(
-            "UPDATE users SET password_hash = ? WHERE id = ?",
-            (passwords.rehash_verified_legacy_password(password), row["id"]),
-        )
-        conn.commit()
+        with db.transaction(conn):
+            conn.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (passwords.rehash_verified_legacy_password(password), row["id"]),
+            )
     return _row_to_user(row)
 
 

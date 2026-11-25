@@ -660,13 +660,15 @@ def test_default_clock_is_captured_once_and_naive_injection_is_utc(board, monkey
     _hold(conn, _issue(conn, project["id"]), expiry="2035-01-02 12:00:01")
     calls = []
 
-    class Clock(datetime):
-        @classmethod
-        def now(cls, tz=None):
+    class Clock:
+        """The app's one clock as the brief reads it, counted."""
+
+        @staticmethod
+        def now():
             calls.append(True)
             return NOW
 
-    monkeypatch.setattr(project_brief, "datetime", Clock)
+    monkeypatch.setattr(project_brief, "clock", Clock)
     packet = project_brief.build_project_brief(
         conn, project_id=project["id"], actor=member
     )

@@ -242,11 +242,11 @@ def test_a_completion_carries_its_generation_and_reported_verdict(desk, verdict)
     assert _facts(event) == expected
 
 
-def test_a_lapse_carries_the_generation_that_lapsed(desk):
+def test_a_lapse_carries_the_generation_that_lapsed(clock, desk):
     issue_id = desk.delegated_issue()
     lease = desk.claim(issue_id)
     start = desk.latest()
-    lapse_lease(desk.db_file, issue_id)
+    lapse_lease(clock, desk.db_file, issue_id)
     # The operator is the assignee and delegated the work: its read observes.
     event = desk.only("lease_lapsed", start, headers=ADMIN)
     assert _facts(event) == {"generation": lease["generation"]}

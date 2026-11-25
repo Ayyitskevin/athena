@@ -21,7 +21,7 @@ from pathlib import Path
 import sqlite3
 
 from athena import __version__
-from athena.core import labels, links, users
+from athena.core import db, labels, links, users
 from athena.mentor import page_commands, pages, space_commands, spaces
 
 CONTENT_DIR = Path(__file__).parent / "field_guide"
@@ -150,15 +150,15 @@ def seed_field_guide(conn: sqlite3.Connection, *, author_id: int) -> dict:
     # This re-runs the same derivation an ordinary edit triggers, on bodies that
     # have not changed. It writes no page, records no event, and is not a second
     # way to author content — it is the derived index catching up to a batch.
-    for page in created:
-        links.sync_links(
-            conn,
-            source_kind="page",
-            source_id=page["id"],
-            body=page["body"],
-            commit=False,
-        )
-    conn.commit()
+    with db.transaction(conn):
+        for page in created:
+            links.sync_links(
+                conn,
+                source_kind="page",
+                source_id=page["id"],
+                body=page["body"],
+                commit=False,
+            )
     return {
         "space": space,
         "pages": created,

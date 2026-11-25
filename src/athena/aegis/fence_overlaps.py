@@ -45,7 +45,7 @@ import sqlite3
 
 from athena import config
 from athena.aegis import leases
-from athena.core import access, coordination_roots
+from athena.core import access, clock, coordination_roots
 
 #: Pairs listed per read; the total says how many exist behind the list.
 PAIR_LIMIT = 50
@@ -55,7 +55,7 @@ BASIS_LEXICAL = leases.BASIS_LEXICAL
 
 
 def _now(now: datetime | None) -> datetime:
-    current = datetime.now(UTC) if now is None else now
+    current = clock.now() if now is None else now
     if current.tzinfo is None:
         current = current.replace(tzinfo=UTC)
     return current.astimezone(UTC)

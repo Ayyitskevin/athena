@@ -15,7 +15,6 @@ who cannot see the issue sees no holder.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 import re
 
 from fastapi.testclient import TestClient
@@ -25,6 +24,7 @@ from support import (
     add_user,
     bearer,
     bootstrap,
+    lapse_lease,
     login,
     make_app,
     onboard_agent,
@@ -76,16 +76,18 @@ def _assign(client: TestClient, issue_id: int, user_id: int) -> None:
     assert response.status_code == 200, response.text
 
 
-def _expire(db_file, issue_id: int) -> str:
-    """Move the lease's expiry an hour into the past, as the clock would."""
-    stamp = (datetime.now(UTC) - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+def _expire(clock, db_file, issue_id: int) -> str:
+    """The app's clock passes the lease's expiry and an hour more; returns the
+    expiry, which nothing wrote."""
+    lapse_lease(clock, db_file, issue_id)
+    clock.advance(hours=1)
     conn = db.connect(db_file)
-    conn.execute(
-        "UPDATE issue_leases SET expires_at = ? WHERE issue_id = ?", (stamp, issue_id)
-    )
-    conn.commit()
-    conn.close()
-    return stamp
+    try:
+        return conn.execute(
+            "SELECT expires_at FROM issue_leases WHERE issue_id = ?", (issue_id,)
+        ).fetchone()["expires_at"]
+    finally:
+        conn.close()
 
 
 def _page(client: TestClient, issue_id: int) -> str:
@@ -160,14 +162,14 @@ def test_an_assignee_without_a_lease_is_the_assignee_and_no_claim(tmp_path):
     assert "human assignee" in assignee
 
 
-def test_an_expired_unsettled_lease_reads_lapsed_and_names_its_holder(tmp_path):
+def test_an_expired_unsettled_lease_reads_lapsed_and_names_its_holder(clock, tmp_path):
     app, db_file = make_app(tmp_path)
     with TestClient(app) as client:
         bootstrap(client)
         agent = onboard_agent(client, name="Sol Holder")
         issue = _issue(client, "the clock let go")
         _claim(client, agent, issue["id"])
-        expired_at = _expire(db_file, issue["id"])
+        expired_at = _expire(clock, db_file, issue["id"])
         served = client.get(f"/issues/{issue['id']}/lease", headers=ADMIN).json()
         assert served["active"] is False
         login(client, "a@e.com")

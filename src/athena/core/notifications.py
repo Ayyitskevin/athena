@@ -23,7 +23,7 @@ from collections.abc import Callable, Collection, Mapping
 from datetime import datetime, timezone
 from typing import cast
 
-from athena.core import access, authorship, links
+from athena.core import access, authorship, db, links
 
 # Targets a user can watch. A watch on anything else is meaningless; the boundary
 # rejects unknown kinds. 'space' is the SHARED-MEMORY subscription: it covers the
@@ -80,11 +80,12 @@ def unwatch(
     conn: sqlite3.Connection, user_id: int, target_kind: str, target_id: int
 ) -> bool:
     """Stop watching. Returns False if the user wasn't watching it."""
-    cur = conn.execute(
-        "DELETE FROM watches WHERE user_id = ? AND target_kind = ? AND target_id = ?",
-        (user_id, target_kind, target_id),
-    )
-    conn.commit()
+    with db.transaction(conn):
+        cur = conn.execute(
+            "DELETE FROM watches "
+            "WHERE user_id = ? AND target_kind = ? AND target_id = ?",
+            (user_id, target_kind, target_id),
+        )
     return cur.rowcount > 0
 
 
@@ -375,11 +376,11 @@ def mark_read(
         if gate:
             where += f" AND event_id IN (SELECT a.id FROM activity a WHERE {gate})"
             params.extend(gate_params)
-    cur = conn.execute(
-        f"UPDATE notifications SET read_at = datetime('now') {where}",
-        params,
-    )
-    conn.commit()
+    with db.transaction(conn):
+        cur = conn.execute(
+            f"UPDATE notifications SET read_at = datetime('now') {where}",
+            params,
+        )
     return cur.rowcount > 0
 
 
@@ -399,11 +400,11 @@ def mark_all_read(
         if gate:
             where += f" AND event_id IN (SELECT a.id FROM activity a WHERE {gate})"
             params.extend(gate_params)
-    cur = conn.execute(
-        f"UPDATE notifications SET read_at = datetime('now') {where}",
-        params,
-    )
-    conn.commit()
+    with db.transaction(conn):
+        cur = conn.execute(
+            f"UPDATE notifications SET read_at = datetime('now') {where}",
+            params,
+        )
     return cur.rowcount
 
 
@@ -601,35 +602,35 @@ def set_preference(
             f"and {MAX_DIGEST_MINUTES}"
         )
 
-    cursor = conn.execute(
-        """
-        INSERT INTO watch_preferences
-            (user_id, target_kind, target_id, priority, mute_until,
-             digest_window_minutes, updated_at)
-        SELECT ?, ?, ?, ?, ?, ?, datetime('now')
-        FROM watches
-        WHERE user_id = ? AND target_kind = ? AND target_id = ?
-        ON CONFLICT (user_id, target_kind, target_id) DO UPDATE SET
-            priority = excluded.priority,
-            mute_until = excluded.mute_until,
-            digest_window_minutes = excluded.digest_window_minutes,
-            updated_at = excluded.updated_at
-        """,
-        (
-            user_id,
-            target_kind,
-            target_id,
-            priority,
-            _format_timestamp(parsed_mute) if parsed_mute else None,
-            digest_window_minutes,
-            user_id,
-            target_kind,
-            target_id,
-        ),
-    )
-    if cursor.rowcount == 0:
-        raise WatchNotFound
-    conn.commit()
+    with db.transaction(conn):
+        cursor = conn.execute(
+            """
+            INSERT INTO watch_preferences
+                (user_id, target_kind, target_id, priority, mute_until,
+                 digest_window_minutes, updated_at)
+            SELECT ?, ?, ?, ?, ?, ?, datetime('now')
+            FROM watches
+            WHERE user_id = ? AND target_kind = ? AND target_id = ?
+            ON CONFLICT (user_id, target_kind, target_id) DO UPDATE SET
+                priority = excluded.priority,
+                mute_until = excluded.mute_until,
+                digest_window_minutes = excluded.digest_window_minutes,
+                updated_at = excluded.updated_at
+            """,
+            (
+                user_id,
+                target_kind,
+                target_id,
+                priority,
+                _format_timestamp(parsed_mute) if parsed_mute else None,
+                digest_window_minutes,
+                user_id,
+                target_kind,
+                target_id,
+            ),
+        )
+        if cursor.rowcount == 0:
+            raise WatchNotFound
     preference = get_preference(conn, user_id, target_kind, target_id)
     if preference is None:
         raise RuntimeError("preference write succeeded without a readable row")
@@ -656,12 +657,12 @@ def delete_preference(
     conn: sqlite3.Connection, user_id: int, target_kind: str, target_id: int
 ) -> bool:
     """Remove preferences for a watch. Returns True if a row was deleted."""
-    cur = conn.execute(
-        "DELETE FROM watch_preferences "
-        "WHERE user_id = ? AND target_kind = ? AND target_id = ?",
-        (user_id, target_kind, target_id),
-    )
-    conn.commit()
+    with db.transaction(conn):
+        cur = conn.execute(
+            "DELETE FROM watch_preferences "
+            "WHERE user_id = ? AND target_kind = ? AND target_id = ?",
+            (user_id, target_kind, target_id),
+        )
     return cur.rowcount > 0
 
 

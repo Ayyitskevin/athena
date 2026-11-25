@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from support import lapse_lease
 
 from athena.aegis import issue_etags, issues, lease_commands, projects
 from athena.core import db
@@ -255,16 +256,15 @@ def test_mutually_exclusive_modes_and_explicit_predecessor(board):
         ("nested", "invalid"),
     ],
 )
-def test_submission_authority_refusals_retain_all_state(board, case, kind):
-    conn, _, project = board
+def test_submission_authority_refusals_retain_all_state(clock, board, case, kind):
+    conn, path, project = board
     build = issue(conn, project)
     held = claim(conn, build)
     actor_id, payload = 2, submission()
     if case == "wrong_generation":
         held = {**held, "generation": "0" * 32}
     elif case == "expired":
-        conn.execute("UPDATE issue_leases SET expires_at='2000-01-01 00:00:00'")
-        conn.commit()
+        lapse_lease(clock, path, build["id"])
     elif case == "admin_other":
         actor_id = 1
     elif case == "archived":

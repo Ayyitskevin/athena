@@ -302,11 +302,17 @@ def _with_labels(conn: sqlite3.Connection, page: dict) -> dict:
     return _with_author(conn, page)
 
 
-def _with_author(conn: sqlite3.Connection, page: dict) -> dict:
+def _with_author(
+    conn: sqlite3.Connection, page: dict, *, stored: dict | None = None
+) -> dict:
     """``authored_by`` (core/authorship.py): the account that saved the page's
-    current version, ``updated_by``, which the page already shows."""
-    page[authorship.KEY] = authorship.author(
-        conn, page.get("updated_by") or page.get("created_by")
+    current version, ``updated_by``, which the page already shows; ``null`` when
+    that text arrived in a bundle (G3), as the stored row (``stored``, else
+    ``page`` itself) records."""
+    page[authorship.KEY] = (
+        None
+        if (stored if stored is not None else page).get("imported_at") is not None
+        else authorship.author(conn, page.get("updated_by") or page.get("created_by"))
     )
     return page
 
@@ -340,8 +346,10 @@ def _tagged_page(conn: sqlite3.Connection, page: dict, response: Response) -> di
     can round-trip it as an If-Match validator on the next edit."""
     public, current = page_etags.resource_and_etag(conn, page)
     response.headers["ETag"] = current
-    # Derived from updated_by, which the validator already covers.
-    return _with_author(conn, public)
+    # Derived from updated_by, which the validator already covers, and from the
+    # row's import mark, which only an import sets and only an edit (which
+    # changes covered fields) clears.
+    return _with_author(conn, public, stored=page)
 
 
 # Conditional-request failures map to the same stable codes and status the issue
@@ -1335,7 +1343,7 @@ def list_versions(
     # (distinct from a real visible page never edited, which returns []).
     _page_for_read(conn, page_id, actor)
     versions = pages.list_page_versions(conn, page_id)
-    authorship.stamp(conn, versions, id_key="edited_by")
+    authorship.stamp(conn, versions, id_key="edited_by", imported_key="imported_at")
     return versions
 
 
@@ -1352,7 +1360,7 @@ def show_version(
     snapshot = pages.get_page_version(conn, page_id, version)
     if snapshot is None:
         raise Refusal(status_code=404, detail="no such version", code="not_found")
-    authorship.stamp(conn, [snapshot], id_key="edited_by")
+    authorship.stamp(conn, [snapshot], id_key="edited_by", imported_key="imported_at")
     return snapshot
 
 

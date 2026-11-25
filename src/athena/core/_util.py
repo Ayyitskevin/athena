@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
+
+from athena.core import clock
 
 
 def atomic_write_json(destination: Path, data: dict) -> None:
@@ -54,8 +56,9 @@ def _fsync_directory(path: Path) -> None:
 
 
 def utc_now() -> datetime:
-    """The current UTC instant as an aware datetime. Was `_now()` in sessions / webhooks."""
-    return datetime.now(timezone.utc)
+    """The current UTC instant as an aware datetime, from the app's one clock
+    (`core/clock.py`, G6). Was `_now()` in sessions / webhooks."""
+    return clock.now()
 
 
 def utc_now_iso() -> str:

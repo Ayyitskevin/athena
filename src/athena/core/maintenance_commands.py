@@ -19,6 +19,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import sqlite3
 
+from athena.core import db
+
 #: A read notification is kept this many days after it was read.
 READ_NOTIFICATION_DAYS = 90
 
@@ -66,11 +68,11 @@ def _remove(
         if not rows:
             return removed
         after = rows[-1][0]
-        removed += conn.execute(
-            f"DELETE FROM {table} WHERE rowid BETWEEN ? AND ? AND {removable}",
-            (rows[0][0], after, bound),
-        ).rowcount
-        conn.commit()
+        with db.transaction(conn):
+            removed += conn.execute(
+                f"DELETE FROM {table} WHERE rowid BETWEEN ? AND ? AND {removable}",
+                (rows[0][0], after, bound),
+            ).rowcount
 
 
 def prune(

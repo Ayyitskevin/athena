@@ -116,7 +116,7 @@ def _useful(answer: dict[str, Any], rest_desk: dict[str, Any], what: str) -> Non
 
 
 @pytest.fixture
-def full_desk(tmp_path, monkeypatch):
+def full_desk(clock, tmp_path, monkeypatch):
     monkeypatch.setattr(config, "TOKEN_RATE_LIMIT_PER_MINUTE", 0)
     app, db_file = make_app(tmp_path, "desk-max.db")
     with TestClient(app) as anonymous:
@@ -135,6 +135,7 @@ def full_desk(tmp_path, monkeypatch):
             seat=sol,
             other=rex,
             project_id=project.json()["id"],
+            clock=clock,
         )
         desk = admin.get("/desk", headers=bearer(sol)).json()
         yield app, sol, desk, filled

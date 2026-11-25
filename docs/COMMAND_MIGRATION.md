@@ -21,7 +21,11 @@ approval ask (`approval_commands.open_request`), budget exhaustion
 (`security_event_commands.record_failure`). The atomic side is enforced too:
 `scripts/check_transaction_commits.py` fails on a call inside a
 `db.transaction` block that commits, and `db.transaction` raises at exit if
-anything inside it committed. Parity between the transports is enforced as
+anything inside it committed. Outside `core/db.py` the same check fails on a
+writer that commits whatever it is asked and on a transaction opened by hand,
+so every write either takes `commit` or goes through `db.transaction` and
+composes inside a command; the exceptions are named, with their reasons, in
+the script's `ALLOWED_OWN_TRANSACTIONS` (G2). Parity between the transports is enforced as
 well: `scripts/check_surface_parity.py` fails when a command function is
 reached from only the cockpit or only the REST API and
 `scripts/surface_parity.toml` does not say why.

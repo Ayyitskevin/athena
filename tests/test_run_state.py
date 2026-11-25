@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 import pytest
+from support import lapse_lease
 
 from athena.aegis import fleet_attention, run_state
 from athena.core import db, users
@@ -574,7 +575,7 @@ def test_active_work_and_mission_control_show_the_state(tmp_path):
         assert 'data-run-state="pinging"' in idle_row
 
 
-def test_awaiting_input_ranks_above_stale_and_quiet_signals(tmp_path):
+def test_awaiting_input_ranks_above_stale_and_quiet_signals(clock, tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
@@ -583,11 +584,7 @@ def test_awaiting_input_ranks_above_stale_and_quiet_signals(tmp_path):
         _yield(c, agent, "run-ask", asked["id"], lease["generation"])
         # A stale claim (no check-in, expired lease) is a high-severity signal.
         stale, _ = _claimed(c, agent, "run-old", "stale claim")
-        _sql(
-            db_file,
-            "UPDATE issue_leases SET expires_at = ? WHERE issue_id = ?",
-            (_ago(hours=2), stale["id"]),
-        )
+        lapse_lease(clock, db_file, stale["id"])
         # The stale claim's signal is the older one (oldest-first within a
         # severity), so only the severity can put the question above it.
         _sql(

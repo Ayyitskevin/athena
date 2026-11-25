@@ -37,12 +37,12 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import contextlib
-from datetime import UTC, datetime
+from datetime import datetime
 import logging
 import sqlite3
 
 from athena.aegis import issue_activity, leases
-from athena.core import access, db, notifications, run_context, users
+from athena.core import access, clock, db, notifications, run_context, users
 
 _logger = logging.getLogger("athena")
 
@@ -131,7 +131,7 @@ def record_lease_lapse(
             conn,
             viewer=actor,
             accountable_id=None,
-            now=datetime.now(UTC),
+            now=clock.now(),
             limit=1,
             issue_id=issue_id,
             generation=generation,

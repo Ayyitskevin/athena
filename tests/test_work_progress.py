@@ -18,6 +18,7 @@ the read-only projection that keeps the two apart:
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
+from support import lapse_lease
 
 from athena.aegis import fleet_attention, work_progress
 from athena.core import db, packet_time, users
@@ -63,7 +64,7 @@ def _heartbeat(client, agent, issue_id):
     assert beat.status_code == 200, beat.text
 
 
-def _claimed_issue(client, agent, *, title):
+def _claimed_issue(client, agent, *, title, lease_seconds=None):
     issue = client.post("/issues", json={"title": title}, headers=H1).json()
     client.post(
         f"/issues/{issue['id']}/delegate",
@@ -73,6 +74,7 @@ def _claimed_issue(client, agent, *, title):
     read = client.get(f"/issues/{issue['id']}", headers=_bearer(agent))
     claimed = client.post(
         f"/issues/{issue['id']}/claim",
+        json=None if lease_seconds is None else {"lease_seconds": lease_seconds},
         headers={
             **_bearer(agent),
             "If-Match": read.headers["ETag"],
@@ -178,18 +180,17 @@ def test_lease_bookkeeping_and_check_ins_are_not_work():
 # ── expired leases: shown expired, never written ────────────────────────────
 
 
-def test_an_expired_lease_renders_expired_and_nothing_is_written(tmp_path):
+def test_an_expired_lease_renders_expired_and_nothing_is_written(clock, tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
         agent = _agent(c)
+        # The app's clock passes the lapsed hold's expiry and three more hours;
+        # the other lease is taken after that, and is live.
+        lapsed = _claimed_issue(c, agent, title="lapsed hold", lease_seconds=60)
+        lapse_lease(clock, db_file, lapsed["id"])
+        clock.advance(hours=3)
         active = _claimed_issue(c, agent, title="still held")
-        lapsed = _claimed_issue(c, agent, title="lapsed hold")
-        _sql(
-            db_file,
-            "UPDATE issue_leases SET expires_at = ? WHERE issue_id = ?",
-            (_ago(hours=3), lapsed["id"]),
-        )
 
         conn = db.connect(db_file)
         before_rows = [

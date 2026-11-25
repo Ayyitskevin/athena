@@ -22,7 +22,6 @@ count test that the desk asks the rule once.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import re
 import sqlite3
 from unittest import mock
@@ -31,6 +30,7 @@ from fastapi.testclient import TestClient
 import pytest
 from support import (
     ADMIN,
+    AppClock,
     add_user,
     as_user,
     bearer,
@@ -121,9 +121,10 @@ class Workspace:
     rule has a clause for. ``moves`` are the acts that carry an issue from one
     lane to another."""
 
-    def __init__(self, client: TestClient, db_file):
+    def __init__(self, client: TestClient, db_file, clock: AppClock):
         self.client = client
         self.db_file = db_file
+        self.clock = clock
         bootstrap(client, email="admin@e.com", name="Admin")
         self.mo = add_user(client, "mo@e.com", name="Mo")
         self.ola = add_user(client, "ola@e.com", name="Ola")
@@ -205,13 +206,13 @@ class Workspace:
     def patch(self, name: str, **fields) -> None:
         ok(self.client.patch(f"/issues/{self.made[name]}", json=fields, headers=ADMIN))
 
-    def claim(self, who, name: str) -> dict:
+    def claim(self, who, name: str, **body) -> dict:
         issue_id = self.made[name]
         tag = self.client.get(f"/issues/{issue_id}", headers=self.headers(who))
         return ok(
             self.client.post(
                 f"/issues/{issue_id}/claim",
-                json={},
+                json=body,
                 headers={**self.headers(who), "If-Match": tag.headers["ETag"]},
             ),
             201,
@@ -346,8 +347,10 @@ class Workspace:
         self.issue("held", self.pub, to=[rex])
         self.claim(rex, "held")
         self.issue("lapsed", self.pub, to=[bo])
-        self.claim(bo, "lapsed")
-        lapse_lease(self.db_file, self.made["lapsed"])
+        # The shortest lease there is: the clock passes it and leaves Rex's
+        # hold live.
+        self.claim(bo, "lapsed", lease_seconds=60)
+        lapse_lease(self.clock, self.db_file, self.made["lapsed"])
         self.issue("private", self.prv)
         self.assign("private", mo)
         self.issue("private for bo", self.prv)
@@ -458,10 +461,10 @@ class Workspace:
 
 
 @pytest.fixture
-def workspace(tmp_path):
+def workspace(clock, tmp_path):
     app, db_file = make_app(tmp_path)
     with TestClient(app) as client:
-        yield Workspace(client, db_file)
+        yield Workspace(client, db_file, clock)
 
 
 def _compare(workspace: Workspace, step: str) -> set[tuple]:
@@ -469,8 +472,9 @@ def _compare(workspace: Workspace, step: str) -> set[tuple]:
     (caller, lane, ids) seen, so the test can show the workspace exercised
     the lanes."""
     seen: set[tuple] = set()
-    # The lease clock is the real one: the workspace holds a live lease.
-    now = datetime.now(UTC)
+    # The lease clock is the app's: the workspace holds a live lease and a
+    # lapsed one.
+    now = workspace.clock.now()
     conn = db.connect(workspace.db_file)
     try:
         for who, actor in workspace.actors(conn).items():
@@ -563,7 +567,7 @@ def _routes_serve_the_reference(workspace: Workspace) -> None:
     conn = db.connect(workspace.db_file)
     try:
         actors = workspace.actors(conn)
-        now = datetime.now(UTC)
+        now = workspace.clock.now()
         expected = {
             who: (
                 reference_ready(conn, actors[who], now, ready_queue.READY_LIMIT),
@@ -694,7 +698,9 @@ def test_the_rule_reads_open_candidates_only_on_the_desk_and_on_pickup(
         actors = workspace.actors(conn)
         for who in ("admin", "agent Bo", "member Mo"):
             recording = Recording(conn)
-            ready_queue.build_ready(recording, actor=actors[who], now=datetime.now(UTC))
+            ready_queue.build_ready(
+                recording, actor=actors[who], now=workspace.clock.now()
+            )
             statements = _rule_statements(recording)
             assert statements, recording.statements
             for statement in statements:
@@ -728,7 +734,7 @@ def test_the_desk_asks_the_ready_rule_once(workspace):
     try:
         for who, actor in workspace.actors(conn).items():
             recording = Recording(conn)
-            desk.build_desk(recording, actor=actor, now=datetime.now(UTC))
+            desk.build_desk(recording, actor=actor, now=workspace.clock.now())
             assert len(_rule_statements(recording)) == 1, who
     finally:
         conn.close()

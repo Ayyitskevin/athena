@@ -19,10 +19,15 @@ _SELECT = (
 
 def _comment(row: sqlite3.Row) -> dict:
     """One comment, with ``authored_by`` (core/authorship.py): only its author
-    may edit a comment, so the author wrote its current text."""
+    may edit a comment, so the author wrote its current text, unless that text
+    arrived in a bundle (``imported_at``, G3): then ``null``, since the author
+    column names only the local account the import matched."""
     comment = dict(row)
     is_agent = comment.pop("author_is_agent")
-    comment["authored_by"] = {"id": comment["author_id"], "is_agent": bool(is_agent)}
+    imported = comment.pop("imported_at", None) is not None
+    comment["authored_by"] = (
+        None if imported else {"id": comment["author_id"], "is_agent": bool(is_agent)}
+    )
     return comment
 
 
@@ -62,7 +67,11 @@ def update_comment(
     Author-ownership (only the author may edit) is enforced at the boundary, not
     here — this function just writes. ``commit=False`` lets an audited command fold the
     edit and its activity event into one transaction."""
-    cur = conn.execute("UPDATE comments SET body = ? WHERE id = ?", (body, comment_id))
+    # The new text is the author's own: it no longer arrived in a bundle (G3).
+    cur = conn.execute(
+        "UPDATE comments SET body = ?, imported_at = NULL WHERE id = ?",
+        (body, comment_id),
+    )
     if commit:
         conn.commit()
     if cur.rowcount == 0:

@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 import pytest
+from support import lapse_lease
 
 from athena.aegis import fleet_attention
 from athena.aegis.fleet_attention_api import AttentionRankItemOut
@@ -85,15 +86,9 @@ def _heartbeat_overdue(db_file):
     conn.close()
 
 
-def _expire_lease(db_file, issue_id):
-    conn = db.connect(db_file)
-    conn.execute(
-        "UPDATE issue_leases SET expires_at = datetime('now', '-1 hour') "
-        "WHERE issue_id = ?",
-        (issue_id,),
-    )
-    conn.commit()
-    conn.close()
+def _expire_lease(clock, db_file, issue_id):
+    """The app's clock passes the issue's lease expiry; the row is not written."""
+    lapse_lease(clock, db_file, issue_id)
 
 
 def _set_webhook_failing(db_file, webhook_id, failure_count=3, error="timeout"):
@@ -286,7 +281,7 @@ def test_open_blocker_signal_does_not_leak_a_private_project(tmp_path):
         )
 
 
-def test_mixed_windows_affect_event_signals_not_state_signals(tmp_path):
+def test_mixed_windows_affect_event_signals_not_state_signals(clock, tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
@@ -294,7 +289,7 @@ def test_mixed_windows_affect_event_signals_not_state_signals(tmp_path):
 
         # Make a claim need attention — this is standing state, not windowed.
         urgent = _claimed_issue(c, agent, title="urgent")
-        _expire_lease(db_file, urgent["id"])
+        _expire_lease(clock, db_file, urgent["id"])
 
         # Make a security refusal, then age it past the short window so the
         # windowed signal drops while the standing claim remains.
@@ -322,7 +317,7 @@ def test_mixed_windows_affect_event_signals_not_state_signals(tmp_path):
 
         # Move the clock forward so the refusal is older than the window, and
         # verify the event-counted signal drops while the standing signal stays.
-        future = datetime.now(UTC) + timedelta(days=2)
+        future = clock.now() + timedelta(days=2)
         future_ranking = fleet_attention.build_attention_ranking(
             db.connect(db_file),
             signals={"claim_needs_attention", "security_refusal"},
@@ -615,15 +610,16 @@ def test_default_projection_captures_one_clock_for_counts_and_ranking(
     observed = datetime(2040, 1, 2, 3, 4, 5, tzinfo=UTC)
     calls = 0
 
-    class FrozenDateTime:
-        @classmethod
-        def now(cls, tz=None):
+    class FrozenClock:
+        """The app's one clock as this module reads it, counted."""
+
+        @staticmethod
+        def now():
             nonlocal calls
             calls += 1
-            assert tz is UTC
             return observed
 
-    monkeypatch.setattr(fleet_attention, "datetime", FrozenDateTime)
+    monkeypatch.setattr(fleet_attention, "clock", FrozenClock)
     conn = db.connect(db_file)
     projection = fleet_attention.build_attention(
         conn,

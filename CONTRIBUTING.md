@@ -142,7 +142,12 @@ exception handlers, plus `web/` and `mcp/`) from writing except through
 command modules and the designated writers named in it,
 `check_transaction_commits.py` fails on a call inside a `db.transaction`
 block that commits (a writer whose `commit` is not `False` there, or one that
-commits whatever it is passed), and `check_imported_at_guards.py` pins every
+commits whatever it is passed) and, outside `core/db.py`, on a commit that no
+`commit` parameter governs and on a transaction opened or ended by hand
+(`execute("BEGIN ...")` and its kin): a writer takes `commit` or goes through
+`db.transaction`, and the few that must commit on their own are named, with
+the reason, in its `ALLOWED_OWN_TRANSACTIONS` (a stale entry fails), and
+`check_imported_at_guards.py` pins every
 native-only activity reader to its `imported_at IS NULL` guard (and FORGE.md's
 guard table to the checker, via `tests/test_imported_at_guards.py`). Readers are
 declared beside their code, in the `imported_at_guards.toml` of their package
@@ -417,7 +422,11 @@ login, and starts Athena. It refuses to overwrite an existing path.
    `tests/support.py` (the first user, more accounts, agents, tokens of a given
    scope set, clients that act as an account, the activity trail) rather than
    declaring another `_bootstrap`; `tests/test_suite_conventions.py` fails if the
-   count of files that do rises, or if a test waits with `time.sleep`.
+   count of files that do rises, or if a test waits with `time.sleep`. A test
+   that needs time to pass takes the `clock` fixture (`tests/conftest.py`): it
+   holds the app's one clock (`src/athena/core/clock.py`) still and moves it by
+   hand, and `support.lapse_lease(clock, db_file, issue_id)` lapses a lease by
+   moving the clock past its expiry, never by rewriting the stored expiry.
 4. If the change is notable to a reader of the changelog, add a fragment under
    `changelog.d/` (see [Changelog entries](#changelog-entries)); do not edit
    `CHANGELOG.md` by hand.

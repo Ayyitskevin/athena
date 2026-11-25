@@ -18,6 +18,7 @@ from typing import Any, Iterable, Iterator
 
 from athena.core import (
     activity_chain,
+    db,
     issue_identity,
     links,
     portable_title_links,
@@ -243,13 +244,16 @@ def replay_import_manifest(
     bundle: dict,
     manifest: dict,
 ) -> dict:
-    """Replay a ready import manifest into ``conn`` transactionally."""
+    """Replay a ready import manifest into ``conn`` transactionally.
+
+    The manifest is re-checked and replayed under one immediate transaction, so
+    nothing can change between the check and the writes; inside a caller's
+    transaction it is a savepoint."""
     bundle = _validate_bundle(bundle)
     manifest = _validate_import_manifest(manifest, bundle)
     policy = manifest["attachment_policy"]["mode"]
 
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with db.transaction(conn, immediate=True):
         fresh = build_import_manifest(conn, bundle, attachment_policy=policy)
         if fresh["status"] != "ready":
             raise ValueError(
@@ -267,10 +271,6 @@ def replay_import_manifest(
             result = _replay_space_import(conn, bundle, manifest)
         else:
             raise ValueError("bundle kind must be 'project' or 'space'")
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
     return result
 
 
@@ -760,8 +760,8 @@ def _replay_project_import(
     comment_count = 0
     for comment in bundle["comments"]:
         conn.execute(
-            "INSERT INTO comments (issue_id, author_id, body, created_at) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO comments (issue_id, author_id, body, created_at, imported_at) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
             (
                 issue_map[comment["issue_id"]],
                 user_map[comment["author_id"]],
@@ -876,7 +876,8 @@ def _replay_space_import(
         cur = conn.execute(
             "INSERT INTO pages "
             "(id, space_id, parent_id, title, body, created_by, created_at, updated_by, "
-            "updated_at) SELECT next_id, ?, ?, ?, ?, ?, ?, ?, ? "
+            "updated_at, imported_at) SELECT next_id, ?, ?, ?, ?, ?, ?, ?, ?, "
+            "datetime('now') "
             "FROM activity_target_id_sequences WHERE target_kind = 'page'",
             (
                 space_id,
@@ -922,8 +923,8 @@ def _replay_space_import(
     for version in bundle["versions"]:
         conn.execute(
             "INSERT INTO page_versions "
-            "(page_id, version, title, body, edited_by, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "(page_id, version, title, body, edited_by, created_at, imported_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
             (
                 page_map[version["page_id"]],
                 version["version"],
@@ -938,8 +939,9 @@ def _replay_space_import(
     comment_count = 0
     for comment in bundle["comments"]:
         conn.execute(
-            "INSERT INTO page_comments (page_id, author_id, body, created_at) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO page_comments "
+            "(page_id, author_id, body, created_at, imported_at) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
             (
                 page_map[comment["page_id"]],
                 user_map[comment["author_id"]],

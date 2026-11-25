@@ -227,7 +227,9 @@ def _stamp_last_use(conn: sqlite3.Connection, token_id: int) -> None:
     The check is a read and takes no lock. Only a due stamp writes, and it
     waits briefly: if another writer holds the database the stamp is skipped
     and the next request tries again, so authenticating never fails, and
-    never stalls, for want of a bookkeeping write."""
+    never stalls, for want of a bookkeeping write. The write is its own
+    deferred transaction, which takes the lock only at the UPDATE; inside a
+    caller's transaction it is a savepoint and commits with the caller."""
     due = conn.execute(
         "SELECT last_used_at IS NULL OR last_used_at <= datetime('now', ?) AS due "
         "FROM api_tokens WHERE id = ?",
@@ -237,15 +239,15 @@ def _stamp_last_use(conn: sqlite3.Connection, token_id: int) -> None:
         return
     conn.execute(f"PRAGMA busy_timeout = {_STAMP_WAIT_MS}")
     try:
-        conn.execute(
-            "UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?",
-            (token_id,),
-        )
-        conn.commit()
+        with db.transaction(conn):
+            conn.execute(
+                "UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?",
+                (token_id,),
+            )
     except sqlite3.OperationalError as exc:
+        # db.transaction has rolled the stamp back; skip it.
         if not db.is_lock_timeout(exc):
             raise
-        conn.rollback()
     finally:
         conn.execute(f"PRAGMA busy_timeout = {db.BUSY_TIMEOUT_MS}")
 

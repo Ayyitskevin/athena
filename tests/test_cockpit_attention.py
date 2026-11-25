@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from support import lapse_lease
 
 from athena.aegis import fleet_attention, fleet_work
 from athena.core import activity, budgets, db, security_events
@@ -79,7 +80,7 @@ def _bearer(onboarded):
     return {"Authorization": f"Bearer {onboarded['token']['token']}"}
 
 
-def _claimed_issue(client, agent, *, title, reporting=True):
+def _claimed_issue(client, agent, *, title, reporting=True, lease_seconds=None):
     issue = client.post("/issues", json={"title": title}, headers=H1).json()
     client.post(
         f"/issues/{issue['id']}/delegate",
@@ -89,6 +90,7 @@ def _claimed_issue(client, agent, *, title, reporting=True):
     read = client.get(f"/issues/{issue['id']}", headers=_bearer(agent))
     claimed = client.post(
         f"/issues/{issue['id']}/claim",
+        json=None if lease_seconds is None else {"lease_seconds": lease_seconds},
         headers={
             **_bearer(agent),
             "If-Match": read.headers["ETag"],
@@ -108,18 +110,17 @@ def _claimed_issue(client, agent, *, title, reporting=True):
     return issue
 
 
-def _expire_lease(db_file, issue_id):
-    conn = db.connect(db_file)
-    conn.execute(
-        "UPDATE issue_leases SET expires_at = datetime('now', '-1 hour') "
-        "WHERE issue_id = ?",
-        (issue_id,),
-    )
-    conn.commit()
-    conn.close()
+#: The shortest lease there is. The clock passes it a second later, well inside
+#: the window in which every other claim's check-in still reads as recent.
+SHORT_LEASE = 60
 
 
-def test_attention_rows_lead_the_page_instead_of_being_clipped(tmp_path):
+def _expire_lease(clock, db_file, issue_id):
+    """The app's clock passes the issue's lease expiry; the row is not written."""
+    lapse_lease(clock, db_file, issue_id)
+
+
+def test_attention_rows_lead_the_page_instead_of_being_clipped(clock, tmp_path):
     # The regression this fixes: with the limit at 1 and one expired claim among
     # several active ones, the OLD ordering returned an active row and a summary
     # reading "0 need attention" — about the one page that excluded the only claim
@@ -130,8 +131,8 @@ def test_attention_rows_lead_the_page_instead_of_being_clipped(tmp_path):
         agent = _agent(c)
         for index in range(3):
             _claimed_issue(c, agent, title=f"quiet {index}")
-        urgent = _claimed_issue(c, agent, title="urgent")
-        _expire_lease(db_file, urgent["id"])
+        urgent = _claimed_issue(c, agent, title="urgent", lease_seconds=SHORT_LEASE)
+        _expire_lease(clock, db_file, urgent["id"])
 
         page = c.get("/fleet/active-work?limit=1", headers=H1).json()
         assert len(page["items"]) == 1
@@ -145,14 +146,14 @@ def test_attention_rows_lead_the_page_instead_of_being_clipped(tmp_path):
         assert page["visible_total"] == 4
 
 
-def test_the_attention_filter_returns_exactly_the_attention_rows(tmp_path):
+def test_the_attention_filter_returns_exactly_the_attention_rows(clock, tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
         agent = _agent(c)
         quiet = _claimed_issue(c, agent, title="quiet")
-        urgent = _claimed_issue(c, agent, title="urgent")
-        _expire_lease(db_file, urgent["id"])
+        urgent = _claimed_issue(c, agent, title="urgent", lease_seconds=SHORT_LEASE)
+        _expire_lease(clock, db_file, urgent["id"])
 
         needs = c.get(
             "/fleet/active-work?attention_state=needs_attention", headers=H1
@@ -181,7 +182,7 @@ def test_the_attention_filter_returns_exactly_the_attention_rows(tmp_path):
         assert fleet_work.parse_attention_state("") is None
 
 
-def test_the_cockpit_can_filter_to_attention(tmp_path):
+def test_the_cockpit_can_filter_to_attention(clock, tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         c.post("/users", json={"email": "a@e.com", "name": "Ann", "password": "pw"})
@@ -191,8 +192,8 @@ def test_the_cockpit_can_filter_to_attention(tmp_path):
             follow_redirects=False,
         )
         agent = _agent(c)
-        urgent = _claimed_issue(c, agent, title="urgent")
-        _expire_lease(db_file, urgent["id"])
+        urgent = _claimed_issue(c, agent, title="urgent", lease_seconds=SHORT_LEASE)
+        _expire_lease(clock, db_file, urgent["id"])
         _claimed_issue(c, agent, title="quiet")
 
         page = c.get("/admin/agents/runs?attention_state=needs_attention")
@@ -321,7 +322,7 @@ def test_imported_rows_plant_no_fake_refusals_or_exhaustions(tmp_path):
     conn.close()
 
 
-def test_the_rollup_counts_every_exception_surface(tmp_path):
+def test_the_rollup_counts_every_exception_surface(clock, tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
@@ -330,8 +331,8 @@ def test_the_rollup_counts_every_exception_surface(tmp_path):
 
         # One of each: an expired claim, a pending approval, an unanswered kill,
         # a budget ceiling hit, and a refusal.
-        urgent = _claimed_issue(c, agent, title="urgent")
-        _expire_lease(db_file, urgent["id"])
+        urgent = _claimed_issue(c, agent, title="urgent", lease_seconds=SHORT_LEASE)
+        _expire_lease(clock, db_file, urgent["id"])
         c.put(
             f"/approvals/policies/{agent_id}",
             json={"action_kind": "issue.close"},

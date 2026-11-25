@@ -47,7 +47,7 @@ import sqlite3
 
 from athena.aegis import claim_handoffs, dependencies, issues, leases, statuses
 from athena.aegis.issue_commands import AUTOMATION_ACTOR_EMAIL
-from athena.core import access, db, identity
+from athena.core import access, clock, db, identity
 from athena.core.ids import MAX_SQLITE_INTEGER
 
 SCHEMA = "athena.ready_queue.v1"
@@ -77,7 +77,7 @@ class ReadyQueueError(ValueError):
 
 
 def _now(now: datetime | None) -> datetime:
-    current = datetime.now(UTC) if now is None else now
+    current = clock.now() if now is None else now
     if current.tzinfo is None:
         current = current.replace(tzinfo=UTC)
     return current.astimezone(UTC)

@@ -149,12 +149,14 @@ def test_extension_clock_and_expiry_are_observed_after_waiting_writer(
     attempted, unlocked = Event(), Event()
 
     class ControlledClock:
-        @classmethod
-        def now(cls, tz):
+        """The app's one clock as the command reads it."""
+
+        @staticmethod
+        def now():
             assert unlocked.is_set(), "sampled before acquiring writer reservation"
             return datetime(2035, 1, 1, tzinfo=UTC)
 
-    monkeypatch.setattr(lease_commands, "datetime", ControlledClock)
+    monkeypatch.setattr(lease_commands, "clock", ControlledClock)
     conn.execute("BEGIN IMMEDIATE")
     conn.execute("UPDATE issue_leases SET expires_at='2034-12-31 23:59:59'")
 

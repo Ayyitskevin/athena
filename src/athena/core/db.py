@@ -17,6 +17,8 @@ import sqlite3
 import threading
 from typing import Iterator
 
+from athena.core import clock
+
 # The .sql migration files live next to this module, in migrations/.
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 _MIGRATION_NAME_RE = re.compile(r"^(?P<number>[0-9]{4})_[a-z0-9]+(?:_[a-z0-9]+)*\.sql$")
@@ -148,6 +150,11 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     # "database is locked" (a 500) instead of waiting its turn. Wait up to 5s so
     # concurrent actors queue behind each other rather than erroring out.
     conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+    if clock.replaced():
+        # A test replaced the app's clock (G6): SQLite's datetime('now'), which
+        # the lease triggers of migrations 0057 and 0058 read, follows it on
+        # this connection. Never in a running app, whose clock is the system's.
+        conn.create_function("datetime", -1, clock.sqlite_datetime)
     return conn
 
 

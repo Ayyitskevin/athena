@@ -126,7 +126,7 @@ def test_the_holder_renews_with_the_generation_alone(tmp_path):
         world.close()
 
 
-def test_a_first_claim_still_needs_if_match(tmp_path):
+def test_a_first_claim_still_needs_if_match(clock, tmp_path):
     world = World(tmp_path)
     try:
         issue_id = world.issue()
@@ -135,7 +135,7 @@ def test_a_first_claim_still_needs_if_match(tmp_path):
         assert first.json()["code"] == "precondition_required"
         # A lapsed lease is a new possession, not a renewal: the same answer.
         held = world.held(world.sol, issue_id)
-        lapse_lease(world.db_file, issue_id)
+        lapse_lease(clock, world.db_file, issue_id)
         again = world.claim(world.sol, issue_id)
         assert (
             again.status_code == 428 and again.json()["code"] == "precondition_required"
@@ -148,12 +148,12 @@ def test_a_first_claim_still_needs_if_match(tmp_path):
         world.close()
 
 
-def test_a_stale_or_wrong_generation_is_refused(tmp_path):
+def test_a_stale_or_wrong_generation_is_refused(clock, tmp_path):
     world = World(tmp_path)
     try:
         issue_id = world.issue()
         old = world.held(world.sol, issue_id)
-        lapse_lease(world.db_file, issue_id)
+        lapse_lease(clock, world.db_file, issue_id)
         new = world.held(world.sol, issue_id)
         assert new["generation"] != old["generation"]
         for generation in (old["generation"], OTHER_GENERATION):

@@ -65,8 +65,10 @@ A different request under a key that is on record is refused 409
 `idempotency_mismatch`, whatever its state. The codes are listed in
 [AGENT_API.md](AGENT_API.md#refusal-codes).
 `GET /openapi-agent.json` is the REST surface your token can call, without the browser
-routes `/openapi.json` also lists, and it declares per operation the bearer scheme,
-`Idempotency-Key`, `If-Match` and `ETag`, the run headers and this refusal body.
+routes `/openapi.json` also lists, and it declares per operation the bearer scheme
+with the token scope the operation needs (`admin` holds every scope),
+`Idempotency-Key`, `If-Match` and `ETag`, the run headers, this refusal body, and
+404 and 428 where the operation can answer them.
 A failure that never reached Athena (a bad argument, say) is the same object, with
 `status_code` null and an MCP-side code such as `invalid_arguments`.
 JSON write bodies refuse a field they do not declare (422 `validation_error`), so

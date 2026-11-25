@@ -2,6 +2,7 @@
 
 from fastapi.testclient import TestClient
 import pytest
+from support import lapse_lease
 
 from athena.core import db, packet_time
 from athena.main import create_app
@@ -427,7 +428,6 @@ def test_waiting_pickup_reads_writer_change_before_selection(setup, change):
 
 def test_waiting_pickup_samples_clock_after_reservation(setup, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
-    from datetime import UTC, datetime, timedelta
     import threading
     from athena.aegis import ready_claim_commands, leases
 
@@ -436,13 +436,13 @@ def test_waiting_pickup_samples_clock_after_reservation(setup, monkeypatch):
     direct_claim(client, agent, held)
     issue(client, agent, "New")
     actor = command_actor(path, agent)
-    before = datetime.now(UTC)
-    after = before + timedelta(hours=2)
-    execute(
-        path,
-        "UPDATE issue_leases SET expires_at=?",
-        (leases.clock_stamp(after),),
-    )
+    # The pickup samples the instant the held lease expires, which is read, not
+    # written: at that instant the lease has lapsed.
+    conn = db.connect(path)
+    try:
+        after = packet_time.parse(leases.get_lease(conn, held["id"])["expires_at"])
+    finally:
+        conn.close()
     reserved, sampled = threading.Event(), threading.Event()
     writer, worker = db.connect(path), db.connect(path)
     worker.set_trace_callback(
@@ -450,13 +450,14 @@ def test_waiting_pickup_samples_clock_after_reservation(setup, monkeypatch):
     )
 
     class Clock:
+        """The app's one clock as the pickup reads it."""
+
         @staticmethod
-        def now(tz):
-            assert tz is UTC
+        def now():
             sampled.set()
             return after
 
-    monkeypatch.setattr(ready_claim_commands, "datetime", Clock)
+    monkeypatch.setattr(ready_claim_commands, "clock", Clock)
     writer.execute("BEGIN IMMEDIATE")
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
@@ -604,22 +605,18 @@ def test_historical_keyed_success_survives_restart_and_release_without_reacquiri
     assert counts(path) == (1, 2)
 
 
-def test_expired_success_replay_is_historical_new_pickup_reacquires(setup):
+def test_expired_success_replay_is_historical_new_pickup_reacquires(clock, setup):
     client, path, _app, agent = setup
     target = issue(client, agent)
     headers = {"Idempotency-Key": "before-expiry"}
     first = checked(pickup(client, agent, **headers), 200)
-    execute(
-        path,
-        "UPDATE issue_leases SET expires_at='2000-01-01 00:00:00' WHERE issue_id=?",
-        (target["id"],),
-    )
+    lapse_lease(clock, path, target["id"])
     assert checked(pickup(client, agent, **headers), 200) == first
     assert counts(path) == (1, 1)
     renewed = checked(pickup(client, agent), 200)
     assert renewed["lease"]["generation"] != first["lease"]["generation"]
     assert renewed["previous_lease"]["holder_id"] == agent["user"]["id"]
-    assert renewed["previous_lease"]["expired_at"] == "2000-01-01T00:00:00Z"
+    assert renewed["previous_lease"]["expired_at"] == first["lease"]["expires_at"]
     assert counts(path) == (1, 2)
 
 

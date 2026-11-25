@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.core import users
+from athena.core import db, users
 
 
 def link_identity(
@@ -93,11 +93,12 @@ def start_login(
 ) -> None:
     """Stash the secrets for one in-flight SSO login, keyed by its (unguessable)
     state. Recorded at /login/sso; consumed once at /auth/callback."""
-    conn.execute(
-        "INSERT INTO oidc_login_states (state, nonce, code_verifier) VALUES (?, ?, ?)",
-        (state, nonce, code_verifier),
-    )
-    conn.commit()
+    with db.transaction(conn):
+        conn.execute(
+            "INSERT INTO oidc_login_states (state, nonce, code_verifier) "
+            "VALUES (?, ?, ?)",
+            (state, nonce, code_verifier),
+        )
 
 
 def take_login_state(
@@ -115,10 +116,10 @@ def take_login_state(
     ).fetchone()
     # Delete this state (whether fresh or expired) plus anything else stale, in one
     # commit, so the row is gone before we trust it and abandoned rows don't linger.
-    conn.execute("DELETE FROM oidc_login_states WHERE state = ?", (state,))
-    conn.execute(
-        "DELETE FROM oidc_login_states WHERE created_at < datetime('now', ?)",
-        (f"-{int(max_age_seconds)} seconds",),
-    )
-    conn.commit()
+    with db.transaction(conn):
+        conn.execute("DELETE FROM oidc_login_states WHERE state = ?", (state,))
+        conn.execute(
+            "DELETE FROM oidc_login_states WHERE created_at < datetime('now', ?)",
+            (f"-{int(max_age_seconds)} seconds",),
+        )
     return dict(row) if row else None

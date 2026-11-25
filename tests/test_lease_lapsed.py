@@ -22,8 +22,9 @@ behaviour that replaces that silence:
   lapse is written after the read, in its own immediate transaction.
 
 Nothing here releases or sweeps a lease (ruling K1): the row stays until a
-claimer or an operator settles it as before. The app has no injectable clock,
-so a lease lapses by rewriting its stored expiry (``lapse_lease``).
+claimer or an operator settles it as before. A lease lapses the way it does in
+use: the app's clock (G6) moves past its expiry (``lapse_lease``), and nothing
+writes the lease row.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from fastapi.testclient import TestClient
 import pytest
 from support import (
     ADMIN,
+    AppClock,
     add_user,
     as_user,
     bearer,
@@ -57,10 +59,19 @@ class Board:
     """An operator (admin, user 1), a conductor agent that delegates, a seat agent
     that holds, a human assignee and an unrelated member who can see everything."""
 
-    def __init__(self, app, db_file, client: TestClient, *, private: bool = False):
+    def __init__(
+        self,
+        app,
+        db_file,
+        client: TestClient,
+        clock: AppClock,
+        *,
+        private: bool = False,
+    ):
         self.app = app
         self.db_file = db_file
         self.client = client
+        self.clock = clock
         bootstrap(client)
         body: dict[str, Any] = {"name": "Work", "key": "WRK"}
         if private:
@@ -147,7 +158,7 @@ class Board:
         return lease["generation"]
 
     def lapse(self, issue_id: int) -> None:
-        lapse_lease(self.db_file, issue_id)
+        lapse_lease(self.clock, self.db_file, issue_id)
 
     def lapses(self, issue_id: int) -> list[dict]:
         """Every lease_lapsed row on the issue, ungated, oldest first."""
@@ -217,17 +228,17 @@ def issue_rows(ranking: dict, issue_id: int) -> list[dict]:
 
 
 @pytest.fixture
-def board(tmp_path):
+def board(clock, tmp_path):
     app, db_file = make_app(tmp_path, "lapse.db")
     with TestClient(app) as client:
-        yield Board(app, db_file, client)
+        yield Board(app, db_file, client, clock)
 
 
 @pytest.fixture
-def private_board(tmp_path):
+def private_board(clock, tmp_path):
     app, db_file = make_app(tmp_path, "lapse-private.db")
     with TestClient(app) as client:
-        yield Board(app, db_file, client, private=True)
+        yield Board(app, db_file, client, clock, private=True)
 
 
 # --- the observer in wait_for_events (GET /events) ------------------------------------
