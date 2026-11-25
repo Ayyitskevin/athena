@@ -1,8 +1,11 @@
 # Prune ledger
 
 VISION.md's opening says: *when a proposed feature doesn't serve the picture, cut it
-or reshape it.* Nothing visible has ever been cut. Meanwhile the surface is **362
-routes, 124 MCP tools, 65 tables and ~46,600 lines** across the feature modules,
+or reshape it.* Nothing visible has ever been cut. Meanwhile the surface was **362
+routes, 124 MCP tools, 65 tables and ~46,600 lines** across the feature modules
+when this ledger was drafted in August (today's counts, and every change to them
+with what it earns, are in `scripts/surface_counts.toml`, which the gate holds
+to the code),
 and the external review named that maintenance surface the project's biggest
 long-term risk — bigger than any individual bug it found.
 

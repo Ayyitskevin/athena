@@ -28,6 +28,8 @@ import pytest
 
 from athena.mcp import server as mcp_server
 
+from profile_names import carries, profiles_named
+
 # A backticked identifier written as a call: `my_desk(`, `recent_events(after=...`.
 _CALL = re.compile(r"`([a-z_][a-z0-9_]*)\s*\(")
 # The same thing in a markdown code fence, where the backticks wrap the block
@@ -39,8 +41,24 @@ _FENCED_CALL = re.compile(r"(?<![\w.`])([a-z_][a-z0-9_]*)\(")
 _ANY_CALL = re.compile(r"(?<![\w.])([a-z_][a-z0-9_]*)`?\(")
 # Any snake_case identifier, as a whole word: a tool name written in prose.
 _TOOL_WORD = re.compile(r"(?<![\w.-])([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?![\w-])")
-DESK_DOC = Path(__file__).resolve().parents[1] / "docs" / "DESK.md"
+REPO = Path(__file__).resolve().parents[1]
+DESK_DOC = REPO / "docs" / "DESK.md"
 NAMED_PROFILES = ("seat", "seat+knowledge", "conductor")
+# A backticked bare identifier: how a one-word tool (`watch`, `whoami`) is named.
+_TICKED = re.compile(r"`([a-z_][a-z0-9_]*)`")
+_FENCE_LINE = re.compile(r"^\s*```")
+
+# Documents a seat reads, and the profile each addresses (G9). The desk sheet
+# and the Field Guide are written for a seat; the desk-loop prompt is handed to
+# the `seat+knowledge` agent RUNTIME_RECIPE.md onboards. `watch`,
+# `mark_notifications_read` and `recent_events` were named there as a seat's
+# next call while no seat profile carried them.
+FIELD_GUIDE = REPO / "src" / "athena" / "field_guide"
+SEAT_DOCUMENTS: dict[Path, str] = {
+    DESK_DOC: "seat",
+    REPO / "examples" / "desk_loop.md": "seat+knowledge",
+    **{page: "seat" for page in sorted(FIELD_GUIDE.glob("*.md"))},
+}
 
 
 class _NoWhoamiStub:
@@ -153,3 +171,113 @@ def test_the_profile_guard_would_catch_bare_and_backticked_calls():
         "my_desk: recent_events",
         "search_work: query_help",
     }
+
+
+# --- documents a seat reads -----------------------------------------------------
+
+
+def _units(text: str) -> list[tuple[int, str]]:
+    """(first line, text) of each paragraph, list item or table, with a fenced
+    block joined to the paragraph before it: the prose that introduces a call
+    is where the profile that carries it is named."""
+    units: list[tuple[int, list[str]]] = []
+    current: list[str] | None = None
+    fence: list[str] | None = None
+    for number, line in enumerate(text.splitlines(), start=1):
+        if fence is not None:
+            fence.append(line)
+            if _FENCE_LINE.match(line):
+                fence, current = None, None
+            continue
+        if _FENCE_LINE.match(line):
+            if current is None:
+                if not units:
+                    units.append((number, []))
+                current = units[-1][1]
+            fence = current
+            fence.append(line)
+            continue
+        if not line.strip():
+            current = None
+            continue
+        if current is None or line.lstrip().startswith(("- ", "* ")):
+            current = []
+            units.append((number, current))
+        current.append(line)
+    return [(start, "\n".join(lines)) for start, lines in units]
+
+
+def _unqualified_tools(
+    text: str, addressed: str, registered: set[str]
+) -> list[tuple[int, str]]:
+    """(line, tool) for each registered tool the text names that the addressed
+    profile does not carry and whose paragraph names no profile that does."""
+    found: list[tuple[int, str]] = []
+    for line, unit in _units(text):
+        named = (
+            set(_TOOL_WORD.findall(unit))
+            | set(_ANY_CALL.findall(unit))
+            | set(_TICKED.findall(unit))
+        ) & registered
+        profiles = profiles_named(unit) | {addressed}
+        found += [
+            (line, tool)
+            for tool in sorted(named)
+            if not any(carries(profile, tool) for profile in profiles)
+        ]
+    return found
+
+
+@pytest.mark.parametrize(
+    "path", SEAT_DOCUMENTS, ids=lambda path: path.relative_to(REPO).as_posix()
+)
+def test_a_seat_document_names_only_tools_its_profile_carries(path):
+    """Profile closure for the documents a seat reads (G9): a tool the
+    document's profile does not carry is named only in a paragraph that names
+    the profile that does ("the full profile also offers ..."), so a seat is
+    never sent to a tool its session does not list."""
+    registered = set(_tools())
+    addressed = SEAT_DOCUMENTS[path]
+    found = _unqualified_tools(path.read_text(encoding="utf-8"), addressed, registered)
+    assert found == [], (
+        f"{path.relative_to(REPO)} addresses `{addressed}` and names tools it does "
+        f"not carry, with no profile that does named beside them: {found}"
+    )
+
+
+def test_every_field_guide_page_is_checked():
+    """The guide's manifest and the checked set are the same pages."""
+    from athena import guide
+
+    checked = {path.name for path in SEAT_DOCUMENTS if path.parent == FIELD_GUIDE}
+    assert checked == {filename for filename, _, _ in guide.PAGES}
+    # Each addresses a named profile: `full` carries every tool, so a document
+    # held to it would be held to nothing.
+    assert set(SEAT_DOCUMENTS.values()) <= set(NAMED_PROFILES)
+
+
+SEAT_PAGE = """Subscribe to the space:
+
+```
+watch("space", space_id)
+```
+
+`unwatch` stops it. Mark them read with `mark_notifications_read()`.
+
+With the full profile, `watch("issue", issue_id)` follows one issue.
+
+- Search pages with `search(query)`; `seat+knowledge` carries it.
+- A conductor reads `get_project_review_queue` as well.
+"""
+
+
+def test_the_seat_document_guard_would_catch_a_tool_the_seat_lacks():
+    """The negative self-test: a fenced call, a backticked one-word tool and a
+    bare call with no profile named all fail; the same tools in a paragraph
+    that names a profile carrying them do not."""
+    registered = set(_tools())
+    assert _unqualified_tools(SEAT_PAGE, "seat", registered) == [
+        (1, "watch"),
+        (7, "mark_notifications_read"),
+        (7, "unwatch"),
+    ]

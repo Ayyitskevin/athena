@@ -16,13 +16,20 @@ Recognised forms, taken from what the five entry documents actually contain:
   response to a request the prose describes (a table entry), the arguments of
   a tool call (a table entry), or an ``mcpServers`` configuration;
 - a fenced ``markdown`` block: text that names tool calls;
+- a bare fenced block (no language): one tool call per line, as a prompt
+  shows the call to make;
 - an inline tool call: ``name(arguments)`` inside a code span, in prose or in
   a ``markdown`` block. Arguments are ``...`` (others elided), ``name``,
   ``name?`` (optional), ``name=value`` or a positional value; a value is a
   quoted string, an integer, ``true``/``false``, ``...`` or ``<placeholder>``.
+  A quoted ``"<placeholder>"`` is text, unless the test module can fill that
+  argument from the run (an ETag, a lease generation).
 
-A request's documented status is the first ``HTTP NNN`` in the prose after it
-(after its response block, before the next block or heading); with none, any
+A read-only call runs where its arguments can be filled. A document the test
+module lists in ``runs_writes`` is a sequence of steps, and its write calls run
+too, in document order; a call that elides a required argument is checked, not
+run. A request's documented status is the first ``HTTP NNN`` in the prose after
+it (after its response block, before the next block or heading); with none, any
 2xx. Anything this module cannot read is a failure, never a skip.
 """
 
@@ -44,6 +51,8 @@ from mcp.server.fastmcp.exceptions import ToolError
 from athena.mcp import server as mcp_server
 from athena.mcp.client import AthenaClient
 
+from profile_names import carries, profiles_named
+
 REPO = Path(__file__).resolve().parent.parent
 DOCS = REPO / "docs"
 
@@ -51,6 +60,7 @@ _FENCE = re.compile(r"^```(\S*)\s*$")
 _HEADING = re.compile(r"^#{1,6} ")
 _CODE_SPAN = re.compile(r"`([^`\n]+)`")
 _CALL = re.compile(r"\b([a-z][a-z0-9_]*)\(([^()]*)\)")
+_LINE_CALL = re.compile(r"([a-z][a-z0-9_]*)\(([^()]*)\)")
 _OPEN_CALL = re.compile(r"\b([a-z][a-z0-9]*_[a-z0-9_]+)\((?![^`]*\))")
 _HTTP_STATUS = re.compile(r"\bHTTP (\d{3})\b")
 _REQUEST_LINE = re.compile(r"^(GET|POST|PUT|PATCH|DELETE) (/\S*)$")
@@ -58,12 +68,6 @@ _JSON_KEY = re.compile(r'"([A-Za-z_][A-Za-z0-9_]*)"\s*:')
 _CODE_VALUE = re.compile(r'"code"\s*:\s*"([^"]+)"')
 _ISSUE_PATH = re.compile(r"^/issues/(\d+)(?:/|$)")
 _SHELL_VARIABLE = re.compile(r"\$\{?([A-Z_][A-Z0-9_]*)\}?")
-_PROFILE_NAMED = re.compile(
-    r"`(seat\+knowledge|conductor|full|seat)`"
-    r"|ATHENA_MCP_PROFILE=(seat\+knowledge|conductor|full|seat)\b"
-    r"|\b(seat\+knowledge|conductor)\b"
-    r"|\b(?:conductor/)?(full) profiles?\b"
-)
 
 
 # --- reading a document ----------------------------------------------------------
@@ -357,20 +361,45 @@ def tool_calls(doc: str, text: str, blocks: list[Block]) -> list[Call]:
                             paragraph,
                         )
                     )
+    for block in blocks:
+        if block.lang:
+            continue
+        # The paragraph a bare block's calls answer to is the prose that
+        # introduces the block, and the block.
+        paragraph = f"{_paragraph_before(lines, block.line - 1)}\n{block.body}"
+        for number, line in enumerate(block.body.splitlines(), start=1):
+            match = _LINE_CALL.fullmatch(line.strip())
+            if match is None:
+                continue  # the block fails as unclassified when it is run
+            calls.append(
+                Call(
+                    doc,
+                    block.line + number,
+                    match.group(1),
+                    match.group(0),
+                    parse_arguments(match.group(2)),
+                    paragraph,
+                )
+            )
     return sorted(calls, key=lambda call: call.line)
+
+
+def _paragraph_before(lines: list[str], index: int) -> str:
+    """The prose paragraph that ends before ``lines[index]``, blank lines
+    between them skipped."""
+    end = index
+    while end > 0 and not lines[end - 1].strip():
+        end -= 1
+    start = end
+    while start > 0 and lines[start - 1].strip():
+        start -= 1
+    return "\n".join(lines[start:end])
 
 
 def _spans(paragraph: str) -> Iterator[tuple[int, str]]:
     for number, line in enumerate(paragraph.splitlines()):
         for match in _CODE_SPAN.finditer(line):
             yield number, match.group(1)
-
-
-def profiles_named(paragraph: str) -> set[str]:
-    named: set[str] = set()
-    for match in _PROFILE_NAMED.finditer(paragraph):
-        named.update(group for group in match.groups() if group)
-    return named
 
 
 _JSON_TYPES: dict[str, tuple[type, ...]] = {
@@ -540,11 +569,14 @@ class Session:
         return True, json.loads(content[0].text)
 
 
-def session_for(app: Any, token: str, profile: str) -> Session:
+def session_for(
+    app: Any, token: str, profile: str, *, run_id: str | None = None
+) -> Session:
     """The session athena-mcp would give this token under this profile: the
-    scopes are probed the way ``main()`` probes them."""
+    scopes are probed the way ``main()`` probes them. ``run_id`` is the run
+    identity ``main()`` gives every session it starts (its writes carry it)."""
     http = TestClient(app, headers={"Authorization": f"Bearer {token}"})
-    client = AthenaClient(client=http)
+    client = AthenaClient(client=http, run_id=run_id)
     scopes = mcp_server.probe_scopes(client)
     server = mcp_server.build_server(
         client, scopes=scopes, profile=mcp_server.PROFILES[profile]
@@ -653,6 +685,8 @@ class Tables:
         Callable[[Workspace, dict[str, Any]], tuple[str, dict[str, Any]]],
     ]
     fillers: dict[str, Callable[[Workspace], Any]]
+    # Documents that are a sequence of steps: their write calls run too.
+    runs_writes: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -758,6 +792,15 @@ def _run_block(run: _Run, block: Block) -> None:
         inside = [c for c in run.calls if block.line < c.line < block.end]
         if not inside:
             report.failures.append(f"{label}: a markdown block that names no tool call")
+            return
+        report.validated.append(f"{label} ({len(inside)} tool calls, each checked)")
+    elif block.lang == "":
+        inside = [c for c in run.calls if block.line < c.line < block.end]
+        shown = [line for line in block.body.splitlines() if line.strip()]
+        if not inside or len(inside) != len(shown):
+            report.failures.append(
+                f"{label}: a ``` block whose lines are not each one tool call"
+            )
             return
         report.validated.append(f"{label} ({len(inside)} tool calls, each checked)")
     else:
@@ -867,7 +910,7 @@ def _run_call(run: _Run, call: Call) -> None:
     problems, arguments = check_call(call, run.schemas[call.tool])
     profile = run.tables.default_profile[call.doc]
     named = profiles_named(call.paragraph)
-    if not any(_carries(name, call.tool) for name in named | {profile}):
+    if not any(carries(name, call.tool) for name in named | {profile}):
         problems.append(
             f"{call.tool} is not in the document's `{profile}` profile and its "
             f"paragraph names no profile that carries it (named: {sorted(named)})"
@@ -878,28 +921,59 @@ def _run_call(run: _Run, call: Call) -> None:
         not problems
         and session is not None
         and call.tool in session.tools
-        and mcp_server.is_read_only(call.tool)
+        and (mcp_server.is_read_only(call.tool) or call.doc in run.tables.runs_writes)
     )
     for arg in call.args if runnable else ():
-        if arg.name is not None and arg.name not in arguments:
-            filler = run.tables.fillers.get(arg.name)
-            value = filler(workspace) if filler is not None else None
-            if value is None:
-                runnable = False
-                break
-            arguments[arg.name] = value
+        if arg.name is None:
+            continue
+        filler = run.tables.fillers.get(arg.name)
+        if arg.name in arguments and not (
+            filler is not None and _quoted_placeholder(arg.value)
+        ):
+            continue
+        value = filler(workspace) if filler is not None else None
+        if value is None:
+            runnable = False
+            break
+        arguments[arg.name] = value
+    required = set(run.schemas[call.tool].get("required", []))
+    if not required <= set(arguments):
+        runnable = False  # it elides what it needs: checked, not run
     if not runnable or session is None:
         report.calls_validated.append(call.label())
         return
     ok, answer = session.call(call.tool, arguments)
     if not ok:
         report.failures.append(f"{call.label()}: refused with {arguments}: {answer}")
+    else:
+        _remember_answer(answer, workspace)
+    workspace.facts.setdefault("answers", []).append((call.tool, answer))
     report.calls_run.append(f"{call.label()} with {arguments}")
 
 
-def _carries(profile: str, tool: str) -> bool:
-    members = mcp_server.PROFILES[profile]
-    return members is None or tool in members
+def _quoted_placeholder(value: str | None) -> bool:
+    """``"<the issue's current ETag>"``: text that stands for a value the run
+    has, where the test module can fill it."""
+    return (
+        value is not None
+        and len(value) >= 4
+        and value[0] == value[-1]
+        and value[0] in "\"'"
+        and value[1] == "<"
+        and value[-2] == ">"
+    )
+
+
+def _remember_answer(answer: Any, workspace: Workspace) -> None:
+    """The issue a desk read offers: the first delegation on it, which is the
+    issue a prompt that says "pick one from the delegations lane" acts on."""
+    if not isinstance(answer, dict):
+        return
+    work = answer.get("work")
+    delegations = work.get("delegations") if isinstance(work, dict) else None
+    items = delegations.get("items") if isinstance(delegations, dict) else None
+    if items:
+        workspace.issue_id = items[0]["issue"]["id"]
 
 
 def input_schemas() -> dict[str, Any]:

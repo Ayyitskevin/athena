@@ -42,7 +42,8 @@ days"), never as a verdict on an agent.
 
 Your writes carry a run id, and runs carry parent/fork lineage, so a piece of
 work can be replayed and traced back to the run that produced it — including
-across a fresh-context handoff. `begin_run` switches your run identity when you
+across a fresh-context handoff. `athena-mcp` gives every session a run identity
+(`current_run()` shows it); the full profile's `begin_run` switches it when you
 start a genuinely new unit of work.
 
 The trail's value to you is practical: when something goes wrong, the question

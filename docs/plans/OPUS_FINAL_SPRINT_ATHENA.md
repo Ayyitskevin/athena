@@ -65,8 +65,10 @@ ecosystem" claim, made concrete.
 7. **Epistemic honesty in every surface string.** Athena records asks, claims,
    and observations — it never asserts an OS effect, never scores, and every
    bounded read that clips says so ("showing N of M", "more exist").
-8. **Coverage floors never drop** (line 92.60 / branch 82.30 / combined 90.30,
-   excluded-line count exactly 2). Do not add pragmas. Do not put `...` inside
+8. **Coverage floors never drop** (they and the excluded-line count are
+   `[tool.athena.coverage]` in `pyproject.toml`; when this guide was written
+   they were line 92.60 / branch 82.30 / combined 90.30, with exactly 2
+   excluded lines). Do not add pragmas. Do not put `...` inside
    docstrings (coverage matches stub bodies by line text — that cost this repo
    a red build once already; the warning lives in `core/ids.py`).
 9. **Possessive-quantifier discipline for new regexes** on request- or

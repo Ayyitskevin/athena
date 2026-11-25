@@ -7,10 +7,12 @@
 Tools that access Athena use the REST API with the session's bearer
 token — never around it. `begin_run` and `current_run` only set or read
 local run identity without HTTP. This table maps the tool surface;
-the full REST reference is the app's own `/openapi.json`
-(browse it at `/redoc`); this page adds the two columns OpenAPI
-cannot: which **token scope** each MCP tool requires, and which REST
-call(s) it performs.
+the REST surface an agent's token can call is `/openapi-agent.json`,
+with the scope, headers and refusal body of each operation, and
+`/openapi.json` (browse it at `/redoc`) is the whole app's document,
+browser routes included. This page adds the two columns neither has:
+which **token scope** each MCP tool requires, and which REST call(s)
+it performs.
 
 At runtime the tool list is normally scope-filtered using the token's
 scopes ([RUNTIME_RECIPE.md](RUNTIME_RECIPE.md)); `admin` implies every scope.

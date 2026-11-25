@@ -1,4 +1,7 @@
 When you do not know which module holds the answer, do not guess — ask once.
+Over MCP this is the full profile's tool; no seat profile carries it. A seat
+finds issues with `search_work` (the grammar below), and `seat+knowledge` adds
+`search` over issues and pages; REST answers any token:
 
 ```
 search_workspace("zebra")                 # MCP
@@ -9,6 +12,8 @@ It answers across **issues, pages, and comments** in one call, with your own
 visibility applied to each group.
 
 ## The work query grammar works here
+
+The same grammar, with the full profile:
 
 ```
 search_workspace("is:open label:infra zebra")

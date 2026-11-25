@@ -171,3 +171,14 @@ line_floor = 94.34
 branch_floor = 86.27
 combined_floor = 92.49
 excluded_line_count = 2
+
+# The command-migration debts are a ratchet too, the other way up
+# (scripts/generate_command_debtors.py --check, the gate's command-debts stage):
+# a count above its ceiling fails naming the new debtor, and a count below it
+# fails with "lower the ceiling to N", so a change that pays debt lowers the
+# ceiling in the same commit and the paid debt cannot grow back. Ceilings only
+# fall. The counts and their debtors are docs/COMMAND_MIGRATION.md's generated
+# tables; bare_actor_id counts its automation entry points too.
+[tool.athena.command_debts]
+bare_actor_id = 37
+outside_command = 23

@@ -1,0 +1,26 @@
+# The size of Athena's surface (B6b): routes, MCP tools and tables.
+#
+# docs/PRUNE_LEDGER.md asks each subsystem to justify its keep. Nothing made an
+# addition say what it earns, and the ledger's own counts went stale (August:
+# 362 routes, 124 tools, 65 tables). scripts/check_surface_counts.py measures the
+# three and fails unless the baseline plus every [[change]] below equals what it
+# measures. A change that adds to a count records it here with what the addition
+# earns; a change that removes records that too. Counting:
+#
+#   routes  every route the app registers, flattened through included routers
+#           (browser pages, form posts, the API, the documents): what
+#           check_template_routes.py reads
+#   tools   every MCP tool declared (mcp/server.py's declared(), the full profile)
+#   tables  every table and virtual table of a migrated database, without
+#           SQLite's own (sqlite_*) and a virtual table's shadow tables
+#
+# A [[change]] carries `change` (the requirement or PR), the deltas it made
+# (`routes`, `tools`, `tables`, each optional, signed), and `earns`: required
+# when any delta is positive, one sentence on what the addition is for. Setting a
+# prune verdict is the owner's act and is not recorded here.
+
+[baseline]
+date = "2026-11-25"
+routes = 417
+tools = 146
+tables = 73

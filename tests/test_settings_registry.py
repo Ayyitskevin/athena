@@ -423,3 +423,81 @@ def test_every_setting_has_one_row_and_no_hand_table_lists_variables():
     prose = generator.generated_blocks.outside_blocks(text)
     hand_rows = [line for line in prose.splitlines() if line.startswith("| `ATHENA_")]
     assert hand_rows == []
+
+
+# --- the settings a topic document shows (G9) ----------------------------------
+#
+# docs/DISPATCH.md and docs/WORKERS.md kept hand tables of their settings, and
+# one had already drifted: it showed `ATHENA_ICARUS_URL`'s default as unset
+# where the registry's is the empty string. Their tables are now rendered from
+# the same registry rows into a generated block (``EXCERPTS`` in the generator).
+
+TOPIC_DOCUMENTS = ("docs/DISPATCH.md", "docs/WORKERS.md")
+
+
+def _hand_rows(generator, text: str) -> list[str]:
+    prose = generator.generated_blocks.outside_blocks(text)
+    return [line for line in prose.splitlines() if line.startswith("| `ATHENA_")]
+
+
+@pytest.mark.parametrize("relative", TOPIC_DOCUMENTS)
+def test_a_topic_documents_settings_table_matches_the_registry(relative):
+    generator = _load_generator()
+    assert relative in generator.EXCERPTS
+    committed = (REPO / relative).read_text()
+    assert committed == generator.render_topic(relative), (
+        f"{relative}'s settings table is stale — regenerate with "
+        "`python scripts/generate_settings_doc.py`"
+    )
+
+
+def test_every_excerpt_names_declared_settings_once():
+    generator = _load_generator()
+    assert set(generator.EXCERPTS) == set(TOPIC_DOCUMENTS)
+    for blocks in generator.EXCERPTS.values():
+        for names in blocks.values():
+            assert names and len(set(names)) == len(names)
+            assert set(names) <= set(config.SETTINGS)
+
+
+def test_a_hand_edit_inside_a_topic_block_is_drift():
+    """What ``--check`` compares: the committed text against its rendering. A
+    default changed by hand inside the block renders back to the registry's."""
+    generator = _load_generator()
+    committed = (REPO / "docs" / "WORKERS.md").read_text()
+    row = "| `ATHENA_WORKER_STALE_SECONDS` | `90` |"
+    assert row in committed
+    edited = committed.replace(row, "| `ATHENA_WORKER_STALE_SECONDS` | `120` |")
+    assert generator.render_topic("docs/WORKERS.md", edited) == committed
+
+
+def test_an_excerpt_naming_an_undeclared_setting_stops_the_run():
+    generator = _load_generator()
+    with pytest.raises(SystemExit, match="ATHENA_NO_SUCH_SETTING"):
+        generator.render_excerpt(("ATHENA_NO_SUCH_SETTING",), config.SETTINGS)
+
+
+def test_check_mode_fails_on_a_stale_topic_document(tmp_path, monkeypatch, capsys):
+    """``--check`` covers the topic documents, not only OPERATIONS.md: in a
+    copy of the three documents, a hand-edited row in WORKERS.md fails it."""
+    generator = _load_generator()
+    for relative in ("docs/OPERATIONS.md", *TOPIC_DOCUMENTS):
+        copy = tmp_path / relative
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_text((REPO / relative).read_text())
+    monkeypatch.setattr(generator, "REPO", tmp_path)
+    monkeypatch.setattr(generator, "DOC", tmp_path / "docs" / "OPERATIONS.md")
+    monkeypatch.setattr(sys, "argv", ["generate_settings_doc.py", "--check"])
+    assert generator.main() == 0
+    workers = tmp_path / "docs" / "WORKERS.md"
+    workers.write_text(workers.read_text().replace("| `90` |", "| `120` |"))
+    capsys.readouterr()
+    assert generator.main() == 1
+    assert "docs/WORKERS.md is stale" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("relative", TOPIC_DOCUMENTS)
+def test_a_topic_document_keeps_no_hand_row_beside_its_block(relative):
+    """tests/test_docs_index.py holds every document under docs/ to this."""
+    generator = _load_generator()
+    assert _hand_rows(generator, (REPO / relative).read_text()) == []

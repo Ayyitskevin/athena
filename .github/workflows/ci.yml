@@ -71,6 +71,10 @@ jobs:
         run: .venv/bin/python scripts/check_template_routes.py
       - name: Check surface parity
         run: .venv/bin/python scripts/check_surface_parity.py
+      - name: Check surface counts
+        run: .venv/bin/python scripts/check_surface_counts.py
+      - name: Check command-migration debts
+        run: .venv/bin/python scripts/generate_command_debtors.py --check
       - name: Record runner resources
         run: |
           nproc

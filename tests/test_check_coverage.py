@@ -6,8 +6,10 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
+import tomllib
 
 import pytest
 
@@ -551,3 +553,65 @@ def test_wrapper_rejects_invalid_worker_count(tmp_path, workers):
     assert "ATHENA_COVERAGE_WORKERS must be a positive integer" in result.stderr
     assert not record.exists()
     assert not report_dir.exists()
+
+
+# --- documents that restate a floor (G9) -----------------------------------------
+#
+# The floors live in pyproject.toml's [tool.athena.coverage] and only rise, so a
+# figure copied into a document is wrong after the next raise; dated documents
+# kept quoting 92.60/82.30/90.30 long after. A document that describes the
+# present points at pyproject.toml instead. A dated record (a plan or report under
+# docs/plans/, a decision record, a changelog entry, RELEASE_READINESS.md's
+# dated evidence, which says so at its top) states what was true on its date
+# and keeps its figures.
+
+_REPO = _SCRIPT.parents[1]
+_FLOOR_FIGURE = re.compile(
+    r"floor[^\n]*?\b(\d{2}\.\d{1,2})\b|\b(\d{2}\.\d{1,2})\b[^\n]*?\bfloor",
+    re.IGNORECASE,
+)
+_DATED = {"CHANGELOG.md", "docs/RELEASE_READINESS.md"}
+
+
+def _present_tense_documents() -> list[Path]:
+    paths = [*_REPO.glob("*.md"), *_REPO.glob(".github/*.md"), *_REPO.glob("docs/*.md")]
+    return sorted(
+        path for path in paths if path.relative_to(_REPO).as_posix() not in _DATED
+    )
+
+
+def _floor_figures(text: str) -> list[str]:
+    """Each figure stated beside the word floor, and each current floor's value."""
+    floors = tomllib.loads((_REPO / "pyproject.toml").read_text())["tool"]["athena"][
+        "coverage"
+    ]
+    found = [a or b for a, b in _FLOOR_FIGURE.findall(text)]
+    found += [
+        f"{floors[key]:.2f}"
+        for key in ("line_floor", "branch_floor", "combined_floor")
+        if f"{floors[key]:.2f}" in text
+    ]
+    return found
+
+
+def test_no_present_tense_document_restates_a_coverage_floor():
+    stated = {
+        path.relative_to(_REPO).as_posix(): figures
+        for path in _present_tense_documents()
+        if (figures := _floor_figures(path.read_text(encoding="utf-8")))
+    }
+    assert stated == {}, (
+        "point at [tool.athena.coverage] in pyproject.toml instead of copying a "
+        f"floor: {stated}"
+    )
+
+
+def test_the_floor_guard_would_catch_a_copied_floor():
+    current = tomllib.loads((_REPO / "pyproject.toml").read_text())["tool"]["athena"][
+        "coverage"
+    ]["line_floor"]
+    assert _floor_figures("Coverage floors never drop (line 92.60 / branch 82.30).")
+    assert _floor_figures("Line coverage must stay above 93.86%, the floor.")
+    assert _floor_figures(f"The suite measures well over {current:.2f} percent.")
+    assert _floor_figures("The floors are in `pyproject.toml`.") == []
+    assert any(path.name == "CONTRIBUTING.md" for path in _present_tense_documents())

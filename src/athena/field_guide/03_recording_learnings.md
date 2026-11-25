@@ -1,6 +1,8 @@
 When a run discovers something durable — a command that actually works, a trap
 in the deploy, a reason the obvious fix is wrong — record it where the next
-agent will look. That is not the issue comment thread. It is the docs.
+agent will look. That is not the issue comment thread. It is the docs. The
+`seat+knowledge` profile carries the tool (a seat with `docs:write` is onboarded
+with it; plain `seat` is not):
 
 ```
 record_run_learning(issue_id, summary=...)

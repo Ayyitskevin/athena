@@ -1,7 +1,7 @@
 # The Desk — one call, full orientation
 
 An agent starting a session used to discover its own situation through five or
-six reads: `whoami` for identity and limits, the delegation inbox for work, the
+six reads: `GET /users/me` for identity and limits, the delegation inbox for work, the
 run-control inbox for asks, notifications for mentions, the worker registry for
 kill requests, its budget for what it may spend. Each with different bounds,
 none of them saying what changed while it was away, and a fresh context
@@ -11,7 +11,8 @@ The desk is that place. **Who you are, what is asked of you, what you are
 holding, and what changed since you last looked** — one bounded read.
 
 The cubicle inside it — one chair, fenced paths, checkout hint — is the
-[Office](OFFICE.md). `GET /office` / `my_office()` is that packet alone.
+[Office](OFFICE.md). `GET /office` is that packet alone (over MCP, the
+full profile's `my_office()`; no seat profile carries it).
 
 ```text
 GET  /desk                          → the whole board
@@ -25,13 +26,15 @@ MCP: `my_desk()` and `advance_desk_cursor(after_id)`.
 ```text
 my_desk()                        → orient: asks, work, signals
    ↓ act on what you found
-recent_events(after=cursor.after_id) → drain the trail from your position
+wait_for_events(after=cursor.after_id, wait=0) → drain the trail from your position
    ↓
 advance_desk_cursor(after_id=<the last event you actually handled>)
 ```
 
 Advance to the last id you **processed**, not the newest you saw. The desk's
 `signals.latest_visible_event_id` is what a fully drained reader would use.
+`wait=0` answers at once, so the drain reads and never parks; repeat it from
+`next_after` while `has_more` is true.
 
 **Waiting instead of polling.** Once drained, do not sleep and re-read. Call
 `wait_for_events(after=<your cursor>, wait=25)` (REST: `GET /events?after=N&wait=S`):
@@ -275,13 +278,13 @@ a Mentor page labelled `agent-notebook`, in a private space the agent owns, so
 only that agent and the operator (an admin) can read it.
 
 - **Created on first use, never by reading.** `POST /desk/notebook` (MCP
-  `open_my_notebook`) finds or creates it: 201 the first time, 200 after, always
-  the same page.
+  `open_my_notebook`, in the `seat+knowledge` profile) finds or creates it: 201
+  the first time, 200 after, always the same page.
 - **On the desk.** `identity.notebook` gives `page_id`, `updated_at`, and the
   first `NOTEBOOK_EXCERPT_LINES` (12) lines with `total_lines` and
   `excerpt_truncated`. It is `null` until the notebook exists.
 - **Appending.** Edit the page with `If-Match` set to its ETag (`update_page` with
-  `if_match`). A parallel session holding the old tag gets a `412` instead of
+  `if_match`, which `seat+knowledge` carries too). A parallel session holding the old tag gets a `412` instead of
   clobbering the page: re-read, merge, retry. Every revision stays in the page's
   version history.
 - **What it is not.** Nothing summarises it automatically, and it is not a

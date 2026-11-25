@@ -73,7 +73,7 @@ def test_the_recipe_walks_the_whole_desk_loop():
     cited = _cited_tool_names(PROMPT.read_text())
     for required in (
         "my_desk",
-        "begin_run",
+        "current_run",
         "heartbeat_agent_run",
         "get_issue_work_context",
         "claim_issue",

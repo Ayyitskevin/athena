@@ -136,16 +136,24 @@ def create_sprint(
         raise Refusal(
             status_code=422, detail="sprint name is required", code="validation_error"
         )
-    # The command owns the row and its atomic 'sprint_created' event.
-    return sprint_commands.create_sprint(
-        conn,
-        actor_id=actor["id"],
-        project_id=project_id,
-        name=name,
-        goal=payload.goal,
-        start_date=payload.start_date,
-        end_date=payload.end_date,
-    )
+    # The command owns the row and its atomic 'sprint_created' event, and re-checks
+    # the gate above inside its transaction.
+    try:
+        return sprint_commands.create_sprint(
+            conn,
+            actor=actor,
+            project_id=project_id,
+            name=name,
+            goal=payload.goal,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+        )
+    except sprint_commands.SprintCommandError as exc:
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
+        ) from exc
 
 
 @router.get("/sprints/{sprint_id}", response_model=SprintOut)
@@ -186,7 +194,7 @@ def update_sprint(
         fields["name"] = name
     try:
         return sprint_commands.update_sprint(
-            conn, actor_id=actor["id"], sprint_id=sprint_id, fields=fields
+            conn, actor=actor, sprint_id=sprint_id, fields=fields
         )
     except sprint_commands.SprintCommandError as exc:
         raise Refusal(
@@ -204,9 +212,7 @@ def start_sprint(
 ) -> dict:
     _sprint_for_write(conn, sprint_id, actor)
     try:
-        return sprint_commands.start_sprint(
-            conn, actor_id=actor["id"], sprint_id=sprint_id
-        )
+        return sprint_commands.start_sprint(conn, actor=actor, sprint_id=sprint_id)
     except sprints.SprintStateError as exc:
         raise Refusal(status_code=409, detail=str(exc), code="conflict") from exc
     except sprint_commands.SprintCommandError as exc:
@@ -225,9 +231,7 @@ def complete_sprint(
 ) -> dict:
     _sprint_for_write(conn, sprint_id, actor)
     try:
-        return sprint_commands.complete_sprint(
-            conn, actor_id=actor["id"], sprint_id=sprint_id
-        )
+        return sprint_commands.complete_sprint(conn, actor=actor, sprint_id=sprint_id)
     except sprints.SprintStateError as exc:
         raise Refusal(status_code=409, detail=str(exc), code="conflict") from exc
     except sprint_commands.SprintCommandError as exc:
@@ -253,5 +257,13 @@ def delete_sprint(
             detail="move its issues out of the sprint first",
             code="conflict",
         )
-    # The command owns the delete and its atomic 'sprint_deleted' event.
-    sprint_commands.delete_sprint(conn, actor_id=actor["id"], sprint_id=sprint_id)
+    # The command owns the delete and its atomic 'sprint_deleted' event, and
+    # re-checks the gate above inside its transaction.
+    try:
+        sprint_commands.delete_sprint(conn, actor=actor, sprint_id=sprint_id)
+    except sprint_commands.SprintCommandError as exc:
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
+        ) from exc

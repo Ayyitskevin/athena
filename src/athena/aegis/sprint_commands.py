@@ -12,20 +12,28 @@ These commands own each write: the row change and its activity event run in one
 ``db.transaction``, so a sprint's lifecycle can never move without its trail
 entry. REST and the browser are thin callers.
 
-Same shape as the neighbouring command modules. Authorization (the project-write
-gate) and the non-empty-sprint delete precondition stay at the transport
-boundary, as they do for ``project_commands``; the command owns the atomic
-write + audit emission. Events are recorded here directly rather than through a
-separate recorder module — the sprint verbs carry no derived projections, so the
-indirection ``project_activity`` needs would buy nothing.
+Each command takes the resolved ``actor`` and owns its gate (slice rule 1 of
+docs/COMMAND_MIGRATION.md), as the comment commands do: the sprint's project must
+be visible to the actor (a hidden one reads as missing) and the actor must be its
+creator — managing a project's cadence is the creator's call — checked INSIDE the
+write transaction, so the check and the write it guards cannot straddle a
+boundary, and a caller reaching a command directly is refused rather than
+trusted. The transports still run the same gate first, for their own wire
+statuses and ordering, and keep role and token scope (``issue_write_actor``, the
+cockpit's read-only refusal), as they do for the comment commands. The
+non-empty-sprint delete precondition stays at the transport boundary.
+
+Events are recorded here directly rather than through a separate recorder
+module — the sprint verbs carry no derived projections, so the indirection
+``project_activity`` needs would buy nothing.
 """
 
 from __future__ import annotations
 
 import sqlite3
 
-from athena.aegis import sprints
-from athena.core import activity, db
+from athena.aegis import projects, sprints
+from athena.core import access, activity, db
 
 # Free-form activity verbs (activity.verb is plain TEXT; see migrations/0017).
 VERB_CREATED = "sprint_created"
@@ -44,6 +52,46 @@ class SprintCommandError(Exception):
     def __init__(self, kind: str, message: str) -> None:
         super().__init__(message)
         self.kind = kind
+
+
+def _managed_project_or_refuse(
+    conn: sqlite3.Connection, actor: dict, project_id: int
+) -> dict:
+    """The project, if ``actor`` may manage its sprints — else a refusal.
+
+    ``not_found`` when the project is missing or hidden from the actor, so a
+    private project's existence never leaks through a sprint write; ``forbidden``
+    when it is visible but the actor is not its creator. The rule is
+    ``access.container_write_reason``, the one both transports apply first.
+    """
+    project = projects.get_project(conn, project_id)
+    if project is None:
+        raise SprintCommandError("not_found", "no such project")
+    reason = access.container_write_reason(
+        conn,
+        actor,
+        kind="project",
+        container_id=project_id,
+        created_by=project["created_by"],
+    )
+    if reason == "not_visible":
+        raise SprintCommandError("not_found", "no such project")
+    if reason == "not_owner":
+        raise SprintCommandError(
+            "forbidden", "only the project creator may manage its sprints"
+        )
+    return project
+
+
+def _managed_sprint_or_refuse(
+    conn: sqlite3.Connection, actor: dict, sprint_id: int
+) -> dict:
+    """The sprint, if it exists and ``actor`` may manage its project's sprints."""
+    sprint = sprints.get_sprint(conn, sprint_id)
+    if sprint is None:
+        raise SprintCommandError("not_found", "no such sprint")
+    _managed_project_or_refuse(conn, actor, sprint["project_id"])
+    return sprint
 
 
 def _record(
@@ -68,7 +116,7 @@ def _record(
 def create_sprint(
     conn: sqlite3.Connection,
     *,
-    actor_id: int,
+    actor: dict,
     project_id: int,
     name: str,
     goal: str = "",
@@ -76,11 +124,12 @@ def create_sprint(
     end_date: str | None = None,
 ) -> dict:
     """Create a sprint atomically with its ``sprint_created`` event. The detail is
-    the sprint's name, so the feed reads "created <name>". Transport-shape
-    validation (a non-empty name, a project the actor may write) is the boundary's
-    job; the foreign key is the backstop and still raises
-    sqlite3.IntegrityError for an unknown project, unchanged."""
+    the sprint's name, so the feed reads "created <name>". Owns its gate: the
+    project must exist, be visible to ``actor`` and be theirs, checked inside this
+    transaction. A non-empty name stays the transport's guard — that is request
+    shape, not a trust boundary."""
     with db.transaction(conn, immediate=True):
+        _managed_project_or_refuse(conn, actor, project_id)
         sprint = sprints.create_sprint(
             conn,
             project_id=project_id,
@@ -92,7 +141,7 @@ def create_sprint(
         )
         _record(
             conn,
-            actor_id=actor_id,
+            actor_id=actor["id"],
             verb=VERB_CREATED,
             sprint_id=sprint["id"],
             detail=sprint["name"],
@@ -114,17 +163,15 @@ def _edit_summary(before: dict, after: dict) -> str:
 
 
 def update_sprint(
-    conn: sqlite3.Connection, *, actor_id: int, sprint_id: int, fields: dict
+    conn: sqlite3.Connection, *, actor: dict, sprint_id: int, fields: dict
 ) -> dict:
     """Edit a sprint's descriptive fields atomically with its ``sprint_edited``
     event. ``fields`` carries only the keys the caller set (the data layer's
-    partial-update rule). Raises ``SprintCommandError(404)`` if the sprint vanished
-    before the write. An edit that changes nothing records no event — a no-op is
-    not a lifecycle moment."""
+    partial-update rule). Owns its gate: ``not_found`` if the sprint vanished or
+    its project is hidden from ``actor``, ``forbidden`` for a non-creator. An edit
+    that changes nothing records no event — a no-op is not a lifecycle moment."""
     with db.transaction(conn, immediate=True):
-        before = sprints.get_sprint(conn, sprint_id)
-        if before is None:
-            raise SprintCommandError("not_found", "no such sprint")
+        before = _managed_sprint_or_refuse(conn, actor, sprint_id)
         after = sprints.update_sprint(conn, sprint_id, commit=False, **fields)
         if after is None:
             raise SprintCommandError("not_found", "no such sprint")
@@ -132,7 +179,7 @@ def update_sprint(
         if summary:
             _record(
                 conn,
-                actor_id=actor_id,
+                actor_id=actor["id"],
                 verb=VERB_EDITED,
                 sprint_id=sprint_id,
                 detail=summary,
@@ -140,19 +187,21 @@ def update_sprint(
         return after
 
 
-def start_sprint(conn: sqlite3.Connection, *, actor_id: int, sprint_id: int) -> dict:
+def start_sprint(conn: sqlite3.Connection, *, actor: dict, sprint_id: int) -> dict:
     """Move a sprint planned → active atomically with its ``sprint_started`` event.
     The command's ``BEGIN IMMEDIATE`` preserves the data layer's one-active-sprint
     serialization: two concurrent starts still cannot both win, and the loser's
-    ``SprintStateError`` propagates with nothing recorded. Raises
-    ``SprintCommandError(404)`` if the sprint vanished."""
+    ``SprintStateError`` propagates with nothing recorded. Owns its gate, checked
+    first: ``not_found`` if the sprint vanished or its project is hidden,
+    ``forbidden`` for a non-creator."""
     with db.transaction(conn, immediate=True):
+        _managed_sprint_or_refuse(conn, actor, sprint_id)
         started = sprints.start_sprint(conn, sprint_id, commit=False)
         if started is None:
             raise SprintCommandError("not_found", "no such sprint")
         _record(
             conn,
-            actor_id=actor_id,
+            actor_id=actor["id"],
             verb=VERB_STARTED,
             sprint_id=sprint_id,
             detail=started["name"],
@@ -160,17 +209,19 @@ def start_sprint(conn: sqlite3.Connection, *, actor_id: int, sprint_id: int) -> 
         return started
 
 
-def complete_sprint(conn: sqlite3.Connection, *, actor_id: int, sprint_id: int) -> dict:
+def complete_sprint(conn: sqlite3.Connection, *, actor: dict, sprint_id: int) -> dict:
     """Move a sprint active → completed atomically with its ``sprint_completed``
     event. A ``SprintStateError`` from an illegal transition propagates with
-    nothing recorded. Raises ``SprintCommandError(404)`` if the sprint vanished."""
+    nothing recorded. Owns its gate, checked first: ``not_found`` if the sprint
+    vanished or its project is hidden, ``forbidden`` for a non-creator."""
     with db.transaction(conn, immediate=True):
+        _managed_sprint_or_refuse(conn, actor, sprint_id)
         completed = sprints.complete_sprint(conn, sprint_id, commit=False)
         if completed is None:
             raise SprintCommandError("not_found", "no such sprint")
         _record(
             conn,
-            actor_id=actor_id,
+            actor_id=actor["id"],
             verb=VERB_COMPLETED,
             sprint_id=sprint_id,
             detail=completed["name"],
@@ -178,21 +229,24 @@ def complete_sprint(conn: sqlite3.Connection, *, actor_id: int, sprint_id: int) 
         return completed
 
 
-def delete_sprint(conn: sqlite3.Connection, *, actor_id: int, sprint_id: int) -> bool:
+def delete_sprint(conn: sqlite3.Connection, *, actor: dict, sprint_id: int) -> bool:
     """Delete a sprint atomically with its ``sprint_deleted`` event. Returns True if
     one was removed, False if it had already vanished (no event for a delete that
-    didn't happen). The caller enforces the no-issues precondition (409) and the
-    authorization gate. The name is read inside the transaction and preserved in the
-    audit detail, since the row is gone by the time the event is read."""
+    didn't happen). Owns its gate for a sprint that exists: ``not_found`` if its
+    project is hidden from ``actor``, ``forbidden`` for a non-creator. The caller
+    enforces the no-issues precondition (409). The name is read inside the
+    transaction and preserved in the audit detail, since the row is gone by the
+    time the event is read."""
     with db.transaction(conn, immediate=True):
         sprint = sprints.get_sprint(conn, sprint_id)
         if sprint is None:
             return False
+        _managed_project_or_refuse(conn, actor, sprint["project_id"])
         if not sprints.delete_sprint(conn, sprint_id, commit=False):
             return False
         _record(
             conn,
-            actor_id=actor_id,
+            actor_id=actor["id"],
             verb=VERB_DELETED,
             sprint_id=sprint_id,
             detail=sprint["name"],

@@ -1,5 +1,6 @@
 A page can start work. Label a page `playbook`, write its steps as a markdown
-checklist, and instantiate it:
+checklist, and instantiate it. Over MCP that is the full profile's tool; no seat
+profile carries it, so a seat with a profile asks its operator or uses REST:
 
 ```
 start_playbook(page_id, project_id=None, title=None)

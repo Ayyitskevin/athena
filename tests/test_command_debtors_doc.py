@@ -43,10 +43,11 @@ def test_the_bare_actor_rule_finds_known_debtors_and_spares_migrated_commands():
     """Canaries on both sides of the rule, so an AST pass that matches nothing
     (or everything) fails here rather than rendering a well-formed lie."""
     debtors = _load_generator().bare_actor_commands()
-    assert "create_sprint" in debtors["athena.aegis.sprint_commands"]
     assert "mint_token" in debtors["athena.core.token_commands"]
+    assert "create_project" in debtors["athena.aegis.project_commands"]
     # Migrated: these take the resolved actor and own their gate.
     assert "athena.mentor.page_commands" not in debtors
+    assert "athena.aegis.sprint_commands" not in debtors  # paid in G1
     assert "athena.aegis.comment_commands" in debtors  # only its automation entry
     assert debtors["athena.aegis.comment_commands"] == ["create_comment_as_automation"]
     assert "set_blocked_close_policy" not in debtors["athena.aegis.project_commands"]
