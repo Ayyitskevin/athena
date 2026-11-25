@@ -119,7 +119,7 @@ from athena.web import projects as web_projects
 from athena.web import work_context as web_work_context
 from athena.web import init_templates, palette as web_palette, router as web_router
 from athena import middleware as athena_middleware
-from athena.agent_openapi import AGENT_OPENAPI_URL, Transport, build_agent_openapi
+from athena.agent_openapi import AGENT_OPENAPI_URL, AgentDocument, Transport
 from athena.middleware import (
     SECURITY_HEADERS,
     DeploymentBoundaryMiddleware,
@@ -1025,15 +1025,13 @@ def create_app(
     # agent's token can call, with the headers and refusal body the middleware
     # and handlers enforce. Registered exactly as FastAPI registers
     # /openapi.json — a plain route, GET and HEAD, no dependency — so it has the
-    # same access rule: public product metadata. Built once, on first request,
-    # from the finished app; /openapi.json itself is left untouched.
-    agent_document: dict | None = None
+    # same access rule: public product metadata. Built once from the finished
+    # app: athena-serve starts the build when its listener is bound (ops.py),
+    # any other server on the first request; /openapi.json is left untouched.
+    app.state.agent_openapi = AgentDocument(app, AGENT_TRANSPORT)
 
     def agent_openapi(request: Request) -> JSONResponse:
-        nonlocal agent_document
-        if agent_document is None:
-            agent_document = build_agent_openapi(app, AGENT_TRANSPORT)
-        return JSONResponse(agent_document)
+        return JSONResponse(request.app.state.agent_openapi.get())
 
     app.add_route(AGENT_OPENAPI_URL, agent_openapi, include_in_schema=False)
 

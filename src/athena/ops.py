@@ -1181,6 +1181,9 @@ def _serve_bound(application, **options) -> None:
             # the process from inside, after the app's shutdown has run.
             await super().startup(sockets=sockets)
             await application.state.background.start()
+            # The agent OpenAPI document takes seconds to build; it is built
+            # now, beside the first requests, not by the first agent to ask.
+            application.state.agent_openapi.start()
 
     # Athena's request log has already logged an unhandled error, once and
     # with its request id (H15); the server's own copy of it is dropped.

@@ -17,20 +17,25 @@ import copy
 import json
 from pathlib import Path
 import re
+import socket
 import sys
+import threading
 from typing import Any
 
-from fastapi import FastAPI, Form
+from fastapi import Depends, FastAPI, Form
 from fastapi.openapi.models import OpenAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.testclient import TestClient
 import jsonschema
 import pytest
+import uvicorn
 
-from athena import agent_openapi, config, middleware
+from support import ADMIN, bearer, bootstrap, mint_token
+
+from athena import agent_openapi, config, middleware, ops
 from athena.agent_openapi import AGENT, BROWSER, DOCUMENT, AGENT_OPENAPI_URL
-from athena.core import identity
+from athena.core import identity, tokens
 from athena.core.refusal_codes import REFUSAL_CODES
 from athena.main import AGENT_TRANSPORT, create_app
 
@@ -48,6 +53,11 @@ _RUN_REFS = {
 }
 _KEY_REF = "#/components/parameters/IdempotencyKey"
 _IF_MATCH_REF = "#/components/parameters/IfMatch"
+
+
+def _required(security: list[dict[str, Any]]) -> bool:
+    """A bearer requirement with no anonymous alternative, scoped or not."""
+    return bool(security) and all(list(entry) == ["bearerAuth"] for entry in security)
 
 
 def _shape(path: str) -> str:
@@ -197,13 +207,15 @@ def test_the_bearer_scheme_is_declared_where_a_credential_is_read(built):
         "scheme": "bearer",
     }
     assert _operation(agent, "GET", "/desk")["security"] == _BEARER
-    assert _operation(agent, "POST", "/issues")["security"] == _BEARER
+    assert _operation(agent, "POST", "/issues")["security"] == [
+        {"bearerAuth": ["issue:write"]}
+    ]
     assert _operation(agent, "GET", "/issues")["security"] == _OPTIONAL
     assert _operation(agent, "POST", "/users")["security"] == _OPTIONAL  # bootstrap
     assert _operation(agent, "GET", "/healthz")["security"] == []
     assert _operation(agent, "POST", "/forge/{source_name}")["security"] == []
     # A dependency that calls current_actor itself, rather than through Depends.
-    assert _operation(agent, "GET", "/fleet/active-work")["security"] == _BEARER
+    assert _required(_operation(agent, "GET", "/fleet/active-work")["security"])
 
     routes = _route_index(app)
     for method, path, operation in _operations(agent):
@@ -213,7 +225,7 @@ def test_the_bearer_scheme_is_declared_where_a_credential_is_read(built):
         assert not _header_names(operation) & {"authorization", "x-athena-actor"}
         calls = agent_openapi._dependency_calls(routes[(method, path)].dependant)
         if identity.current_actor in calls:
-            assert operation["security"] == _BEARER, (method, path)
+            assert _required(operation["security"]), (method, path)
 
 
 def test_declared_security_matches_how_routes_answer_without_a_credential(
@@ -234,7 +246,7 @@ def test_declared_security_matches_how_routes_answer_without_a_credential(
             if required:
                 continue
             status = client.get(path).status_code
-            if operation["security"] == _BEARER:
+            if _required(operation["security"]):
                 assert status == 401, (path, status)
             else:
                 assert status != 401, (path, status)
@@ -583,3 +595,348 @@ def test_openapi_json_is_unchanged_byte_for_byte(tmp_path):
         )
     ).body
     assert before == after == expected
+
+
+# --- scopes, 404 and 428 per operation (G5) -----------------------------------------
+
+
+def _scopes(operation: dict[str, Any]) -> list[str]:
+    return sorted(
+        {scope for entry in operation["security"] for scope in entry.get(_SCHEME, [])}
+    )
+
+
+_SCHEME = "bearerAuth"
+
+
+def _probe_url(path: str, operation: dict[str, Any]) -> str:
+    """The path with every parameter naming nothing that exists."""
+    types = {
+        p["name"]: p.get("schema", {}).get("type")
+        for p in operation.get("parameters", [])
+        if p.get("in") == "path"
+    }
+    for name in _TEMPLATE.findall(path):
+        bare = name[1:-1]
+        path = path.replace(
+            name, "999999" if types.get(bare) == "integer" else "no-such-thing"
+        )
+    return path
+
+
+def test_each_operation_names_the_token_scope_it_needs(built):
+    _, _, agent = built
+    assert _scopes(_operation(agent, "POST", "/issues")) == ["issue:write"]
+    assert _scopes(_operation(agent, "PATCH", "/pages/{page_id}")) == ["docs:write"]
+    # Scoped by a check in the endpoint, and by one written out in a dependency.
+    assert _scopes(_operation(agent, "POST", "/fleet/seats")) == ["admin"]
+    assert _scopes(_operation(agent, "GET", "/fleet/active-work")) == ["admin"]
+    # Any one of the write scopes: one requirement each.
+    assert _operation(agent, "POST", "/filters")["security"] == [
+        {_SCHEME: ["issue:write"]},
+        {_SCHEME: ["docs:write"]},
+        {_SCHEME: ["admin"]},
+    ]
+    # A read takes any token; an optional credential stays optional.
+    assert _operation(agent, "GET", "/desk")["security"] == _BEARER
+    assert _operation(agent, "GET", "/issues")["security"] == _OPTIONAL
+    # The 403 of a scoped operation names the refusal and the scope.
+    refused = _operation(agent, "POST", "/issues")["responses"]["403"]
+    assert "`scope_denied`" in refused["description"]
+    assert "`issue:write`" in refused["description"]
+    assert _refusal_body(agent, refused)
+    unscoped = _operation(agent, "GET", "/desk")["responses"]["403"]
+    assert unscoped == {"$ref": "#/components/responses/Refusal403"}
+
+
+def _scope_checked_in_endpoint(route: Any) -> bool:
+    """Whether the route's scope is checked only in its endpoint's body."""
+    reader = agent_openapi.CodeReader()
+    calls = agent_openapi._dependency_calls(route.dependant)
+    if calls & set(agent_openapi._SCOPED_DEPENDENCIES):
+        return False
+    return not any(
+        agent_openapi._unconditional_scopes(call, reader)
+        for call in calls
+        if agent_openapi.inspect.isfunction(call)
+    )
+
+
+def _after_a_return(actor: dict, early: bool) -> dict:
+    if early:
+        return actor
+    identity.require_admin(actor)
+    return actor
+
+
+def _in_a_branch(actor: dict, other: bool) -> dict:
+    if other:
+        identity.require_token_scope(actor, tokens.DOCS_WRITE_SCOPE)
+    return actor
+
+
+def _before_anything(actor: dict) -> dict:
+    identity.require_token_scope(actor, tokens.DOCS_WRITE_SCOPE)
+    return actor
+
+
+def test_only_a_scope_every_request_meets_is_a_requirement():
+    reader = agent_openapi.CodeReader()
+    assert agent_openapi._unconditional_scopes(_before_anything, reader) == {
+        "docs:write"
+    }
+    # Checked after a return some requests take, or inside a branch: not every
+    # request needs it.
+    assert agent_openapi._unconditional_scopes(_after_a_return, reader) == set()
+    assert agent_openapi._unconditional_scopes(_in_a_branch, reader) == set()
+
+
+def test_admin_holds_every_scope_so_a_route_needing_it_needs_only_it():
+    app = FastAPI()
+
+    @app.post("/both")
+    def both(actor: dict = Depends(identity.issue_write_actor)) -> dict:
+        identity.require_admin(actor)
+        return {}
+
+    (route,) = [r for r in app.routes if getattr(r, "path", None) == "/both"]
+    assert agent_openapi.required_scopes(route) == ("admin",)
+
+
+def test_declared_scopes_match_how_routes_refuse_a_read_token(tmp_path, built):
+    """Behaviour, not code: a token holding only ``read`` is refused with
+    ``scope_denied`` by every operation that declares a scope, and by no other,
+    but for the two that check a scope only when the caller reads another
+    account. A scope checked in the endpoint's body is reached after FastAPI
+    validates the body, so an empty body answers 422 there first."""
+    app, _, agent = built
+    routes = _route_index(app)
+    served = create_app(tmp_path / "scopes.db", token_rate_limit_per_minute=100_000)
+    wrong, undeclared, checked = [], [], 0
+    with TestClient(served) as client:
+        bootstrap(client)
+        read = bearer(mint_token(client, scopes=["read"]))
+        for method, path, operation in _operations(agent):
+            if method == "HEAD":
+                continue
+            body = {} if method in {"POST", "PUT", "PATCH"} else None
+            answer = client.request(
+                method, _probe_url(path, operation), headers=read, json=body
+            )
+            code = answer.json().get("code") if answer.status_code >= 400 else None
+            if _scopes(operation):
+                checked += 1
+                in_body = _scope_checked_in_endpoint(routes[(method, path)])
+                if code != "scope_denied" and not (
+                    in_body and code == "validation_error"
+                ):
+                    wrong.append((method, path, answer.status_code, code))
+            elif code == "scope_denied":
+                undeclared.append((method, path))
+    assert wrong == []
+    assert sorted(undeclared) == [
+        ("GET", "/users/{user_id}"),
+        ("GET", "/users/{user_id}/budget"),
+    ]
+    assert checked > 100
+
+
+def test_a_route_that_answers_404_declares_it(tmp_path, built):
+    """Behaviour, not code: every operation that answers 404 for a target that
+    does not exist declares 404, and only operations that can refuse so do."""
+    _, _, agent = built
+    served = create_app(tmp_path / "missing.db", token_rate_limit_per_minute=100_000)
+    answered = 0
+    with TestClient(served) as client:
+        bootstrap(client)
+        for method, path, operation in _operations(agent):
+            if method == "HEAD" or "{" not in path:
+                continue
+            body = {} if method in {"POST", "PUT", "PATCH"} else None
+            status = client.request(
+                method, _probe_url(path, operation), headers=ADMIN, json=body
+            ).status_code
+            if status == 404:
+                answered += 1
+                assert "404" in operation["responses"], (method, path)
+    assert answered > 90
+    assert "404" in _operation(agent, "GET", "/issues/{ref}")["responses"]
+    assert "404" in _operation(agent, "PATCH", "/issues/{issue_id}")["responses"]
+    # Not every path parameter names a thing that may be missing: an unknown
+    # idempotency key reads as unknown, and a signed callback's source refuses
+    # its signature.
+    assert "404" not in _operation(agent, "GET", "/idempotency/{key}")["responses"]
+    assert "404" not in _operation(agent, "GET", "/healthz")["responses"]
+
+
+def test_a_route_that_can_require_a_precondition_declares_428(tmp_path, built):
+    _, _, agent = built
+    for method, path in (
+        ("PATCH", "/issues/{issue_id}"),
+        ("POST", "/issues/{issue_id}/claim"),
+        ("PUT", "/projects/{project_id}/policy"),
+    ):
+        responses = _operation(agent, method, path)["responses"]
+        assert "428" in responses, (method, path)
+        assert responses["428"] == {"$ref": "#/components/responses/Refusal428"}
+    assert "428" not in _operation(agent, "GET", "/issues")["responses"]
+    described = agent["components"]["responses"]["Refusal428"]["description"]
+    assert "`precondition_required`" in described
+    assert "`lease_generation_required`" in described
+
+    # And the route does answer it.
+    with TestClient(create_app(tmp_path / "precondition.db")) as client:
+        bootstrap(client)
+        project = client.post(
+            "/projects", json={"name": "Ops", "key": "OPS"}, headers=ADMIN
+        ).json()
+        policy = client.put(
+            f"/projects/{project['id']}/policy",
+            json={"block_agent_closes_when_blocked": True},
+            headers=ADMIN,
+        )
+    assert policy.status_code == 428, policy.text
+    assert policy.json()["code"] == "precondition_required"
+
+
+def test_the_facts_index_reads_each_tree_once(built):
+    """The build asks four questions of every function it follows; each tree
+    is walked for them once."""
+    app, _, _ = built
+    reader = agent_openapi.CodeReader()
+    walked: list[Any] = []
+    real = agent_openapi.ast.walk
+
+    def counting(node):
+        walked.append(node)
+        return real(node)
+
+    routes = [
+        route
+        for route, kind in agent_openapi.classified_routes(app, AGENT_TRANSPORT)
+        if kind == AGENT
+    ]
+    agent_openapi.ast.walk = counting
+    try:
+        for route in routes[:40]:
+            agent_openapi.reads_if_match(route, reader)
+            agent_openapi.sets_etag(route, reader)
+            agent_openapi.refuses_missing(route, reader)
+            agent_openapi.refuses_precondition(route, reader)
+    finally:
+        agent_openapi.ast.walk = real
+    trees = [node for node in walked if isinstance(node, agent_openapi.ast.Module)]
+    assert trees and len(trees) == len({id(tree) for tree in trees})
+
+
+# --- built once, at start (G5) ------------------------------------------------------
+
+
+def test_the_document_is_built_once_and_served_from_then_on(tmp_path, monkeypatch):
+    builds: list[int] = []
+    real = agent_openapi.build_agent_openapi
+
+    def counted(app, transport):
+        builds.append(1)
+        return real(app, transport)
+
+    monkeypatch.setattr(agent_openapi, "build_agent_openapi", counted)
+    app = create_app(tmp_path / "once.db")
+    document = app.state.agent_openapi
+    assert not document.built
+    document.start().join(timeout=60)
+    assert document.built and builds == [1]
+    with TestClient(app) as client:
+        first = client.get(AGENT_OPENAPI_URL)
+        second = client.get(AGENT_OPENAPI_URL)
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json() == document.get()
+    assert builds == [1]
+
+
+def test_a_request_during_the_build_waits_for_it(tmp_path, monkeypatch):
+    gate = threading.Event()
+    real = agent_openapi.build_agent_openapi
+    builds: list[int] = []
+
+    def slow(app, transport):
+        builds.append(1)
+        gate.wait(timeout=30)
+        return real(app, transport)
+
+    monkeypatch.setattr(agent_openapi, "build_agent_openapi", slow)
+    app = create_app(tmp_path / "wait.db")
+    thread = app.state.agent_openapi.start()
+    answers: list[int] = []
+    with TestClient(app) as client:
+        asking = threading.Thread(
+            target=lambda: answers.append(client.get(AGENT_OPENAPI_URL).status_code)
+        )
+        asking.start()
+        asking.join(timeout=0.5)
+        assert answers == []  # still waiting on the build
+        gate.set()
+        asking.join(timeout=60)
+    thread.join(timeout=60)
+    assert answers == [200] and builds == [1]
+
+
+def test_a_build_that_fails_in_the_thread_is_retried_by_the_first_request(
+    tmp_path, monkeypatch, caplog
+):
+    real = agent_openapi.build_agent_openapi
+    calls: list[int] = []
+
+    def flaky(app, transport):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+        return real(app, transport)
+
+    monkeypatch.setattr(agent_openapi, "build_agent_openapi", flaky)
+    app = create_app(tmp_path / "flaky.db")
+    app.state.agent_openapi.start().join(timeout=60)
+    assert not app.state.agent_openapi.built
+    assert "failed to build" in caplog.text
+    with TestClient(app) as client:
+        assert client.get(AGENT_OPENAPI_URL).status_code == 200
+    assert calls == [1, 1]
+
+
+def test_athena_serve_starts_the_build_once_its_listener_is_bound(
+    tmp_path, monkeypatch
+):
+    app = create_app(tmp_path / "serve.db", loops_after_bind=True)
+    starts: list[bool] = []
+    seen: list[bool] = []
+
+    def start():
+        starts.append(True)
+        return threading.Thread(target=lambda: None)
+
+    monkeypatch.setattr(app.state.agent_openapi, "start", start)
+
+    async def serve_nothing(server) -> None:
+        seen.append(bool(starts))
+
+    monkeypatch.setattr(uvicorn.Server, "main_loop", serve_nothing)
+    with socket.socket() as free:
+        free.bind(("127.0.0.1", 0))
+        port = free.getsockname()[1]
+    ops._serve_bound(app, host="127.0.0.1", port=port, lifespan="on")
+    # Started once, once the listener was bound and before serving.
+    assert starts == [True] and seen == [True]
+
+
+def test_a_server_that_never_binds_never_starts_the_build(tmp_path, monkeypatch):
+    app = create_app(tmp_path / "taken.db", loops_after_bind=True)
+    starts: list[int] = []
+    monkeypatch.setattr(app.state.agent_openapi, "start", lambda: starts.append(1))
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        with pytest.raises(SystemExit):
+            ops._serve_bound(
+                app, host="127.0.0.1", port=taken.getsockname()[1], lifespan="on"
+            )
+    assert starts == []
