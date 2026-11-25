@@ -85,6 +85,35 @@ def like_contains(value: str) -> str:
     return _like_contains(value)
 
 
+def headings_for_ids(
+    conn: sqlite3.Connection, issue_ids: set[int]
+) -> dict[int, dict[str, str | None]]:
+    """The key and title of each existing issue in ``issue_ids``, for a view
+    that heads a group of rows with what they are about (U8). One read for
+    the whole set; a missing id is absent. The caller has already decided
+    the reader may see these issues."""
+    if not issue_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in issue_ids)
+    rows = conn.execute(
+        "SELECT i.id, i.title, i.project_seq, p.key AS project_key "
+        "FROM issues i LEFT JOIN projects p ON p.id = i.project_id "
+        f"WHERE i.id IN ({placeholders})",
+        tuple(sorted(issue_ids)),
+    ).fetchall()
+    return {
+        int(row["id"]): {
+            "key": (
+                f"{row['project_key']}-{row['project_seq']}"
+                if row["project_key"] and row["project_seq"] is not None
+                else None
+            ),
+            "title": row["title"],
+        }
+        for row in rows
+    }
+
+
 def priorities_for_ids(conn: sqlite3.Connection, issue_ids: set[int]) -> dict[int, str]:
     """Return the canonical priority for each existing issue in ``issue_ids``.
 

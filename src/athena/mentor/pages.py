@@ -74,6 +74,20 @@ def create_page(
     return page
 
 
+def titles_for_ids(conn: sqlite3.Connection, page_ids: set[int]) -> dict[int, str]:
+    """The title of each existing page in ``page_ids``, in one read, for a
+    view that heads rows with what they are about (U8). A missing id is
+    absent. The caller has already decided the reader may see these pages."""
+    if not page_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in page_ids)
+    rows = conn.execute(
+        f"SELECT id, title FROM pages WHERE id IN ({placeholders})",
+        tuple(sorted(page_ids)),
+    ).fetchall()
+    return {int(row["id"]): row["title"] for row in rows}
+
+
 def get_page(conn: sqlite3.Connection, page_id: int) -> dict | None:
     row = conn.execute("SELECT * FROM pages WHERE id = ?", (page_id,)).fetchone()
     return dict(row) if row else None

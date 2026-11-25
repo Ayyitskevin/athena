@@ -15,29 +15,52 @@
 </div>
 
 {% if items %}
-<ul class="inbox-list">
-    {% for it in items %}
-    {# A completion's report renders through the shared partial (U9), below the
-       link rather than inside it, never as its raw payload. #}
-    {% set completion = it | completion_parts if it.verb == "claim_completed" else none %}
-    <li class="{% if not it.read_at %}unread{% endif %}">
-        <a href="{{ it.href }}">
-            {{ it.actor_name }} {{ it.verb }} {{ it.target_kind }} #{{ it.target_id }}{% if completion is not none %}{% if completion.header %} — {{ completion.header }}{% endif %}{% elif it.detail %} — {{ it.detail }}{% endif %}
-        </a>
-        {% if it.target_state %}
-        <span class="chip" data-tone="neutral">{{ {"archived": "target archived", "completed_by_you": "you completed this", "closed": "target closed"}[it.target_state] }}</span>
-        {% endif %}
-        <span class="muted">{{ it.event_at }}</span>
-        {% if not it.read_at %}
-        <form method="post" action="/inbox/{{ it.id }}/read" class="inline">
-            {% include "partials/csrf.html" %}
-            <button type="submit" class="button small">Mark read</button>
-        </form>
-        {% endif %}
-        {% if completion is not none %}{{ show_report(completion.report) }}{% endif %}
-    </li>
+{# Filter by kind (U8). The counts are of the rows this page loaded. #}
+<div class="search-scope" aria-label="Filter by kind">
+    <a href="/inbox" class="search-scope-tab {{ 'active' if not kind }}">All {{ items | length }}</a>
+    {% for name, label in kinds %}
+    <a href="/inbox?kind={{ name }}" class="search-scope-tab {{ 'active' if kind == name }}">{{ label }} {{ kind_counts[name] }}</a>
     {% endfor %}
-</ul>
+</div>
+
+{% for group in groups %}
+{# One panel per issue or page, headed by what it is, not by a number. #}
+<section class="panel">
+    <div class="panel-head">
+        <h2>
+            <a href="{{ group.href }}">{% if group.key %}<span class="issue-id">{{ group.key }}</span> {% endif %}{{ group.title or (group.kind ~ " #" ~ group.id) }}</a>
+        </h2>
+        {% if group.unread %}
+        <span class="chip" data-tone="accent">{{ group.unread }} unread</span>
+        {% endif %}
+    </div>
+    <ul class="inbox-list">
+        {% for it in group.rows %}
+        {# A completion's report renders through the shared partial (U9), below the
+           line rather than inside it, never as its raw payload. #}
+        {% set completion = it | completion_parts if it.verb == "claim_completed" else none %}
+        <li class="{% if not it.read_at %}unread{% endif %}">
+            <span>
+                {{ it.actor_name }} {{ it.words }} this {{ it.target_kind }}{% if completion is not none %}{% if completion.header %} — {{ completion.header }}{% endif %}{% elif it.detail_text %} — {{ it.detail_text }}{% endif %}
+            </span>
+            {% if it.target_state %}
+            <span class="chip" data-tone="neutral">{{ {"archived": "target archived", "completed_by_you": "you completed this", "closed": "target closed"}[it.target_state] }}</span>
+            {% endif %}
+            <span class="muted">{{ it.event_at }}</span>
+            {% if not it.read_at %}
+            <form method="post" action="/inbox/{{ it.id }}/read" class="inline">
+                {% include "partials/csrf.html" %}
+                <button type="submit" class="button small">Mark read</button>
+            </form>
+            {% endif %}
+            {% if completion is not none %}{{ show_report(completion.report) }}{% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+{% else %}
+<p class="empty-state">Nothing of this kind in your inbox. <a href="/inbox">Show everything</a>.</p>
+{% endfor %}
 {% else %}
 <p class="empty-state">Nothing in your inbox yet. Watch an issue or page — or get assigned
     one — to receive updates here.</p>
