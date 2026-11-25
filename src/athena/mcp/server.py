@@ -757,6 +757,11 @@ def _budget_cuts(
                 ("body",), lambda kept: _page_reader(result["id"], start + kept)
             )
         ]
+    if name == "open_my_notebook" and _is_page(result.get("page")):
+        # The notebook comes back whole, and a notebook grows: its body is cut
+        # like any page's, and get_page reads on.
+        page_id = result["page"]["id"]
+        return [results.Cut(("page", "body"), lambda kept: _page_reader(page_id, kept))]
     if name == "get_issue_prior_text" and isinstance(result.get("prior_body"), str):
         issue_id, event_id = result["issue_id"], result["event_id"]
         return [

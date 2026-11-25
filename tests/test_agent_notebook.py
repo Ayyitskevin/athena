@@ -117,6 +117,74 @@ def test_the_mcp_tool_opens_the_same_notebook(tmp_path):
             tc.__exit__(None, None, None)
 
 
+def test_the_knowledge_profile_opens_and_appends_to_its_notebook(tmp_path):
+    # WHY (G8): the desk tells every seat how a notebook is made, and
+    # `seat+knowledge` could edit one and not create it: the tool that makes
+    # it was in `full` only. The profile that edits pages now carries both.
+    import asyncio
+    import json
+
+    from athena.mcp import server as mcp_server
+    from athena.mcp.client import AthenaClient
+
+    def call(server, name, arguments):
+        content, _ = asyncio.run(server.call_tool(name, arguments))
+        return json.loads(content[0].text)
+
+    app, _ = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        api = AthenaClient(client=TestClient(app, headers=_bearer(agent)))
+        scopes = frozenset(agent["token"]["scopes"])
+        server = mcp_server.build_server(
+            api, scopes=scopes, profile=mcp_server.PROFILES["seat+knowledge"]
+        )
+
+        opened = call(server, "open_my_notebook", {})
+        assert opened["created"] is True
+        page = opened["page"]
+        edited = call(
+            server,
+            "update_page",
+            {
+                "page_id": page["id"],
+                "body": "Left for the next session.",
+                "if_match": opened["_etag"],
+                "idempotency_key": "note-1",
+            },
+        )
+        assert edited["id"] == page["id"]
+        lane = _notebook_lane(c, agent)
+        assert lane["page_id"] == page["id"]
+        assert lane["excerpt"] == "Left for the next session."
+
+        # A notebook grows. Past the response budget the answer is cut and
+        # names the call that reads on, which this profile carries.
+        long_body = "".join(f"note {n}: kept for later.\n" for n in range(4_000))
+        call(
+            server,
+            "update_page",
+            {"page_id": page["id"], "body": long_body, "idempotency_key": "note-2"},
+        )
+        again = call(server, "open_my_notebook", {})
+        assert again["created"] is False
+        pieces, mark = [again["page"]["body"]], again["_truncated"]["page.body"]
+        assert mark["total_chars"] == len(long_body)
+        while mark is not None and mark["next"] is not None:
+            assert mark["next"]["tool"] == "get_page"
+            more = call(server, "get_page", mark["next"]["arguments"])
+            pieces.append(more["body"])
+            mark = (more.get("_truncated") or {}).get("body")
+        assert "".join(pieces) == long_body
+
+        seat = mcp_server.build_server(
+            api, scopes=scopes, profile=mcp_server.PROFILES["seat"]
+        )
+        names = {tool.name for tool in asyncio.run(seat.list_tools())}
+        assert not names & {"open_my_notebook", "update_page"}
+
+
 def test_a_taken_space_key_does_not_block_the_notebook(tmp_path):
     app, _ = _app(tmp_path)
     with TestClient(app) as c:

@@ -41,7 +41,7 @@ WITH_DOCS = ["read", "issue:write", "docs:write"]
 # get_issue_comment to seat)
 CASES = [
     pytest.param(ISSUE_ONLY, "seat", 28, id="issue-token"),
-    pytest.param(WITH_DOCS, "seat+knowledge", 39, id="docs-token"),
+    pytest.param(WITH_DOCS, "seat+knowledge", 40, id="docs-token"),
 ]
 
 

@@ -163,7 +163,7 @@ def test_the_surface_sizes_are_unchanged():
     # H6 added get_issue_comment to seat; H14 two admin tools to the full profile
     assert len(mcp_server.declared()) == 146
     assert len(mcp_server.PROFILES["seat"]) == 28
-    assert len(mcp_server.PROFILES["seat+knowledge"]) == 39
+    assert len(mcp_server.PROFILES["seat+knowledge"]) == 40
     assert len(mcp_server.PROFILES["conductor"]) == 41
     assert mcp_server.RESPONSE_BUDGET_EXCEPTIONS == {"get_issue_work_context": 32_000}
 
