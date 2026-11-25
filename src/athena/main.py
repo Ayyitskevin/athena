@@ -7,7 +7,6 @@ No global app state, no surprises.
 
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
 import hashlib
 import logging
@@ -27,6 +26,8 @@ from fastapi.templating import Jinja2Templates
 from starlette._utils import get_route_path
 
 from athena import __version__ as athena_version
+from athena import background
+from athena.request_log import RequestLogMiddleware
 from athena import config
 from athena.aegis import api as aegis_api
 from athena.aegis import budget_exhaustion_commands
@@ -335,6 +336,7 @@ def create_app(
     network_mode: str | None = None,
     allowed_authorities: tuple[str, ...] | None = None,
     expected_server: tuple[str, int] | None = None,
+    loops_after_bind: bool = False,
     max_request_body_bytes: int | None = None,
     token_rate_limit_per_minute: int | None = None,
     anon_rate_limit_per_minute: int | None = None,
@@ -424,41 +426,35 @@ def create_app(
         _log_cookie_notice(
             launched=config.SERVED_BY_ATHENA_SERVE and expected_server is not None
         )
-        # Start the single in-process webhook delivery loop (unless disabled — e.g.
-        # in tests, or in extra worker processes that must not double-deliver).
-        delivery_task = (
-            asyncio.create_task(webhooks.delivery_loop(resolved_db))
-            if config.WEBHOOK_DELIVERY_ENABLED
-            else None
+        # The two background loops: webhook delivery, and the automation rules
+        # engine that drains new activity events and fires matching rules. Each
+        # setting can turn its loop off (tests do). They run in one process per
+        # deployment, the one holding the lock beside the database (H13).
+        loops = background.Loops(
+            resolved_db,
+            {
+                "webhook delivery": (
+                    webhooks.delivery_loop if config.WEBHOOK_DELIVERY_ENABLED else None
+                ),
+                "automation": (
+                    aegis_automation.process_loop if config.AUTOMATION_ENABLED else None
+                ),
+            },
         )
-        # The automation rules engine: a sibling in-process loop that drains new activity
-        # events and fires matching rules' in-app actions. Same single-loop caveat as
-        # webhooks (one per deployment, off in tests).
-        automation_task = (
-            asyncio.create_task(aegis_automation.process_loop(resolved_db))
-            if config.AUTOMATION_ENABLED
-            else None
-        )
-        _logger.info(
-            "background loops: webhook delivery %s, automation %s",
-            "started" if delivery_task else "disabled",
-            "started" if automation_task else "disabled",
-        )
+        app.state.background = loops
+        # A server that binds a listener starts them itself once it is bound:
+        # a start that then fails on the port has run nothing.
+        if not loops_after_bind:
+            await loops.start()
+        # From here the file exists and is this release's: a connection that
+        # finds it gone refuses, where SQLite would create an empty one (H16).
+        db.begin_serving(resolved_db)
         try:
             yield
         finally:
+            db.end_serving(resolved_db)
             # Shutdown: stop the background loops cleanly.
-            tasks = tuple(
-                task for task in (delivery_task, automation_task) if task is not None
-            )
-            for task in tasks:
-                task.cancel()
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for result in results:
-                if isinstance(result, BaseException) and not isinstance(
-                    result, asyncio.CancelledError
-                ):
-                    raise result
+            await loops.stop()
 
     app = FastAPI(title="Athena", lifespan=lifespan, docs_url=None, redoc_url=None)
     # The footer states which build rendered the page. Not decoration: a
@@ -882,6 +878,9 @@ def create_app(
         allowed_authorities=resolved_authorities,
         expected_server=expected_server,
     )
+    # Outside even the boundary: every request gets an id and one log line,
+    # a refused Host included (H15). It does no work but that.
+    app.add_middleware(RequestLogMiddleware)
 
     # Mount web foundation (static + Jinja templates + page router).
     # This is the only place the web layer is wired. Do not change /healthz or lifespan.
@@ -1059,12 +1058,21 @@ def create_app(
                 db.migration_status(conn)
             finally:
                 conn.close()
-        except (OSError, sqlite3.Error, db.MigrationIntegrityError):
+        except (OSError, sqlite3.Error, db.MigrationIntegrityError) as exc:
+            # The probe's caller is told only that it is unavailable; why goes
+            # to the operator's log, once per change of reason (H16).
+            refusals.note_database(request.app, f"{type(exc).__name__}: {exc}")
             return JSONResponse(
                 {"status": "error", "database": "unavailable", "code": "unavailable"},
                 status_code=503,
             )
-        return {"status": "ok", "database": "ok"}
+        refusals.note_database(request.app, None)
+        return {
+            "status": "ok",
+            "database": "ok",
+            # Whether this process runs the background loops (H13).
+            "background_loops": request.app.state.background.state,
+        }
 
     return app
 

@@ -298,7 +298,9 @@ def test_only_the_middleware_is_reached_through_the_app_and_unmapped(real_index)
         and select_tests.valve(path) is None
         and not any(select_tests.matches(e.source, path) for e in select_tests.TEST_MAP)
     )
-    assert unmapped == ["athena.middleware"]
+    # The request log (H15) wraps every request as the middleware does: a change
+    # to it knowingly runs the full suite.
+    assert unmapped == ["athena.middleware", "athena.request_log"]
 
 
 # --- real one-file changes ---------------------------------------------------

@@ -252,6 +252,8 @@ src/athena/
   config.py  env-driven settings: the SETTINGS registry (ATHENA_DB, ...)
   main.py    app factory: create_app(), deployment boundary, health, wiring
   middleware.py  request middleware the app factory installs
+  request_log.py  the outermost layer: one log line per request, X-Request-Id
+  background.py  which process runs the webhook and automation loops (a lock)
   agent_openapi.py  the agent-facing OpenAPI document (/openapi-agent.json)
   guide.py   seeds the Field Guide as a space
   demo.py    athena-demo: a disposable, seeded review workspace

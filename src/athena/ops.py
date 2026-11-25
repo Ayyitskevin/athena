@@ -6,6 +6,7 @@ import argparse
 import contextlib
 from dataclasses import dataclass
 import json
+import logging
 import os
 from pathlib import Path
 import shlex
@@ -18,7 +19,17 @@ import time
 from typing import Any, Callable, Iterator, TextIO
 from datetime import datetime, timezone
 
-from athena.core import activity_chain, attachments, db, deployment
+from athena import background
+from athena.core import (
+    activity_chain,
+    attachments,
+    db,
+    deployment,
+    maintenance_commands,
+    token_commands,
+    tokens,
+    users,
+)
 from athena.core.backup import (
     backup_database,
     prune_backup_directory,
@@ -626,10 +637,12 @@ def _shared_directory(directory: Path) -> str | None:
 
 def _athena_entries(database: Path, attach_dir: Path | None) -> set[str]:
     """The exact names Athena keeps beside its database: the database, its
-    ``-wal``, ``-shm`` and ``-journal`` files, the copy a remedy keeps, and the
-    configured attachment directory when it lives there."""
+    ``-wal``, ``-shm`` and ``-journal`` files, the copy a remedy keeps, the
+    lock of the background loops, and the configured attachment directory when
+    it lives there."""
     names = {database.name + suffix for suffix in ("", "-wal", "-shm", "-journal")}
     names.add(database.name + ".kept")
+    names.add(database.name + background.LOCK_SUFFIX)
     if attach_dir is not None and attach_dir.absolute().parent == database.parent:
         names.add(attach_dir.name)
     return names
@@ -1147,9 +1160,42 @@ def _answer_without_delay(fd: int) -> None:
         listener.close()
 
 
-def _run_server(*, host: str, port: int, fd: int | None) -> None:
-    import uvicorn
+def _not_an_app_error(record: logging.LogRecord) -> bool:
+    return not record.getMessage().startswith("Exception in ASGI application")
 
+
+def _serve_bound(application, **options) -> None:
+    """Run ``application`` under uvicorn, starting its background loops only
+    once the listener is bound (H13).
+
+    uvicorn runs an app's startup before it binds. Loops started there also
+    ran in a second ``athena-serve`` that was about to fail on the port, and
+    delivered webhooks the first process delivered too."""
+    import uvicorn
+    from uvicorn.main import STARTUP_FAILURE
+
+    class Server(uvicorn.Server):
+        async def startup(self, sockets=None) -> None:
+            # Returns only with the listener bound: a bind that fails exits
+            # the process from inside, after the app's shutdown has run.
+            await super().startup(sockets=sockets)
+            await application.state.background.start()
+
+    # Athena's request log has already logged an unhandled error, once and
+    # with its request id (H15); the server's own copy of it is dropped.
+    logging.getLogger("uvicorn.error").addFilter(_not_an_app_error)
+    server = Server(uvicorn.Config(application, **options))
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        # Ctrl+C: the server has already stopped cleanly and raises the
+        # signal again for its caller.
+        pass
+    if not server.started:
+        sys.exit(STARTUP_FAILURE)
+
+
+def _run_server(*, host: str, port: int, fd: int | None) -> None:
     from athena import config
     from athena.main import create_app
 
@@ -1157,33 +1203,24 @@ def _run_server(*, host: str, port: int, fd: int | None) -> None:
         network_mode=config.NETWORK_MODE,
         allowed_authorities=config.ALLOWED_AUTHORITIES,
         expected_server=(host, port),
+        loops_after_bind=True,
     )
+    options = {
+        "workers": 1,
+        "reload": False,
+        "lifespan": "on",
+        "proxy_headers": False,
+        "server_header": False,
+        # One line per request, and it is Athena's own (H15).
+        "access_log": False,
+        "limit_concurrency": 100,
+        "timeout_graceful_shutdown": 30,
+    }
     if fd is not None:
         _answer_without_delay(fd)
-        uvicorn.run(
-            application,
-            fd=fd,
-            workers=1,
-            reload=False,
-            lifespan="on",
-            proxy_headers=False,
-            server_header=False,
-            limit_concurrency=100,
-            timeout_graceful_shutdown=30,
-        )
+        _serve_bound(application, fd=fd, **options)
         return
-    uvicorn.run(
-        application,
-        host=host,
-        port=port,
-        workers=1,
-        reload=False,
-        lifespan="on",
-        proxy_headers=False,
-        server_header=False,
-        limit_concurrency=100,
-        timeout_graceful_shutdown=30,
-    )
+    _serve_bound(application, host=host, port=port, **options)
 
 
 def serve_main(argv: list[str] | None = None) -> int:
@@ -2549,6 +2586,150 @@ def _print_import_result(result: dict) -> None:
         print("warnings:")
         for item in result["warnings"]:
             print(f"  - {item['code']}: {item['message']}")
+
+
+def mint_host_token(db_path: Path, email: str, *, name: str, scopes: list[str]) -> dict:
+    """Mint a token for the account with ``email`` in the database at
+    ``db_path``, from the host. Returns the created token with its one-time
+    raw secret.
+
+    The database must be this release's (checked as ``athena-doctor`` checks
+    it; nothing is migrated). The account must exist and be able to use a
+    token: not paused. A removed account no longer has its email, so it is
+    not found. The mint is the same audited command the
+    browser form and the REST route call, with the host command named in the
+    event, so the trail says a credential appeared and that it was handed out
+    on the host, not asked for in a session."""
+    _check_database(db_path, migrate=False, require_writable=True)
+    conn = db.connect(db_path)
+    try:
+        account = users.get_user_by_email(conn, email)
+        if account is None:
+            raise ValueError(f"no account has the email {email}")
+        if account.get("paused_at"):
+            raise ValueError(
+                f"the account {email} is paused; resume it before minting a token"
+            )
+        try:
+            return token_commands.mint_token(
+                conn,
+                actor_id=int(account["id"]),
+                name=name,
+                scopes=scopes,
+                via="athena-token on the host",
+            )
+        except token_commands.TokenCommandError as exc:
+            raise ValueError(str(exc)) from exc
+    finally:
+        conn.close()
+
+
+def token_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="athena-token",
+        description=(
+            "Mint an API token for an existing account and print it once. For "
+            "the first token of an instance, or an agent's, when no browser is "
+            "at hand. Anyone who can run this can already read the database."
+        ),
+    )
+    parser.add_argument("db_path", type=Path, help="Athena SQLite database path")
+    parser.add_argument("email", help="email of the account the token is for")
+    parser.add_argument(
+        "--name", required=True, help="a label for the token, shown in its lists"
+    )
+    parser.add_argument(
+        "--scope",
+        action="append",
+        required=True,
+        choices=tokens.SCOPES,
+        help="a scope to grant; repeat for more. Give the narrowest that fits",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        created = mint_host_token(
+            args.db_path, args.email, name=args.name, scopes=args.scope
+        )
+    except (FileNotFoundError, OSError, sqlite3.Error, ValueError) as exc:
+        print(f"athena-token: {exc}", file=sys.stderr)
+        return 1
+
+    # The secret alone on stdout, so it can be captured; everything else on
+    # stderr. It is stored only as a hash and cannot be shown again.
+    print(
+        f"Minted token {created['id']} ({created['name']}) for {args.email} with "
+        f"scopes: {' '.join(created['scopes'])}. Shown once:",
+        file=sys.stderr,
+    )
+    print(created["token"])
+    return 0
+
+
+def _days(value: str) -> int:
+    try:
+        days = int(value)
+    except ValueError:
+        days = -1
+    if days < 0:
+        raise argparse.ArgumentTypeError("must be a whole number of days, 0 or more")
+    return days
+
+
+def maintain_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="athena-maintain",
+        description=(
+            "Remove rows that have no further use: notifications read long ago, "
+            "browser sessions past their expiry and idempotency receipts past "
+            "theirs. Safe beside a running Athena. The activity trail is never "
+            "pruned."
+        ),
+    )
+    parser.add_argument("db_path", type=Path, help="Athena SQLite database path")
+    parser.add_argument(
+        "--read-notification-days",
+        type=_days,
+        default=maintenance_commands.READ_NOTIFICATION_DAYS,
+        help=(
+            "keep a read notification this many days after it was read "
+            f"(default {maintenance_commands.READ_NOTIFICATION_DAYS})"
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="count what would be removed and remove nothing",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        _check_database(args.db_path, migrate=False, require_writable=not args.dry_run)
+        conn = db.connect(args.db_path)
+        try:
+            counts = maintenance_commands.prune(
+                conn,
+                read_notification_days=args.read_notification_days,
+                dry_run=args.dry_run,
+            )
+        finally:
+            conn.close()
+    except (FileNotFoundError, OSError, sqlite3.Error, ValueError) as exc:
+        print(f"athena-maintain: {exc}", file=sys.stderr)
+        return 1
+
+    did = "would remove" if args.dry_run else "removed"
+    print(
+        f"{did} {counts['read_notifications']} notifications read more than "
+        f"{args.read_notification_days} days ago"
+    )
+    print(f"{did} {counts['expired_sessions']} browser sessions past their expiry")
+    print(
+        f"{did} {counts['expired_idempotency_keys']} idempotency receipts past "
+        "their expiry"
+    )
+    print("the activity trail is never pruned")
+    return 0
 
 
 def restore_main(argv: list[str] | None = None) -> int:

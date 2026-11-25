@@ -23,10 +23,49 @@ socket and Host guards remain useful defense in depth, but are not public
 reachability detection. Athena does not currently claim public-internet, hostile
 multi-tenant, multi-process, or high-availability safety.
 
-Exactly one process may own the webhook-delivery and automation runners. There is
-no leader election between processes, and request/login/token rate limiters are
-in-process. A multi-worker experiment must nominate one runner and disable both
-loops everywhere else, but that remains outside the supported deployment shape.
+Exactly one process runs the webhook-delivery and automation loops: the one
+holding the lock beside the database (see
+[Background Loops](#background-loops-webhooks-and-automation)). A second process
+on the same database serves requests without them. The request, login and token
+rate limiters are in-process, so each process counts on its own; more than one
+process remains outside the supported deployment shape.
+
+## Running the Commands
+
+This runbook writes its commands bare: `athena-serve`, `athena-doctor`,
+`athena-backup`. They are console scripts installed into the Python environment
+Athena runs from, so a shell finds them only when that environment's `bin`
+directory is on its `PATH`. The systemd unit under `deploy/systemd/` starts
+`.venv/bin/athena-serve` inside the checkout. With a checkout at `/opt/athena`
+(an example path), either call a command by its full path,
+`/opt/athena/.venv/bin/athena-doctor`, or put the directory first for the shell
+session:
+
+```bash
+export PATH="/opt/athena/.venv/bin:$PATH"
+athena-doctor /var/lib/athena/athena.db
+```
+
+Run a command that writes (backup, restore, migrate, token, maintain) as the
+account the service runs as, with the service's environment file loaded when the
+command reads settings, so the files it creates belong to that account and it
+sees the same `ATHENA_*` values. In the container the commands are on the
+image's `PATH`; run them through `docker compose exec athena`, as
+[DOCKER.md](DOCKER.md) shows.
+
+| Command | What it does | Where |
+|---|---|---|
+| `athena-serve` | Starts Athena after its deployment preflight. | [Deploy Preflight](#deploy-preflight), [Startup Refusals](#startup-refusals) |
+| `athena-doctor` | Checks a database, a deployment or a recovery bundle; `--migrate` applies pending migrations. | [Deploy Preflight](#deploy-preflight), [Upgrade](#upgrade) |
+| `athena-seat-doctor` | Checks one agent's wiring against a running Athena. | [Deploy Preflight](#deploy-preflight) |
+| `athena-backup`, `athena-restore` | Take and restore a database snapshot or a matched recovery bundle. | [Backup and Restore](#backup-and-restore) |
+| `athena-token` | Mints a token for an account, on the host. | [Admin Token Bootstrap](#admin-token-bootstrap) |
+| `athena-maintain` | Removes rows that have no further use. | [Growth and Retention](#growth-and-retention) |
+| `athena-export`, `athena-export-run` | Export a project or space, or one run's replay artifact. | [Selective Portability Export](#selective-portability-export), [Run Replay Artifact Export](#run-replay-artifact-export) |
+| `athena-map-source`, `athena-import-dry-run`, `athena-import-manifest`, `athena-import` | Map, validate and replay an import bundle. | [Selective Portability Export](#selective-portability-export) |
+| `athena-field-guide` | Seeds the agent Field Guide as pages. | [QUICKSTART.md](QUICKSTART.md) |
+| `athena-mcp` | The MCP server an agent's client starts. | [AI Agent Access (MCP)](#ai-agent-access-mcp) |
+| `athena-demo` | A disposable seeded instance for a reviewer. | [QUICKSTART.md](QUICKSTART.md) |
 
 ## Runtime Configuration
 
@@ -53,7 +92,7 @@ athena-serve: warning: ATHENA_ANONYMOUS_READ is set but is not an Athena setting
 | `ATHENA_DB` | `athena.db` | no | SQLite database path. Use an absolute path for a long-running service. |
 | `ATHENA_NETWORK_MODE` | `local` | no | Supported listener policy: `local` permits only loopback; `tailnet` additionally permits exact numeric addresses in Tailscale's `100.64.0.0/10` and `fd7a:115c:a1e0::/48` ranges. There is no `public` value. |
 | `ATHENA_ALLOWED_AUTHORITIES` | *(derived for local; required for tailnet)* | no | Comma-separated exact HTTP `Host` authorities, each with the listener's port, such as `athena.tailnet.example:8000` or `[::1]:8000`. A numeric authority must equal the numeric bind; a DNS authority is an operator assertion. No wildcard, suffix, userinfo, path, browser-numeric final label, internationalized/punycode label, or port range is accepted. |
-| `ATHENA_LOG_LEVEL` | `INFO` | no | Level for Athena's own logs (`athena.*`). At `INFO` startup logs the migrations it applied and which background loops started, and the loops log any swallowed error. Set `WARNING` for a quieter server or `DEBUG` when diagnosing. |
+| `ATHENA_LOG_LEVEL` | `INFO` | no | Level for Athena's own logs (`athena.*`). At `INFO` startup logs the migrations it applied and which background loops started, every request logs one line, and the loops log any swallowed error. Set `WARNING` for a quieter server (no request lines) or `DEBUG` when diagnosing. |
 | `ATHENA_BOOTSTRAP_TOKEN` | *(empty; bootstrap disabled)* | yes | One-time credential for the first `POST /users`. Generate 32 random bytes as URL-safe text, present it in `X-Athena-Bootstrap-Token`, then remove it and restart. Values must be 32–255 visible ASCII characters. |
 | `ATHENA_TRUST_ACTOR_HEADER` | `false` | no | Legacy application-factory identity fallback. The supported `athena-serve` launcher refuses to start when this is enabled; use password/OIDC login or a bearer token. |
 | `ATHENA_COOKIE_SECURE` | `false` | no | Adds the HTTPS-only `Secure` flag to browser cookies for retained raw-factory HTTPS experiments. The current direct-HTTP `athena-serve` contract refuses `true`; no supported TLS/proxy mode exists yet. |
@@ -239,6 +278,56 @@ the configured `ATHENA_DB` path or its migration ledger does not match this
 build. `/readyz` does not run SQLite's full integrity check and does not inspect
 attachment blobs; use `athena-doctor` for those checks.
 
+Why it fails is in the log, not in the probe's answer: one line,
+`database unavailable: <reason>`, when the reason first appears or changes,
+and one, `database is available again`, when it clears. A probe every few
+seconds does not repeat it.
+
+**A database file that disappears is not recreated.** Once an instance has
+started, a connection that finds its database file gone refuses: `/readyz`
+and every request answer `503 unavailable`, and the log names the missing
+path. SQLite would otherwise create an empty file there, and the instance
+would look alive while every request failed on a missing table and the
+original loss sat hidden behind the new file. Restore the file
+([Restore a matched pair](#restore-a-matched-pair)) and the instance recovers
+without a restart. `athena-serve` already refuses to start on a missing
+database unless `--bootstrap` is given.
+
+## Logs
+
+Athena writes its log to standard error; the process manager keeps it
+(`journalctl -u athena`, `docker compose logs athena`). Every line starts with
+the time, the level and the logger.
+
+Each request leaves one line on `athena.request`, at `INFO`:
+
+```text
+2026-11-24 19:40:41,929 INFO athena.request: request id=5f0c2a9be41d7c33 actor=7 method=POST route=/issues/{issue_id}/claim status=409 code=lease_held ms=3.1
+```
+
+| Field | What it is |
+|---|---|
+| `id` | The request's id. The response carries it as `X-Request-Id`. A caller may send its own `X-Request-Id` (1 to 64 of `A-Z a-z 0-9 . _ -`) and it is kept; anything else is replaced. |
+| `actor` | The id of the account a token or a browser session resolved to. |
+| `method`, `route` | The method and the route's template. Never the raw path or the query string, so no title, search term or token reaches the log. A request no route matched has no route. |
+| `status`, `code` | The status, and the registered refusal code of a 4xx or 5xx JSON answer. |
+| `ms` | Time to the last byte, in milliseconds. |
+
+A field with nothing to say is `-`. To see what one agent did, filter on its
+account id (`actor=7 `); to see what it was refused, add `status=4`. `athena-serve`
+turns off the web server's own access line, which this one replaces.
+
+An unhandled error is logged once, at `ERROR`, as `unhandled error id=... method=...
+route=...` followed by one traceback. The caller's 500 carries the same id in
+`X-Request-Id`, so a report of a failed request names the line to look for.
+
+A webhook delivery that fails is logged once per attempt, at `WARNING`, on
+`athena.core.webhooks`: `webhook delivery failed: webhook=3 event=812 failures=2
+error=http 503`. The webhook's URL is not logged; its row keeps the same error.
+
+`ATHENA_LOG_LEVEL=WARNING` drops the request lines and keeps refusals to start,
+slow requests, failed deliveries and errors.
+
 ## Background Loops (Webhooks and Automation)
 
 Athena runs two in-process background loops: webhook delivery (pushes new
@@ -247,12 +336,27 @@ activity events, claims bounded UTC schedule slots, and fires matching rules'
 actions). Both default on. Scheduled-rule configuration and recovery semantics are
 documented in [AUTOMATION_SCHEDULES.md](AUTOMATION_SCHEDULES.md).
 
-Each loop must run in exactly one process per deployment. Athena's supported shape
-is one process and one worker. If an operator deliberately starts multiple
-independent processes, exactly one may retain the default loop settings and every
-other process must start with `ATHENA_WEBHOOK_DELIVERY=0` and
-`ATHENA_AUTOMATION=0`; otherwise webhooks double-deliver and rules fire twice.
-That arrangement remains an operator-managed experiment, not a supported HA mode.
+Each loop runs in exactly one process per deployment, and Athena holds itself
+to that. `athena-serve` starts the loops only after its listener is bound, so a
+second start that fails on a port already in use runs nothing. The process that
+runs them is the one holding an exclusive lock on `<database>.loops.lock`, an
+empty file it creates beside the database (mode 600). A second process on the
+same database, on another port, serves requests without the loops and logs one
+line saying so:
+
+```text
+background loops: not started, another process holds /var/lib/athena/athena.db.loops.lock; this process serves requests only
+```
+
+`GET /readyz` reports which a process is, as `background_loops`: `running` (it
+holds the lock and runs each enabled loop), `standby` (it does not run them) or
+`disabled` (`ATHENA_WEBHOOK_DELIVERY=0` and `ATHENA_AUTOMATION=0` turn both off,
+and no lock is taken). The lock is taken once, at start. A standby process does
+not take over when the holder exits: restart it to make it the one that runs
+the loops. The lock is advisory and local, so it does not hold across hosts or
+on a network filesystem that does not support `flock`; Athena's supported shape
+remains one process and one worker on one host, and a second process is an
+operator-managed arrangement, not a supported HA mode.
 
 For maintenance, first remove or drain inbound traffic, then ask the process
 manager for a normal graceful stop and wait for the Athena process to exit. The
@@ -561,6 +665,38 @@ from a category count.
 Keep the service stopped, preserve a recovery copy, and reconcile the database
 with the intended attachment snapshot first.
 
+## Growth and Retention
+
+What the database keeps, and what removes it:
+
+| Rows | Kept | Removed by |
+|---|---|---|
+| The activity trail and its hash chain | For ever. Every audit, undo, replay and export reads it, and the chain proves it is whole. | Nothing. No command prunes it. |
+| Unread notifications | Until read. | Nothing. |
+| Read notifications | 90 days after they were read. | `athena-maintain` |
+| Browser sessions | Until they expire (`ATHENA_SESSION_TTL_DAYS`) or the user logs out. | Logging out; `athena-maintain` for one that expired without it. |
+| Idempotency receipts | Until they expire (`ATHENA_IDEMPOTENCY_TTL_SECONDS`). A key whose outcome is unknown has no expiry and is kept. | `athena-maintain`. A keyed write also removes up to 100 expired receipts as it runs. |
+| Run bindings, approval requests, lease generations, webhook state | For ever. They are small and each is evidence of a decision. | Nothing. |
+
+`athena-maintain` is the only thing that removes rows for age, and no request
+does it as a side effect. Run it on a schedule; once a day is plenty:
+
+```bash
+athena-maintain /var/lib/athena/athena.db
+```
+
+It prints what it removed, one line per kind, and is safe beside a running
+Athena: it removes a few hundred rows per transaction, so a write waits behind
+it for one short batch at most. `--dry-run` counts and removes nothing:
+
+```bash
+athena-maintain /var/lib/athena/athena.db --dry-run
+```
+
+`--read-notification-days` changes how long a read notification is kept (`0`
+removes every read one). The database file does not shrink when rows are
+removed: SQLite reuses the freed pages for later writes.
+
 ## Backup and Restore
 
 By default, `athena-backup` snapshots only the SQLite database. It does **not**
@@ -793,6 +929,45 @@ wait for startup, and then check readiness before restoring traffic:
 curl -fsS http://127.0.0.1:8000/readyz
 ```
 
+### Restore onto a new host or path
+
+The steps above replace a database in place. To bring an instance up somewhere
+it has never run (a new host, or a new directory on this one), there is nothing
+to stop and nothing to keep aside, and the commands are the same ones in a
+shorter order. Install the same Athena release the bundle was taken with, copy
+the bundle directory to the new host, and run these as the account the service
+will run as:
+
+```bash
+: "${BACKUP_DIR:?set BACKUP_DIR to the selected matched snapshot directory}"
+RESTORE_DRILL="/var/tmp/athena-restore-candidate-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -m 0700 /var/lib/athena
+athena-doctor "$BACKUP_DIR" --recovery-bundle --drill-dir "$RESTORE_DRILL"
+athena-restore "$RESTORE_DRILL/athena.db" /var/lib/athena/athena.db
+mkdir -m 0700 /var/lib/athena/attachments
+cp --archive --no-dereference -- "$RESTORE_DRILL/attachments/." /var/lib/athena/attachments/
+athena-doctor /var/lib/athena/athena.db --attach-dir /var/lib/athena/attachments
+```
+
+`athena-restore` needs no `--force` here because the target does not exist, and
+it creates the database private to its owner (mode 600). The bundle holds the
+database and its attachments and nothing else. What does not travel with it,
+and must be set on the new host before the first start:
+
+- The settings: every `ATHENA_*` variable in the service's environment file,
+  with `ATHENA_DB` and `ATHENA_ATTACH_DIR` naming the new paths.
+- The address: the listener's `--host` and `--port`, and for a tailnet instance
+  the Host authorities it answers to. Run the preflight in
+  [Deploy Preflight](#deploy-preflight) with the new values.
+- Anything that points at the old address from outside: an agent's
+  `ATHENA_BASE_URL`, an OIDC redirect URL, a forge's webhook target.
+
+Accounts, tokens and webhook registrations are rows in the database and arrive
+with it: a token minted on the old host works on the new one, and a registered
+webhook is delivered to from the new one as soon as it starts. Do not start both
+hosts on copies of the same database and leave both running: each would deliver
+the same events.
+
 ### Recover from an interrupted restore
 
 Do not start Athena while the database/attachment pair is uncertain. Preserve all
@@ -818,6 +993,44 @@ mtime and do not merge attachment trees.
 The recovery gate remains: stopped service, one known matched pair, doctor against
 the final paths, normal startup, then `/readyz`. A successful check supports this
 local/tailnet recovery procedure; it is not a claim of public deployment readiness.
+
+## Upgrade
+
+A release may carry migrations. Normal start never applies one: `athena-serve`
+refuses a database that is behind (`database is missing migrations`, in
+[Startup Refusals](#startup-refusals)) until an operator applies them. So an
+upgrade is five steps, and the database changes in exactly one of them.
+
+1. Read the release's entries in `CHANGELOG.md` for anything that changes a
+   setting, a default or a command.
+2. Take and verify a matched recovery bundle
+   ([Create and verify a matched recovery bundle](#create-and-verify-a-matched-recovery-bundle)).
+   It is the only way back.
+3. Drain traffic, stop Athena and wait for the process to exit.
+4. Install the new release the way this instance was installed: update the
+   checkout and its `.venv`, or rebuild the image ([DOCKER.md](DOCKER.md)).
+5. Apply the migrations, then run the deployment preflight and start:
+
+```bash
+athena-doctor /var/lib/athena/athena.db --migrate
+```
+
+`--migrate` first rehearses every pending migration on a private in-memory copy
+and applies nothing if one fails; it then applies them to the real file and
+requires the result to equal the schema this release packages. A database that
+is already current is left as it is. After the start, check readiness and that
+the process is the build you installed:
+
+```bash
+curl -fsS http://127.0.0.1:8000/readyz
+curl -fsS http://127.0.0.1:8000/version
+```
+
+Migrations are forward-only. There is no downgrade command, and the older
+release refuses a database the newer one migrated (`database has future
+migration`). To go back, stop Athena, reinstall the older release and restore
+the bundle from step 2 ([Restore a matched pair](#restore-a-matched-pair));
+everything written after the upgrade is lost.
 
 ## First User Bootstrap
 
@@ -1165,6 +1378,16 @@ for the first, for up to five seconds.
 - A long writer is the thing to find when `busy` appears: a migration that
   rebuilds a table (see the note on migration 0090 below), or another process
   holding the database file.
+
+**The write-ahead log.** The database runs in WAL mode, which is a property
+of the file: Athena sets it once, on the first connection to a new database,
+and afterwards reads two bytes of the file's header instead of asking SQLite
+again on every connection. `athena.db-wal` grows with a burst of writes and
+is cut back to at most 32 MiB by the next write after a checkpoint
+(`journal_size_limit`); before, it kept the size of the largest burst it had
+ever held. SQLite checkpoints on its own every 1,000 pages, so in ordinary
+use the file stays near 4 MB. A `-wal` file that stays large means a reader
+holding a snapshot open is keeping checkpoints from finishing.
 
 ## Token Scopes
 
@@ -1635,6 +1858,27 @@ Sign in with the first administrator's bootstrap password, open
 `/settings/tokens`, and mint the narrowest token needed. Store the raw value
 immediately; it is shown once. The supported launcher does not provide the old
 headless `X-Athena-Actor` shortcut because that header proves no identity.
+
+With no browser at hand, mint it on the host:
+
+```bash
+athena-token /var/lib/athena/athena.db operator@example.com \
+  --name first --scope read --scope issue:write
+```
+
+- The account must already exist (the bootstrap creates the first one) and
+  must not be paused. `--name` and at least one `--scope` (`read`,
+  `issue:write`, `docs:write`, `admin`) are required: give the narrowest that
+  fits.
+- The token is printed once, alone on standard output, so it can be captured
+  (`TOKEN=$(athena-token ...)`); what it is goes to standard error. Athena
+  stores only its hash.
+- It is the same audited mint as the form: a `minted_token` event by that
+  account, whose detail ends `via athena-token on the host`, so the trail
+  shows the credential was handed out on the machine and not asked for in a
+  session. It works while Athena is running.
+- Anyone who can run it can already read and write the database file. It
+  grants nothing the host did not have.
 
 ## AI Agent Access (MCP)
 

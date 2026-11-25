@@ -9,6 +9,11 @@ and HA use remain outside the security claim. The forge delivery route
 does not yet ship a supported public edge that makes it reachable from a
 public forge; see [FORGE.md](FORGE.md).
 
+Every count on this page (migrations, tools, tests, modules, coverage) is
+what its dated entry measured at its evidence commit, not the present state.
+For a database's present migrations, run `athena-doctor` on it; for the
+packaged ones, count `src/athena/core/migrations/`.
+
 ## Decision
 
 **Status: `HOLD` for a public production release; `PASS` for the local/tailnet
@@ -53,10 +58,10 @@ import-contract modules; write ownership including the new
 process smoke, and the full coverage-gated suite — **3,394 passed, 0
 skipped**; line 92.93600% (20,287/21,829), branch 83.47431% (5,329/6,384),
 combined 90.79502% (25,616/28,213), above every configured floor
-(92.6/82.3/90.3), excluded lines exactly 2. The schema is at migration
-**0074**; the MCP server registers **124** tools on an unlimited token and
-**58** on a read-scoped one (scope-filtered registration is presentation —
-the REST layer remains the boundary).
+(92.6/82.3/90.3), excluded lines exactly 2. At that commit the schema was at
+migration **0074**, and the MCP server registered **124** tools on an unlimited
+token and **58** on a read-scoped one (scope-filtered registration is
+presentation — the REST layer remains the boundary).
 
 Hosted verification during the cycle: run
 [`31239730553`](https://github.com/Ayyitskevin/athena/actions/runs/31239730553)

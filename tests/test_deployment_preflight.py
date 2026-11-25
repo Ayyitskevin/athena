@@ -1200,7 +1200,7 @@ def test_run_server_builds_a_fresh_app_pinned_to_the_preflighted_listener(
             )
         runs.append((application, kwargs))
 
-    monkeypatch.setattr("uvicorn.run", run)
+    monkeypatch.setattr(ops, "_serve_bound", run)
 
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -1217,6 +1217,8 @@ def test_run_server_builds_a_fresh_app_pinned_to_the_preflighted_listener(
         "network_mode": "local",
         "allowed_authorities": ("localhost:8123", "127.0.0.1:8123"),
         "expected_server": ("127.0.0.1", 8123),
+        # The server starts the loops itself, once its listener is bound.
+        "loops_after_bind": True,
     }
     assert created[0][1] == expected_app_arguments
     assert created[1][1] == expected_app_arguments
@@ -1226,6 +1228,7 @@ def test_run_server_builds_a_fresh_app_pinned_to_the_preflighted_listener(
         "lifespan": "on",
         "proxy_headers": False,
         "server_header": False,
+        "access_log": False,
         "limit_concurrency": 100,
         "timeout_graceful_shutdown": 30,
     }

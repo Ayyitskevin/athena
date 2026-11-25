@@ -462,8 +462,16 @@ def deliver_pending(
                 failure_count = 0
                 delivered += 1
             else:
-                _record_failure(
-                    conn, wh["id"], failure_count, error or "delivery failed", now
+                error = error or "delivery failed"
+                _record_failure(conn, wh["id"], failure_count, error, now)
+                # Once per failed attempt (H15). Not the URL: it may carry a
+                # secret. The webhook's row holds the same error.
+                logger.warning(
+                    "webhook delivery failed: webhook=%s event=%s failures=%s error=%s",
+                    wh["id"],
+                    event["id"],
+                    failure_count + 1,
+                    " ".join(error.split())[:200],
                 )
                 break  # keep this webhook's events ordered; retry from the cursor
     return delivered

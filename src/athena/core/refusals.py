@@ -18,6 +18,7 @@ a project offers.
 from __future__ import annotations
 
 from collections.abc import Mapping
+import logging
 import sqlite3
 from typing import Any
 
@@ -30,6 +31,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from athena.core import db, packet_time
 from athena.core.refusal_codes import code_for_status
+
+_logger = logging.getLogger("athena")
 
 #: FastAPI's own 422 body for a request that does not match the route's schema.
 VALIDATION_ERROR_CODE = "validation_error"
@@ -101,9 +104,10 @@ def _request_validation(request: Request, exc: Exception) -> JSONResponse:
     )
 
 
-def _unhandled(request: Request, exc: Exception) -> JSONResponse:
-    # Starlette's ServerErrorMiddleware calls this, then re-raises the exception
-    # so it is still logged and still fails a test client; only the body changes.
+def internal_error() -> JSONResponse:
+    """The answer to a request whose handling raised. The request log sends it
+    (H15), so it carries the request's id like every other answer; the error is
+    then raised on, so it still fails a test client."""
     return JSONResponse(
         status_code=500,
         content={"detail": INTERNAL_ERROR_DETAIL, "code": INTERNAL_ERROR_CODE},
@@ -128,9 +132,36 @@ def _database_busy(request: Request, exc: Exception) -> JSONResponse:
     )
 
 
+#: The database cannot be used: a dependency is down, and nothing was applied.
+UNAVAILABLE_CODE = "unavailable"
+UNAVAILABLE_DETAIL = "the database is unavailable"
+
+
+def note_database(app: Any, reason: str | None) -> None:
+    """Log why the database is unavailable, or that it is back: once per
+    change, not once per request or probe (H16). ``reason`` is for the
+    operator's log only; no response carries it."""
+    previous = getattr(app.state, "database_unavailable_reason", None)
+    if reason == previous:
+        return
+    app.state.database_unavailable_reason = reason
+    if reason is None:
+        _logger.warning("database is available again (was: %s)", previous)
+    else:
+        _logger.error("database unavailable: %s", reason)
+
+
+def _database_missing(request: Request, exc: Exception) -> JSONResponse:
+    note_database(request.app, str(exc))
+    return JSONResponse(
+        status_code=503,
+        content={"detail": UNAVAILABLE_DETAIL, "code": UNAVAILABLE_CODE},
+    )
+
+
 def install(app: FastAPI) -> None:
     """Register the handlers that put a ``code`` on every JSON refusal."""
+    app.add_exception_handler(db.DatabaseMissing, _database_missing)
     app.add_exception_handler(sqlite3.OperationalError, _database_busy)
     app.add_exception_handler(StarletteHTTPException, _http_exception)
     app.add_exception_handler(RequestValidationError, _request_validation)
-    app.add_exception_handler(Exception, _unhandled)

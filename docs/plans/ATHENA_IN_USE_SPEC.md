@@ -40,7 +40,12 @@ Wave 5 are built in PR #477: an edit keeps the text it replaced and can be
 undone, and one unrelated assignment no longer voids every stored idempotency
 receipt. Two more are built in PR #478: a restarted session replays its own
 idempotency key, and stopping an account names its leases and may release
-them. Nothing has been re-graded since.
+them. The rest of Wave 5 is built in PRs #479 and #480. Seven requirements of
+Waves 6 and 7 are built in PR #481: the background loops run in one process
+and only once it is bound, every request leaves one log line with an id the
+response carries, a command removes rows that have no further use, and the runbook says how to
+run its commands, restore onto a new host and upgrade.
+Nothing has been re-graded since.
 
 **Decisions in force.**
 
@@ -63,9 +68,7 @@ them. Nothing has been re-graded since.
 2. `IssueOut.parent_id` gives the id of a parent issue the caller cannot see
    (found by F6's property test; older than this specification).
 3. The project brief and `/desk/since` without a cursor still grow with
-   history (357 and 165 ms at 50,000 issues), three REST lists return
-   everything, and every bearer read takes the writer lock (H5, H6, H7, H9:
-   the rest of Wave 6).
+   history (357 and 165 ms at 50,000 issues): H5, the rest of Wave 6 with H6.
 4. The cockpit's boards and lists key on the assignee while agents work by
    lease (U2), and three operator steps cannot be done in the browser (U5).
    At phone width the navigation row runs off the right edge on every page.
@@ -92,11 +95,16 @@ timestamp shape with paging frozen. "Wave 4 results" says the same for each.
 From Wave 6: the desk's newest-visible-event read, the ready rule evaluated
 once over the issues that may be open, the search entry found by key, the
 inbox indexes, the fleet-shaped seed and the benchmark with recorded medians,
-and the 40 ms delay of a server started on an inherited socket. "Wave 6
-results" says the same for each. From Wave 7: the doctor's anonymous-reads
+the 40 ms delay of a server started on an inherited socket, a last-use
+stamp that takes no lock on a read, and the journal mode set once with a
+bounded write-ahead log. "Wave 6 results" says the same for each. From Wave 7: the doctor's anonymous-reads
 line and the tailnet refusal, private modes for a database Athena creates,
-startup refusals that name the object and a remedy that runs as printed, and
-start-up notices that are true. "Wave 7 results" says the same for each. From
+startup refusals that name the object and a remedy that runs as printed,
+start-up notices that are true, a database file that is not recreated when
+it disappears, a token minted on the host, background loops that start after
+the bind in the one process holding their lock, one log line per request
+with an id on every response, and `athena-maintain`. "Wave 7 results" says
+the same for each. From
 Wave 8: the lease release on the issue page and its `lease_released` event,
 one "needs you" number, the heartbeat grace and the attention ranking, the
 approval row, the one report partial and undo on the issue page. "Wave 8
@@ -114,8 +122,8 @@ an idempotency key's state, and learnings that reach an issue's parent and
 siblings. Wave 5 is built. "Wave 5 results" says the same for
 each.
 
-**Next step.** Nothing built is waiting. Build the rest of Wave 6 (H6, H5, H9), of Wave 7
-(H13 to H17, H19, H20) and of Wave 8 (U2, U4, U5, U8, U10 to U15, C10), and
+**Next step.** Built and waiting for the next pull request: H6, H14 and U14.
+H5 is being built. Then the rest of Wave 8 (U2, U4, U5, U8, U10 to U13, U15, C10), and
 Wave 9. Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
 
@@ -991,6 +999,102 @@ Found and not fixed:
   a refused agent request's last-refusal row (F15), a keyed write's claim.
   `last_used_at` is accurate to the minute, not the second. Whether a keyed
   write that answers `busy` keeps its key was not established.
+
+### Wave 6 results (third lanes) and Wave 7 results (second lanes)
+
+This is H9 from Wave 6 and H16, H17, H13, H15, H20 and H19 from Wave 7
+(PR #481), one commit each, all built by the lead, test first.
+
+| Measure | Before | After |
+|---|---|---|
+| Opening a connection to an existing database | 0.31 ms: every connection asked SQLite for WAL mode | 0.04 ms: two bytes of the file's header say it is already in WAL (H9) |
+| The write-ahead log after a burst of writes | Kept its largest size for good (59.8 MB measured) | Cut back to 32 MiB at the next write after a checkpoint (H9) |
+| The database file disappears while Athena serves | SQLite created an empty one; every request failed on a missing table | 503 `unavailable`, no file created, and `/readyz` logs why once per change of reason (H16) |
+| The first token of an instance | Through the browser form only | `athena-token <db> <email> --name N --scope S` prints it once; the event says it was minted on the host (H17) |
+| A second `athena-serve` on a port in use | Ran the webhook and automation loops, then failed to bind: 30 events gave 47 deliveries | Runs nothing: the loops start after the listener is bound (H13) |
+| A second process on another port | Ran both loops beside the first, with no warning | Serves requests, logs one line saying it runs no loops, and `/readyz` reports `background_loops: standby` (H13, D24) |
+| What the log says of one request | The web server's line: raw path and status | `request id=... actor=... method=... route=... status=... code=... ms=...`; the response carries the id as `X-Request-Id` (H15, D25) |
+| An unhandled error in the log | One record with no request named and the traceback three times | One line with the request's id and one traceback; the 500 carries the same id (H15) |
+| A webhook delivery that fails | Not logged | One `WARNING` per attempt, without the URL (H15) |
+| Read notifications, expired sessions, expired idempotency receipts | Never removed, or only as a side effect | `athena-maintain <db>` removes them and prints how many; `docs/OPERATIONS.md` says what is kept and for how long (H20, D26) |
+| What the runbook says about running a command, restoring elsewhere and upgrading | Bare command names; restore in place only; no upgrade section | "Running the Commands" (where the scripts live, all sixteen and what each does), "Restore onto a new host or path" and "Upgrade" (H19) |
+| `RELEASE_READINESS.md` on the schema | "The schema is at migration 0074", eighteen migrations ago | Its counts are stated as those of each dated entry's evidence commit (H19) |
+
+The product gate's receipt is in PR #481.
+
+Decisions the lead took while building, each reversible by the owner:
+
+- **The journal mode is read from the file every time, never remembered.** A
+  first version cached the file's device and inode and was wrong when a
+  deleted file's inode was reused.
+- **The lock is an `flock` on `<database>.loops.lock`, taken once.** A
+  process that did not get it does not take over when the holder exits;
+  restarting it makes it the one that runs the loops. Takeover would be a
+  second behaviour to operate, and D24 asks for "serve without them and say
+  so".
+- **`athena-serve` builds its own `uvicorn.Server`** so the loops start after
+  the bind. An app started any other way (a test, the demo, direct uvicorn)
+  starts its loops in its own startup as before, under the same lock.
+- **The request log is the outermost layer and answers an unhandled error
+  itself.** The framework's own outermost layer sits outside every
+  middleware and would send a 500 with no id.
+- **A caller's `X-Request-Id` is kept** when it is 1 to 64 of
+  `A-Z a-z 0-9 . _ -`, so an agent can follow one request across systems;
+  anything else is replaced.
+- **The route's template is logged, never the raw path**, as the slow-request
+  line already did. `athena-serve` turns off the web server's access line.
+- **A read notification is kept 90 days after it was read**; the age is an
+  option of the command.
+- **The sweep a keyed write already did stays.** H20's "nothing in a request
+  path deletes" is read as: nothing new does. Removing the existing bounded
+  sweep would make the receipts table grow on an instance that never
+  schedules the command.
+
+Found while building, and fixed before each was committed:
+
+- **H13.** `uvicorn.run` takes no hook for "bound", so the server is
+  subclassed. Its exit status for a failed start is 3, which the wrapper
+  keeps. Two mutants survived the first tests: a "start only once" guard
+  nothing needed (removed) and the lock's no-symlink flag (now tested).
+  The product gate then failed: the process smoke and the MCP launch smoke
+  each compared the readiness answer with an exact body. Both now expect
+  `background_loops`; a probe of an operator's own that compares the body
+  exactly needs the same.
+- **H19.** The restore sequence for a new host was run before it was written
+  down. The runbook's opening still told an operator to turn both loops off
+  by hand in a second process; since H13 the lock decides.
+- **H15.** The framework answers an unhandled error outside every
+  middleware, so the first version logged the request with no status and the
+  500 had no id. The traceback's three copies came from a task group named
+  as the error's cause; only a group that holds nothing but the error itself
+  is dropped, and a cause the code named is kept. A refusal code that is not
+  one word is not logged.
+- **H17.** A removed account's email is anonymised, so "the account is
+  removed" was unreachable; the command says no account has the email.
+- **H20.** Rows are removed in row order so the table is walked once, and
+  the count is what the delete removed, not what was selected.
+
+Found and not fixed:
+
+- **H13.** The lock is advisory and local: it does not hold across hosts or
+  on a network filesystem without `flock`. A standby process does not report
+  which process holds the lock.
+- **H15.** A request no route matched logs no route, so the path an agent
+  mistyped is not in the log. A streamed error body's code is read only
+  while it is under 64 KiB. Lines are `key=value` text under the existing
+  prefix, not JSON. The demo and a directly started app keep the web
+  server's access line beside Athena's.
+- **H16.** `athena-serve` already refused to start on a missing database
+  without `--bootstrap`; that half of H16 was true before this.
+- **H20.** Run bindings, approval requests, lease generations and webhook
+  state are kept for ever and the document says so. The database file does
+  not shrink when rows are removed. Nothing schedules the command: no timer
+  unit ships.
+- **H19.** No command installs or upgrades Athena; the runbook says to
+  install the new release "the way this instance was installed". The other
+  dated documents still quote old counts in the present tense (G9).
+- **H14 is not in this pull request.** It is built and waits for the next
+  one with H6.
 
 ## Priorities
 
