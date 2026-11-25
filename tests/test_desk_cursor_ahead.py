@@ -218,6 +218,7 @@ def _trigger_sql(conn):
 def test_repair_clamps_a_poisoned_cursor_and_keeps_the_trigger(
     tmp_path, monkeypatch, migration_inventory_through
 ):
+    packaged = db.MIGRATIONS_DIR
     full = _baseline(tmp_path, monkeypatch, migration_inventory_through)
     with closing(db.connect(tmp_path / "poisoned.db")) as conn:
         db.migrate(conn)
@@ -259,7 +260,12 @@ def test_repair_clamps_a_poisoned_cursor_and_keeps_the_trigger(
         # The upgraded schema is exactly the packaged one (the doctor's drift check).
         recovery.validate_current_database(conn)
 
-        # The repaired seat can see change again and move forward again.
+        # The repaired seat can see change again and move forward again. That
+        # is today's desk, which reads tables later migrations made (the
+        # declared seats, U4): finish the upgrade before running it.
+        monkeypatch.setattr(db, "MIGRATIONS_DIR", packaged)
+        db.migrate(conn)
+        assert _trigger_sql(conn) == trigger_before
         actor = users.get_user(conn, 1)
         for n in range(2):
             activity.record(
