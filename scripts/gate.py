@@ -171,6 +171,13 @@ STAGES = (
         (".venv/bin/python scripts/check_surface_parity.py",),
     ),
     Stage(
+        "surface-counts",
+        (PYTHON, "scripts/check_surface_counts.py"),
+        True,
+        ("Check surface counts",),
+        (".venv/bin/python scripts/check_surface_counts.py",),
+    ),
+    Stage(
         "coverage",
         ("bash", "scripts/coverage.sh"),
         False,
