@@ -282,7 +282,11 @@ def test_note_is_transient_and_etag_covers_only_canonical_issue(subject):
     patch_body = closed.json()
     assert patch_body.pop("held_lease")["active"] is True
     fetched = client.get(f"/issues/{issue_id}", headers=headers)
-    assert patch_body == fetched.json()
+    # A read adds authored_by (G10), which depends on the reader and is no
+    # part of the representation or the ETag.
+    read = fetched.json()
+    assert read.pop("authored_by") is not None
+    assert patch_body == read
     assert (
         closed.headers["etag"]
         == fetched.headers["etag"]
