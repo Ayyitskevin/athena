@@ -262,7 +262,14 @@ Found while building, and fixed before each was committed:
   rules on), caught by a test that writes a `web/` module into a tree.
 - **G10.** The wider run found the five pinned bulk-row tests and the
   contract seat's byte ceiling; the first is the narrowing above, the
-  second is raised by 240 bytes with its reason in the ceilings file.
+  second is raised by 240 bytes with its reason in the ceilings file. The
+  product gate then found what that run's file list missed: the batched
+  author read undeclared in the `imported_at` guard file, three tests that
+  compare a read whole with a write's answer, and the fleet trial's
+  conductor ceiling (raised by 234 bytes, with its reason).
+- **The coverage floors rose to 94.34, 86.27 and 92.49**, as the ratchet
+  requires when coverage passes a floor by more than half a point (line
+  94.59, branch 86.52, combined 92.74 on hosted CI).
 
 Found and not fixed:
 
