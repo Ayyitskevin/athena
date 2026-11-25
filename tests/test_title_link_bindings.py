@@ -144,6 +144,10 @@ def test_upgrade_freezes_old_body_and_evidence_before_any_new_edits(
     index_search_without_entry_keys(monkeypatch)
     with closing(db.connect(tmp_path / "upgrade.db")) as conn:
         db.migrate(conn)
+        # Today's page writer keeps and clears 0094's import mark (G3); give the
+        # old schema those columns so it can stage the pre-upgrade edits.
+        conn.execute("ALTER TABLE pages ADD COLUMN imported_at TEXT")
+        conn.execute("ALTER TABLE page_versions ADD COLUMN imported_at TEXT")
         sp = seed(conn)
         original = page(conn, sp, "Runbook")
         other = page(conn, sp, "Auxiliary")

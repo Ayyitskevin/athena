@@ -20,7 +20,6 @@ import httpx
 import hypothesis
 from fastapi.testclient import TestClient
 import pytest
-import support
 
 from athena import config
 from athena.core import clock as app_clock
@@ -88,18 +87,27 @@ def bootstrap_enabled_for_unrelated_tests(monkeypatch):
     monkeypatch.setattr(TestClient, "request", request_with_bootstrap)
 
 
+def _restore_system_clock() -> bool:
+    leaked = app_clock.replaced()
+    if leaked:
+        app_clock._source = app_clock._system
+    return leaked
+
+
 @pytest.fixture(autouse=True)
 def the_system_clock_between_tests():
     """No test starts or ends with the app's clock replaced (G6).
 
     The ``clock`` fixture puts the system clock back itself; this catches
     anything else that replaced it, restores it, and fails the test that did,
-    so a frozen clock can never reach the next test in the worker."""
-    assert not support.restore_system_clock(), (
+    so a frozen clock can never reach the next test in the worker. It reads
+    the clock module alone (as ``support.restore_system_clock`` does), so this
+    file loads on its own, as ``test_suite_memory`` runs it."""
+    assert not _restore_system_clock(), (
         "the app's clock was already replaced when this test started"
     )
     yield
-    if support.restore_system_clock():
+    if _restore_system_clock():
         pytest.fail(
             "this test left the app's clock replaced; use the `clock` fixture, "
             "which puts the system clock back"
@@ -113,7 +121,9 @@ def clock():
     ``support.lapse_lease(clock, db_file, issue_id)`` pass time without a
     sleep or a write. Request it before the app: a connection opened earlier
     keeps SQLite's own ``datetime('now')`` (see ``athena.core.clock``)."""
-    manual = support.AppClock(datetime.now(UTC).replace(microsecond=0))
+    from support import AppClock
+
+    manual = AppClock(datetime.now(UTC).replace(microsecond=0))
     app_clock._source = manual.now
     try:
         yield manual

@@ -471,6 +471,13 @@ def test_the_index_migration_changes_no_answer_on_a_database_with_history(
             (through / migration.name).write_bytes(migration.read_bytes())
     db_file = tmp_path / "inbox.db"
     monkeypatch.setattr(db, "MIGRATIONS_DIR", before)
+    with closing(db.connect(db_file)) as conn:
+        db.migrate(conn)
+        # Today's page writer keeps and clears 0094's import mark (G3); give the
+        # old schema those columns so the history can be written through the app.
+        conn.execute("ALTER TABLE pages ADD COLUMN imported_at TEXT")
+        conn.execute("ALTER TABLE page_versions ADD COLUMN imported_at TEXT")
+        conn.commit()
     _history(db_file)
     without = _answers(db_file)
 
