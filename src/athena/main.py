@@ -428,7 +428,7 @@ def create_app(
         # idempotency key still "executing" has no owner: its process is gone
         # (H14). With another process serving, nothing is assumed.
         serving_lock, alone = background.join_serving(resolved_db)
-        if alone:
+        if alone and serving_lock is not None:
             conn = db.connect(resolved_db)
             try:
                 orphaned = idempotency_commands.orphan_executing(conn)
