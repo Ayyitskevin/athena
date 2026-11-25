@@ -37,6 +37,7 @@ CHANGED_STAGES = [
     "styles",
     "routes",
     "surface-parity",
+    "surface-counts",
     "selected-tests",
 ]
 RULE = (
@@ -193,9 +194,9 @@ def test_quick_receipt_is_unchanged(capsys):
     output = capsys.readouterr().out
     assert output.splitlines()[-7:] == [
         "STAGES RUN: lint, format, imports, ownership, transactions, imported-at, "
-        "styles, routes, surface-parity",
+        "styles, routes, surface-parity, surface-counts",
         "STAGES PASSED: lint, format, imports, ownership, transactions, "
-        "imported-at, styles, routes, surface-parity",
+        "imported-at, styles, routes, surface-parity, surface-counts",
         "NOT RUN: dependencies",
         "NOT RUN: typecheck",
         "NOT RUN: coverage",
