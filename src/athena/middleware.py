@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 import time
 from typing import Awaitable, Callable
@@ -619,6 +620,21 @@ _SECRET_CREATE_PATHS = frozenset(
         "/admin/webhooks",
     }
 )
+# The same, for a route with a parameter: an admin mints a token for an agent
+# (U5). One segment, whatever it holds, so the request path and the route's
+# template (``/users/{user_id}/tokens``) both match.
+_SECRET_CREATE_PATTERN = re.compile(r"/users/[^/]+/tokens")
+
+
+def _is_secret_create(method: str | None, path: str) -> bool:
+    """Whether this request creates a one-time secret. Its answer is never
+    stored for replay, so it takes no ``Idempotency-Key``."""
+    return method == "POST" and (
+        path in _SECRET_CREATE_PATHS
+        or _SECRET_CREATE_PATTERN.fullmatch(path) is not None
+    )
+
+
 # What a key is matched on, beside the method, path, query and body: the
 # headers that change what the request asks for. The run-lineage headers are
 # not among them (F14). They say which session is asking, and `athena-mcp`
@@ -675,7 +691,7 @@ def idempotency_key_accepted(method: str, path: str) -> bool:
         method in _IDEMPOTENT_METHODS
         and not _is_signed_inbound(method, path)
         and IdempotencyMiddleware._is_api_path(path)
-        and not (method == "POST" and path in _SECRET_CREATE_PATHS)
+        and not _is_secret_create(method, path)
     )
 
 
@@ -969,7 +985,7 @@ class IdempotencyMiddleware:
         if _is_signed_inbound(method, path):
             await self.app(scope, receive, send)
             return
-        is_secret_create = method == "POST" and path in _SECRET_CREATE_PATHS
+        is_secret_create = _is_secret_create(method, path)
         key_values = self._header_values(scope, b"idempotency-key")
         if not key_values:
             await self.app(scope, receive, send)

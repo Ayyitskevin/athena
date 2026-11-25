@@ -20,6 +20,11 @@ POST /pages/{page_id}/start-playbook   {"project_id": 12, "title": "March releas
 
 MCP: `start_playbook(page_id, project_id=None, title=None, idempotency_key=None)`.
 
+Cockpit: the playbook's own page shows **Start this playbook** to anyone who
+may write, with how many steps it will make, an optional title for the parent
+and a project. Starting lands on the parent issue; a refusal (not a playbook,
+no unchecked steps, more than 50) is said in the page.
+
 After that, all three directions are live at once, and the last one costs no new
 machinery: every created issue cites the page with an ordinary `[[page:N]]`
 wikilink, so the existing indexer builds the backlinks, the page shows the work

@@ -1361,6 +1361,29 @@ are rejected.
 A newly created raw token is shown once. Athena stores only a hash, so a lost raw
 token must be revoked and replaced.
 
+### A token for an agent that has none
+
+A token is self-service, and an agent whose tokens were revoked, or that was
+restored after a removal, holds none to ask with. An admin mints one for it:
+
+- **Cockpit:** `/admin/agents`, the agent's section, **Mint a token**. The raw
+  token and a ready-to-paste MCP config are shown once, in that section.
+- **REST:** `POST /users/{user_id}/tokens` with `{"scopes": [...], "name":
+  "...", "profile": "..."}` (`name` and `profile` optional), as an admin. It
+  answers as `POST /users/onboard_agent` does: `user`, `token` (with the raw
+  `token.token`) and `mcp_config`. It takes no `Idempotency-Key`, because a
+  replayed answer would hand the secret out again.
+
+The trail records one `minted_token` event with the admin as its actor and the
+agent it was for; the secret is never written. This is for agent accounts only:
+a person mints their own tokens, and an admin holding a person's token would be
+acting as them. The agent's role is not changed, so a token for a read-only
+(viewer) agent can read and nothing else.
+
+A removed agent is restored on the same page, under **Removed agents** (REST:
+`POST /users/{user_id}/restore`). It comes back as a read-only viewer with no
+token: give it a role at `/admin/users`, then mint it a token.
+
 ## One writer, and what waits for it
 
 SQLite lets many readers and one writer work at once. A second writer waits

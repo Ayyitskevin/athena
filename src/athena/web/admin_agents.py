@@ -124,7 +124,13 @@ _OUTCOMES: dict[str, tuple[str, str, str | None]] = {
         "Removed",
         " ",
         "offboarded and hidden from every list; history stays attributed. "
-        "Restore via POST /users/{id}/restore.",
+        "Restore it under Removed agents, below.",
+    ),
+    "restored": (
+        "Restored",
+        " ",
+        "back as a read-only viewer with no token. Give it a role under Manage "
+        "users, then mint it a token here.",
     ),
     "paused": ("Paused", " ", "every authenticated action is refused until resumed."),
     "resumed": ("Resumed", " ", "the account is active again."),
@@ -204,6 +210,13 @@ def _build_agents_context(
         "answerability": answerability.build_answerability(conn, now=now)["agents"],
         "unanswered_kills": unanswered_kills,
         "unanswered_kills_total": stop_total,
+        # Removed agents are hidden from every other list; this page removed
+        # them, so this page is where one is restored (U5).
+        "removed_agents": [
+            account
+            for account in users.list_users(conn, include_removed=True)
+            if account["removed_at"] and account["is_agent"]
+        ],
         "budget_windows": sorted(budgets.WINDOWS),
         "approval_kinds": sorted(approvals.ACTION_KINDS),
         # The MCP profiles the onboarding form may print (F9); empty = default.
@@ -227,6 +240,7 @@ def agents_admin(
     revoked: int | None = Query(None),
     offboarded: str | None = Query(None),
     removed: str | None = Query(None),
+    restored: str | None = Query(None),
     paused: str | None = Query(None),
     resumed: str | None = Query(None),
     budget_set: str | None = Query(None),
@@ -253,6 +267,7 @@ def agents_admin(
     flags = {
         "offboarded": offboarded,
         "removed": removed,
+        "restored": restored,
         "paused": paused,
         "resumed": resumed,
         "budget_set": budget_set,
@@ -911,6 +926,94 @@ def remove_agent(
         return _agents_redirect(agent_id=user_id, error=str(exc))
     # A removed agent has no section left to return to; the outcome names it.
     return _agents_redirect(agent_id=user_id, anchor=False, removed="1")
+
+
+@router.post(
+    "/admin/agents/{user_id}/restore",
+    dependencies=[Depends(verify_csrf)],
+)
+def restore_agent(
+    request: Request, user_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Bring a removed agent back: the command REST's POST /users/{id}/restore
+    calls. It returns as a read-only viewer with no token, and its section says
+    so; a role and a token are each their own act."""
+    user = getattr(request.state, "user", None)
+    err = admin_required(user)
+    if err is not None:
+        return err
+    try:
+        agent_commands.restore_user(conn, actor=user, target_user_id=user_id)
+    except agent_commands.AgentCommandError as exc:
+        return _agents_redirect(error=str(exc))
+    return _agents_redirect(agent_id=user_id, restored="1")
+
+
+@router.post(
+    "/admin/agents/{user_id}/tokens",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def mint_agent_token(
+    request: Request,
+    user_id: int,
+    token_name: str = Form(""),
+    scope_read: str | None = Form(None),
+    scope_issue_write: str | None = Form(None),
+    scope_docs_write: str | None = Form(None),
+    scope_admin: str | None = Form(None),
+    profile: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Mint a token for an existing agent (U5): the command REST's
+    POST /users/{id}/tokens calls. Rendered inline, in the agent's section, and
+    never redirected: the raw token is shown exactly once and a secret must
+    never ride a query string."""
+    templates = get_templates()
+    user = getattr(request.state, "user", None)
+    err = admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None, "admin_required accepted a missing user"
+
+    def page(status_code: int, **extra) -> HTMLResponse:
+        context = _agents_context(conn, user, **extra)
+        listed = {row["user"]["id"] for row in context["agents"]}
+        context["acted_on_agent_id"] = user_id if user_id in listed else None
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/agents.html",
+            context=context,
+            status_code=status_code,
+        )
+
+    try:
+        result = agent_commands.mint_agent_token(
+            conn,
+            actor=user,
+            target_user_id=user_id,
+            scopes=selected_scopes(
+                scope_read, scope_issue_write, scope_docs_write, scope_admin
+            ),
+            name=token_name.strip() or None,
+            profile=profile.strip() or None,
+        )
+    except agent_commands.AgentCommandError as exc:
+        return page(404 if exc.kind == "not_found" else 400, error=str(exc))
+    minted = {
+        "user": result["user"],
+        "token": result["token"],
+        "config_json": json.dumps(
+            claude_mcp_config(
+                base_url=str(request.base_url).rstrip("/"),
+                token=result["token"]["token"],
+                profile=result["profile"],
+                command=athena_mcp_command(),
+            ),
+            indent=2,
+        ),
+    }
+    return page(201, minted=minted)
 
 
 @router.get("/admin/agents/runs", response_class=HTMLResponse)

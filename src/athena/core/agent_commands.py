@@ -229,6 +229,76 @@ def onboard_agent(
     return {"user": agent, "token": token, "profile": printed}
 
 
+def mint_agent_token(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    target_user_id: int,
+    scopes: Iterable[str] | None,
+    name: str | None = None,
+    profile: str | None = None,
+) -> dict:
+    """Mint a token for an agent account that already exists, attributed to
+    the acting admin (U5).
+
+    A token is otherwise self-service: its owner mints it with a credential it
+    already holds. An agent whose tokens were revoked, or that was restored
+    after a removal, holds none and cannot ask, so the only way back was to
+    onboard a second account. This is the admin's act, and the trail says so:
+    one ``minted_token`` event naming the admin as actor and the agent the
+    token is for. The raw secret rides back in the returned dict only.
+
+    For agent accounts only: a person mints their own tokens, and an admin
+    minting a person's credential would be signing in as them. The target's
+    role is not changed: a token for a read-only (viewer) agent can read and
+    nothing else, whatever its scopes say.
+
+    Scopes are required, as on every mint. ``name`` defaults to the agent's
+    name. ``profile`` is checked and answered exactly as ``onboard_agent``
+    does. Raises AgentCommandError("unauthorized"/"forbidden") for a missing or
+    non-admin actor, "not_found" for an unknown or removed account, "invalid"
+    for a person's account, a missing or unknown scope, or a profile the
+    scopes cannot fully use."""
+    actor = _require_admin_actor(actor)
+    try:
+        normalized = tokens.normalize_scopes(scopes)
+    except ValueError as exc:
+        raise AgentCommandError("invalid", str(exc)) from exc
+    try:
+        printed = mcp_config.printed_profile(profile, normalized)
+    except ValueError as exc:
+        raise AgentCommandError("invalid", str(exc)) from exc
+    with db.transaction(conn, immediate=True):
+        target = users.get_user(conn, target_user_id)
+        if target is None or target.get("removed_at"):
+            raise AgentCommandError("not_found", "no such user")
+        if not target["is_agent"]:
+            raise AgentCommandError(
+                "invalid",
+                "this account is a person's: a person mints their own tokens",
+            )
+        token = tokens.create_token(
+            conn,
+            user_id=target_user_id,
+            name=(name or "").strip() or target["name"],
+            scopes=normalized,
+            commit=False,
+        )
+        activity.record(
+            conn,
+            actor_id=actor["id"],
+            verb=token_commands.VERB_MINTED_TOKEN,
+            target_kind="token",
+            target_id=token["id"],
+            detail=(
+                f"{token['name']} [{' '.join(token['scopes'])}] "
+                f"(for agent {target['email']})"
+            ),
+            commit=False,
+        )
+    return {"user": target, "token": token, "profile": printed}
+
+
 def revoke_agent_tokens(
     conn: sqlite3.Connection,
     *,
