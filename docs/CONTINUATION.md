@@ -38,7 +38,8 @@ Athena cannot attest native process lineage from a client label.
    results. Completion: all truncation relevant to the claimed result is known.
 2. Resolve only a locator already covered by the reader's grant and visibility.
    Manually obtain the complete file: existing `GET /attachments/{id}` for a
-   visible stored blob; full visible comments via `GET /issues/{id}/comments`;
+   visible stored blob; full visible comments via `GET /issues/{id}/comments`
+   (paged: follow `next_cursor`) or one by `GET /issues/{id}/comments/{comment_id}`;
    an exact permitted local file or immutable Git object for local retained work.
    Completion: original bytes, not a search snippet or guessed/latest replacement.
    Comments are mutable, so verify their frozen bytes separately. These are

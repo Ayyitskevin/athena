@@ -117,7 +117,7 @@ def test_a_write_that_times_out_on_the_lock_answers_busy(tmp_path, monkeypatch):
         bootstrap(client)
         sol = onboard_agent(client)
         assert client.get("/issues", headers=bearer(sol)).status_code == 200
-        before = client.get("/issues", headers=bearer(sol)).json()
+        before = client.get("/issues", headers=bearer(sol)).json()["issues"]
         with _Writer(db_file):
             refused = client.post(
                 "/issues", json={"title": "while busy"}, headers=bearer(sol)
@@ -125,7 +125,7 @@ def test_a_write_that_times_out_on_the_lock_answers_busy(tmp_path, monkeypatch):
         retried = client.post(
             "/issues", json={"title": "while busy"}, headers=bearer(sol)
         )
-        after = client.get("/issues", headers=bearer(sol)).json()
+        after = client.get("/issues", headers=bearer(sol)).json()["issues"]
 
     assert refused.status_code == 503, refused.text
     assert refused.json()["code"] == "busy"

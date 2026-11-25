@@ -44,7 +44,12 @@ them. The rest of Wave 5 is built in PRs #479 and #480. Seven requirements of
 Waves 6 and 7 are built in PR #481: the background loops run in one process
 and only once it is bound, every request leaves one log line with an id the
 response carries, a command removes rows that have no further use, and the runbook says how to
-run its commands, restore onto a new host and upgrade.
+run its commands, restore onto a new host and upgrade. Five more are built
+in PR #482: three lists page by cursor and the page list carries no bodies,
+the project brief and a search for a common word stop growing with history,
+a key left executing by a killed process can be listed and settled, boards
+and lists name the holder of the live claim, and no page carries a script or
+handler its own policy blocks.
 Nothing has been re-graded since.
 
 **Decisions in force.**
@@ -63,14 +68,17 @@ Nothing has been re-graded since.
 
 **Known issues, most serious first.**
 
-1. Three REST lists return everything and the page list carries bodies:
-   the rest of Wave 6 (H6).
+1. `/docs` and `/redoc` render blank: they are the framework's pages, and
+   the content security policy blocks the CDN script and the inline script
+   each starts from (found by U14's every-page test; the owner's question
+   below).
 2. `IssueOut.parent_id` gives the id of a parent issue the caller cannot see
    (found by F6's property test; older than this specification).
-3. The project brief and `/desk/since` without a cursor still grow with
-   history (357 and 165 ms at 50,000 issues): H5, the rest of Wave 6 with H6.
-4. The cockpit's boards and lists key on the assignee while agents work by
-   lease (U2), and three operator steps cannot be done in the browser (U5).
+3. The idle sort computes its key for every matching issue (8.0 M SQLite
+   steps at 50,000 issues) and the project brief is still linear in the
+   issues of its own project (3.1 M, from 10.6 M): what is left of H5.
+   `/desk/since` without a cursor still grows with history.
+4. Three operator steps cannot be done in the browser (U5).
    At phone width the navigation row runs off the right edge on every page.
 5. Assignment answers with the name of an account that cannot see the issue's
    project, so a member can learn that the account exists (found in Wave 4;
@@ -96,19 +104,24 @@ From Wave 6: the desk's newest-visible-event read, the ready rule evaluated
 once over the issues that may be open, the search entry found by key, the
 inbox indexes, the fleet-shaped seed and the benchmark with recorded medians,
 the 40 ms delay of a server started on an inherited socket, a last-use
-stamp that takes no lock on a read, and the journal mode set once with a
-bounded write-ahead log. "Wave 6 results" says the same for each. From Wave 7: the doctor's anonymous-reads
+stamp that takes no lock on a read, the journal mode set once with a
+bounded write-ahead log, three lists that page by cursor with a read of
+one comment, a project brief that seeks each issue's own trail, and a
+full-text search that ranks a bounded window. "Wave 6 results" says the same
+for each. From Wave 7: the doctor's anonymous-reads
 line and the tailnet refusal, private modes for a database Athena creates,
 startup refusals that name the object and a remedy that runs as printed,
 start-up notices that are true, a database file that is not recreated when
 it disappears, a token minted on the host, background loops that start after
 the bind in the one process holding their lock, one log line per request
-with an id on every response, and `athena-maintain`. "Wave 7 results" says
-the same for each. From
+with an id on every response, `athena-maintain`, and the list and resolution
+of idempotency keys whose outcome is unknown. "Wave 7 results" says the same
+for each. From
 Wave 8: the lease release on the issue page and its `lease_released` event,
 one "needs you" number, the heartbeat grace and the attention ranking, the
-approval row, the one report partial and undo on the issue page. "Wave 8
-results" says the same for each. From Wave 5: the prior text of an edit, its
+approval row, the one report partial and undo on the issue page, pages
+with no inline script, handler or blocked style, and the claim holder on
+boards and in the issue list. "Wave 8 results" says the same for each. From Wave 5: the prior text of an edit, its
 read and its undo, `If-Match` for a bearer edit of a title or body, and the
 idempotency fence scoped to the issue a key names, a key that survives a
 restart with replays marked for the agent, the leases of a stopped
@@ -122,9 +135,9 @@ an idempotency key's state, and learnings that reach an issue's parent and
 siblings. Wave 5 is built. "Wave 5 results" says the same for
 each.
 
-**Next step.** Built and waiting for the next pull request: H6, H14 and U14.
-H5 is being built. Then the rest of Wave 8 (U2, U4, U5, U8, U10 to U13, U15, C10), and
-Wave 9. Each requirement that removes calls lowers the fleet trial's ceilings
+**Next step.** Nothing built is waiting. U4 is being built by a delegated
+builder. Then the rest of Wave 8 (U5, U8, U10 to U13, U15, C10), the idle
+sort that H5 left, and Wave 9. Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
 
 **How work is done here.** One requirement, one commit, with the test that
@@ -1095,6 +1108,117 @@ Found and not fixed:
   dated documents still quote old counts in the present tense (G9).
 - **H14 is not in this pull request.** It is built and waits for the next
   one with H6.
+
+### Wave 6 results (fourth lanes), Wave 7 results (third lanes) and Wave 8 results (second lanes)
+
+This is H6 and H5 from Wave 6, H14 from Wave 7, and U14 and U2 from Wave 8
+(PR #482), one commit each. H6 and H5 were built by a delegated builder from
+the lead's brief and read, re-run and probed by the lead; H14, U14 and U2
+were built by the lead.
+
+| Measure | Before | After |
+|---|---|---|
+| `GET /spaces/{id}/pages` over 300 pages of 2,100 characters | 702,083 bytes: every page, with its body | 23,150 bytes: 100 summaries without bodies, and a cursor (H6) |
+| Listing those pages through `list_pages` | 5 calls and 3,510,415 bytes of REST: the whole list on every call | 6 calls and 69,507 bytes: each row once (H6) |
+| `GET /issues/{id}/comments` over 300 comments | 196,283 bytes: all of them | 32,698 bytes: 50, and a cursor (H6) |
+| A comment longer than one tool answer | Could not be read whole from a seat | `get_issue_comment` reads it, continued by `body_offset` (H6) |
+| An issue created between two pages of `GET /issues` | Repeats a row: the list paged by offset | Shifts nothing: the list pages by the last row's sort key (H6) |
+| A retry of a keyed write whose process was killed | `idempotency_in_progress` for about a minute with no owner, then `idempotency_indeterminate` | `idempotency_indeterminate` as soon as a process starts serving the database alone (H14) |
+| Keys whose outcome is unknown | Listed nowhere; settled only by editing the table | An admin lists them with the request and sender of each, and resolves one as applied or not applied; the trail records it (H14) |
+| Mission Control's "Copy command" | Did nothing: its inline script was blocked | Copies and answers "Copied" (U14) |
+| What a page's own policy blocks, in Chromium over eight pages | An inline style on every page (htmx's), an inline script on one, an inline handler on three | Nothing (U14) |
+| An unassigned issue an agent has claimed, on the board | Under "Unassigned", with no sign of the claim | Under "Agent work", its card saying "claimed by" the holder; `?group=claim` gives one lane per holder (U2) |
+| The issue list | An Assignee column | An Assignee column and a Claim column (U2) |
+| The project brief's SQLite work at 50,000 issues | 10.6 M virtual-machine steps: every issue event grouped | 3.1 M: one seek into each issue's own trail (H5) |
+| A full-text search for a word in most entries, at 50,000 issues | 3.29 M steps: every match scored, every visible source listed first | 0.08 M: the newest 1,000 eligible matches ranked (H5) |
+| The idle sort at 50,000 issues | 8.0 M steps | 8.0 M: not bounded (H5) |
+| Tools and routes | 143 tools (seat 27, seat+knowledge 38, conductor 40); 105 REST GET routes | 146 tools (seat 28, 39, 41); 107 |
+
+The fleet trial's and the contract agent's ceilings did not move. The product
+gate's receipt is in PR #482.
+
+Decisions the lead took while building, each reversible by the owner:
+
+- **The third list is `GET /issues`.** The finding names the page list and the
+  comment list; the issue list was already capped at 100 rows, and what it
+  lacked was a stable place to resume from. Its `offset` is retired and
+  refused with 422, so an old caller is told and not served page one.
+- **`get_issue_comment` is in the seat profile**: a seat could not read a long
+  comment whole in any profile.
+- **Bounds**: pages 100 by default and 200 at most, comments 50 and 200, and
+  40 for the `list_issue_comments` tool, whose 50 excerpt rows overran its
+  budget.
+- **"Alone" is an exclusive lock on `<database>.serving.lock`**, which every
+  serving process then holds shared. A process that cannot take it assumes
+  nothing about another's keys.
+- **A key resolved as applied keeps refusing, with its own code
+  (`idempotency_applied`)**, so its sender learns the write landed and does
+  not send it under a new key. It has no expiry, which needed no migration.
+- **A key is resolved by its id and its text together**, and the resolution
+  takes an `Idempotency-Key` of its own.
+- **The decision is an event on the sender's account**, not on the admin's.
+- **The two tools are in the full profile only.**
+- **A card's lane follows whoever is working it**: the holder of the live
+  claim when there is one, else the assignee. The third lane is "Unassigned
+  and unclaimed".
+- **A search ranks the newest 1,000 eligible matches** (`RANK_WINDOW`). A
+  word in fewer entries is ranked exactly as before; for a commoner word
+  the results change. The requirement allows "an index or a limit", and no
+  index bounds a ranking.
+- **The idle sort is left unbounded.** Bounding it needs a stored last-work
+  time per issue kept by the recorder, and even that does not bound
+  `is:open sort:idle-desc` unless the key also carries open or closed. That
+  is a schema decision for the owner.
+- **The content security policy is unchanged.** A style that depends on data
+  stays a `<style>` element carrying the response's nonce, as the design
+  system prescribes; scripts and handlers become behaviours of
+  `static/confirm.js` asked for with a data attribute.
+
+Found while building, and fixed before each was committed:
+
+- **H6.** The work-context packet's comment cut pointed at
+  `list_issue_comments` with an offset that no longer exists; it names
+  `get_issue_comment`. A page cut by the response budget is asked for again
+  with the rows that fit, so a tool never makes up a cursor; the path had no
+  test until a mutant survived.
+- **H14.** The list first answered `has_more` with no cursor, a paging style
+  the conventions test refuses; it pages as every new list does. The word
+  "indeterminate" had no glossary row.
+- **U2.** Two mutants survived the first tests, which had no person holding
+  a claim; a test now has one.
+- **H5.** The brief said the work query's bare word was the full-text
+  search. It is a `LIKE` that stops at its limit for a common word; the
+  search that grew was the full-text one behind `/search` and `/find`. With
+  statistics the planner chose another index for the brief, so the read pins
+  its indexes and a plan test runs with and without statistics.
+- **U14.** The first test of the script matched its comments; it now reads
+  the code. The every-page test names each browser route that is not a page,
+  so a new page is rendered without being listed.
+
+Found and not fixed:
+
+- **H6.** `GET /pages/{id}/comments` is still unbounded. `GET /issues` still
+  returns whole bodies, so `search_work` still pulls about 115 kB from REST
+  for 50 summary rows. `GET /issues/search` and `GET /search` still page by
+  offset. A page title of about 6,000 characters makes a cursor longer than
+  its cap, and the next page is a 422. A row whose sort key changes between
+  two pages may still repeat or be skipped. An external client of the three
+  lists breaks on the new shape; the changelog says so.
+- **H14.** "Alone" is established only at start. With two processes serving,
+  a key orphaned when one dies answers `idempotency_in_progress` until its
+  lease runs out, and is then listed as `lease_expired`. The cockpit has no
+  page for the list. Keys resolved as applied are kept for ever.
+- **U2.** The board still clips at its card cap before it groups, so a lane
+  can miss a holder's cards beyond the cap (U13). Saved filters and the
+  dashboard still name the assignee alone.
+- **H5.** The idle sort, as above. The brief is linear in the issues of its
+  own project, and its completion rows cost twice their count. The search
+  window is not mentioned in the `search` tool's description. One mutant
+  survives: the transaction around the search's two reads.
+- **U14.** `/docs`, `/docs/oauth2-redirect` and `/redoc` render blank: the
+  framework's pages load from a CDN and start from an inline script. The
+  behaviours in `confirm.js` are checked in a browser by hand; the suite has
+  no script runner.
 
 ## Priorities
 

@@ -29,6 +29,7 @@
             </th>
             <th>Created By</th>
             <th>Assignee</th>
+            <th>Claim</th>
             <th>Project</th>
             <th>
                 <a href="#"
@@ -56,6 +57,7 @@
             </td>
             <td class="muted">{{ issue.created_by }}</td>
             <td class="{{ 'muted' if not issue.assignee_name else '' }}">{{ issue.assignee_name or "Unassigned" }}</td>
+            <td class="{{ 'muted' if not issue.claim else '' }}">{% if issue.claim %}<span class="chip" data-tone="info" title="Holds the live claim until {{ issue.claim.expires_at }} UTC">{{ issue.claim.holder_name }}</span>{% else %}None{% endif %}</td>
             <td class="{{ 'muted' if not issue.project_name else '' }}">
                 {% if issue.project_id %}
                 <a href="/aegis/issues?project={{ issue.project_id }}">{{ issue.project_name }}</a>

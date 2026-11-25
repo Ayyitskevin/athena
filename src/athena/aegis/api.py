@@ -47,6 +47,7 @@ from athena.core import (
     graph,
     labels,
     links,
+    list_cursor,
     mentions,
     packet_time,
     work_query,
@@ -320,6 +321,23 @@ class CommentOut(BaseModel):
     )
 
 
+_COMMENT_CURSOR = "comments"
+
+
+class CommentListOut(BaseModel):
+    """One page of an issue's comments, oldest first, paged as every new list
+    is (D2): while `has_more` is true, send `next_cursor` back as `cursor`."""
+
+    comments: list[CommentOut]
+    # Opaque: pass it back unchanged. Null on the last page.
+    next_cursor: str | None
+    has_more: bool
+
+
+def _cursor_refusal(exc: list_cursor.CursorError) -> Refusal:
+    return Refusal(status_code=422, detail=str(exc), code="validation_error")
+
+
 def _tagged_issue(
     conn: sqlite3.Connection,
     issue: dict,
@@ -416,7 +434,23 @@ def _parsed_query(raw: str) -> work_query.Query:
         raise _query_refusal(exc, exc.atom) from exc
 
 
-@router.get("", response_model=list[IssueOut])
+#: The issue list's bounds, unchanged from its offset days.
+ISSUE_LIST_DEFAULT_LIMIT = 50
+ISSUE_LIST_MAX_LIMIT = 100
+_ISSUE_CURSOR = "issues"
+
+
+class IssueListOut(BaseModel):
+    """One page of issues, paged as every new list is (D2): while `has_more` is
+    true, send `next_cursor` back as `cursor` with the same filters or query."""
+
+    issues: list[IssueOut]
+    # Opaque: pass it back unchanged. Null on the last page.
+    next_cursor: str | None
+    has_more: bool
+
+
+@router.get("", response_model=IssueListOut)
 def index(
     q: str | None = Query(
         None,
@@ -437,11 +471,31 @@ def index(
     project: str | None = None,
     sprint: int | None = Query(None, ge=0, le=issues.MAX_SQLITE_INTEGER),
     include_archived: bool = False,
-    limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0, le=issues.MAX_OFFSET),
+    limit: int = Query(ISSUE_LIST_DEFAULT_LIMIT, ge=1, le=ISSUE_LIST_MAX_LIMIT),
+    cursor: str | None = Query(
+        None,
+        max_length=list_cursor.MAX_CURSOR_CHARS,
+        description=(
+            "the previous page's next_cursor, unchanged, with the same filters or "
+            "query; omit for the first page"
+        ),
+    ),
+    # Retired (H6): a caller still sending it is told so, never served page one
+    # as if it were the page it asked for. Hidden from the documents.
+    offset: str | None = Query(None, include_in_schema=False),
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> list[dict]:
+) -> dict:
+    """Issues, at most `limit` a call (default 50, at most 100): those matching
+    the work query `q`, in its `sort:` order, or the structured filters, by id.
+    While `has_more` is true, send `next_cursor` back as `cursor` with the same
+    `q` or filters. Only issues the caller can see are listed."""
+    if offset is not None:
+        raise Refusal(
+            status_code=422,
+            detail="offset is retired: page with cursor, the previous page's next_cursor",
+            code="validation_error",
+        )
     # `q` and the structured filters are two spellings of the same intent, so
     # combining them is refused rather than merged: silently AND-ing them would
     # make `?q=is:open&status=done` return nothing and look like a data problem,
@@ -471,18 +525,32 @@ def index(
                 ),
                 code="validation_error",
             )
+        parsed = _parsed_query(q)
+        tag = issue_query.cursor_tag(parsed)
+        after = None
+        if cursor is not None:
+            try:
+                after = list_cursor.decode(
+                    cursor, tag, issue_query.cursor_types(parsed)
+                )
+            except list_cursor.CursorError as exc:
+                raise _cursor_refusal(exc) from exc
         try:
-            rows = issue_query.run_query(
+            rows, last = issue_query.query_page(
                 conn,
-                _parsed_query(q),
+                parsed,
                 actor=actor,
                 visible_project_ids=access.visible_project_filter(conn, actor),
                 limit=limit,
-                offset=offset,
+                after=after,
             )
         except issue_query.QueryCompileError as exc:
             raise _query_refusal(exc, exc.atom) from exc
-        return _with_labels_many(conn, rows)
+        return {
+            "issues": _with_labels_many(conn, rows),
+            "next_cursor": None if last is None else list_cursor.encode(tag, last),
+            "has_more": last is not None,
+        }
     if priority is not None and priority not in issues.PRIORITIES:
         raise Refusal(
             status_code=422,
@@ -499,9 +567,16 @@ def index(
     # The read is open (optional_actor → None for anonymous), but it only ever
     # returns issues in projects the caller may see (public + their private ones);
     # admins see all, the backlog is always in.
-    # limit/offset are bounded (page ≤ 100, default 50), mirroring GET /issues/search
-    # — an anonymous caller can't pull the whole issues table in one request. The web
-    # board reaches issues.list_issues directly (uncapped) and is unaffected.
+    # limit is bounded (page ≤ 100, default 50) — an anonymous caller can't pull the
+    # whole issues table in one request — and the cursor resumes after the last id,
+    # the order this path lists in. The web board reaches issues.list_issues directly
+    # (uncapped) and is unaffected.
+    after_id = None
+    if cursor is not None:
+        try:
+            (after_id,) = list_cursor.decode(cursor, _ISSUE_CURSOR, (int,))
+        except list_cursor.CursorError as exc:
+            raise _cursor_refusal(exc) from exc
     project_id, backlog = _parse_project_filter(project)
     ids = labels.issue_ids_for_label(conn, label) if label else None
     rows = issues.list_issues(
@@ -516,10 +591,18 @@ def index(
         include_archived=include_archived,
         ids=ids,
         visible_project_ids=access.visible_project_filter(conn, actor),
-        limit=limit,
-        offset=offset,
+        limit=limit + 1,
+        after_id=after_id,
     )
-    return _with_labels_many(conn, rows)
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    return {
+        "issues": _with_labels_many(conn, rows),
+        "next_cursor": list_cursor.encode(_ISSUE_CURSOR, [rows[-1]["id"]])
+        if has_more
+        else None,
+        "has_more": has_more,
+    }
 
 
 class QueryCountOut(BaseModel):
@@ -1199,14 +1282,55 @@ def add_comment(
     )
 
 
-@router.get("/{issue_id}/comments", response_model=list[CommentOut])
+@router.get("/{issue_id}/comments", response_model=CommentListOut)
 def list_comments(
     issue_id: RowIdPath,
+    limit: int = Query(comments.LIST_DEFAULT_LIMIT, ge=1, le=comments.LIST_MAX_LIMIT),
+    cursor: str | None = Query(
+        None,
+        max_length=list_cursor.MAX_CURSOR_CHARS,
+        description="the previous page's next_cursor, unchanged; omit for the first page",
+    ),
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> list[dict]:
+) -> dict:
+    """An issue's comments, oldest first, each whole. At most `limit` a call;
+    while `has_more` is true, send `next_cursor` back as `cursor`. An issue the
+    caller cannot see is 404, the same as one that does not exist."""
     issue_for_read(conn, issue_id, actor)  # 404 if missing or not visible
-    return comments.list_comments(conn, issue_id)
+    after_id = 0
+    if cursor is not None:
+        try:
+            (after_id,) = list_cursor.decode(cursor, _COMMENT_CURSOR, (int,))
+        except list_cursor.CursorError as exc:
+            raise _cursor_refusal(exc) from exc
+    rows, has_more = comments.list_comments_page(
+        conn, issue_id, limit=limit, after_id=after_id
+    )
+    return {
+        "comments": rows,
+        "next_cursor": list_cursor.encode(_COMMENT_CURSOR, [rows[-1]["id"]])
+        if has_more
+        else None,
+        "has_more": has_more,
+    }
+
+
+@router.get("/{issue_id}/comments/{comment_id}", response_model=CommentOut)
+def show_comment(
+    issue_id: RowIdPath,
+    comment_id: RowIdPath,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """One comment, whole. The issue's visibility is the comment's: an issue
+    the caller cannot see, a comment that does not exist and a comment on
+    another issue are each 404."""
+    issue_for_read(conn, issue_id, actor)  # 404 if missing or not visible
+    comment = comments.get_comment(conn, comment_id)
+    if comment is None or comment["issue_id"] != issue_id:
+        raise Refusal(status_code=404, detail="no such comment", code="not_found")
+    return comment
 
 
 def _author_comment_or_error(

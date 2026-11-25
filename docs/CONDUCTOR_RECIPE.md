@@ -25,10 +25,10 @@ Distinct account names alone do not prove independent review.
 Give the conductor member credentials with `read` and `issue:write`, and set
 `ATHENA_MCP_PROFILE=conductor` in its MCP server environment: onboard it with
 `POST /users/onboard_agent` and `"profile": "conductor"`, and the printed config
-names it. This selects the 27
+names it. This selects the 28
 `seat` tools plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`,
 `get_issue_prior_text`, `assign_issue`, `delegate_issue`, `list_eligible_accounts`, `request_candidate_review`, `set_issue_parent`,
-`list_subtasks`, and `link_issues`: 40 tools before scope filtering. `docs:write` is optional for this
+`list_subtasks`, and `link_issues`: 41 tools before scope filtering. `docs:write` is optional for this
 issue-only loop; page tools remain in `seat+knowledge` or `full`. The default remains
 `full`. Profiles never grant permission, and REST still enforces access.
 
@@ -219,9 +219,10 @@ interruption you can resume from the last cursor, then refresh from the top to
 catch new submissions. Each page rechecks current candidates and visibility.
 
 For a structured issue inventory through the SDK or full-profile `list_issues`,
-keep the same filters and `limit` (default 50, maximum 100). Start at
-`offset=0`, advance by the number returned, and stop at a short page.
-Concurrent board edits can shift issue positions during this scan.
+keep the same filters and `limit` (default 50, maximum 100). Start without a
+`cursor`, pass each `next_cursor` back as `cursor` (the tool's `next` names it),
+and stop when `has_more` is false. Rows are in id order, so an issue created
+during the scan lands after every row already read.
 
 When the request row's `reported_verdict` is **HOLD** or BLOCKED, the conductor
 records the concrete finding and reopens/routes the build slice for rework. The

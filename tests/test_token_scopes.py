@@ -272,7 +272,7 @@ def test_read_only_token_cannot_start_a_playbook(tmp_path):
         assert denied.status_code == 403
         assert denied.json()["detail"] == "token scope required: issue:write"
         # Nothing was created: the refusal happened at the boundary.
-        assert client.get("/issues", headers=_AUTH_ADMIN).json() == []
+        assert client.get("/issues", headers=_AUTH_ADMIN).json()["issues"] == []
 
         # A token with the right scope still starts it — the gate narrows tokens,
         # not the feature.

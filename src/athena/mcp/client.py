@@ -281,11 +281,12 @@ class AthenaClient:
         search: str | None = None,
         include_archived: bool = False,
         limit: int = 50,
-        offset: int = 0,
+        cursor: str | None = None,
     ) -> Any:
-        # Validate types before omitting defaults: False compares equal to 0.
-        if type(limit) is not int or type(offset) is not int:
-            raise ValueError("limit and offset must be integers")
+        """One page of issues: {issues, next_cursor, has_more} (D2)."""
+        # Validate the type before omitting the default: False compares equal to 0.
+        if type(limit) is not int:
+            raise ValueError("limit must be an integer")
         params = self._params(
             status=status,
             project=project,
@@ -293,17 +294,18 @@ class AthenaClient:
             label=label,
             search=search,
             limit=limit if limit != 50 else None,
-            offset=offset if offset != 0 else None,
+            cursor=cursor,
         )
         if include_archived:  # only send it when set, so the default stays clean
             params["include_archived"] = True
         return self._result(self._client.get("/issues", params=params))
 
-    def search_work(self, q: str, *, limit: int = 50, offset: int = 0) -> Any:
-        """Run a work query. Same endpoint the browser and REST callers use."""
+    def search_work(self, q: str, *, limit: int = 50, cursor: str | None = None) -> Any:
+        """Run a work query: one page, {issues, next_cursor, has_more} (D2). Same
+        endpoint the REST callers use."""
         return self._result(
             self._client.get(
-                "/issues", params={"q": q, "limit": limit, "offset": offset}
+                "/issues", params=self._params(q=q, limit=limit, cursor=cursor)
             )
         )
 
@@ -747,9 +749,23 @@ class AthenaClient:
             idempotency_key=idempotency_key,
         )
 
-    def list_issue_comments(self, issue_id: int) -> Any:
-        """Read one issue's comment thread (oldest first)."""
-        return self._result(self._client.get(f"/issues/{issue_id}/comments"))
+    def list_issue_comments(
+        self, issue_id: int, *, limit: int | None = None, cursor: str | None = None
+    ) -> Any:
+        """One page of an issue's comment thread, oldest first:
+        {comments, next_cursor, has_more} (D2)."""
+        return self._result(
+            self._client.get(
+                f"/issues/{issue_id}/comments",
+                params=self._params(limit=limit, cursor=cursor),
+            )
+        )
+
+    def get_issue_comment(self, issue_id: int, comment_id: int) -> Any:
+        """One comment, whole."""
+        return self._result(
+            self._client.get(f"/issues/{issue_id}/comments/{comment_id}")
+        )
 
     def archive_issue(
         self, issue_id: int, *, idempotency_key: str | None = None
@@ -1018,6 +1034,33 @@ class AthenaClient:
         """Read the state of an idempotency key this credential used."""
         return self._result(self._client.get(f"/idempotency/{quote(key, safe='')}"))
 
+    def list_indeterminate_keys(
+        self, *, limit: int = 50, cursor: str | None = None
+    ) -> Any:
+        """Admin: one page of the idempotency keys whose outcome is unknown."""
+        params: dict[str, Any] = {"limit": limit}
+        if cursor is not None:
+            params["cursor"] = cursor
+        return self._result(
+            self._client.get("/idempotency-keys/indeterminate", params=params)
+        )
+
+    def resolve_idempotency_key(
+        self,
+        key_id: int,
+        *,
+        key: str,
+        outcome: str,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Admin: settle one key whose outcome is unknown as applied or not."""
+        return self._mutate(
+            self._client.post,
+            f"/idempotency-keys/{key_id}/resolve",
+            json={"key": key, "outcome": outcome},
+            idempotency_key=idempotency_key,
+        )
+
     def whoami(self) -> Any:
         """Read the authenticated identity: id, email, role, agent flag, and the
         acting token's effective scopes (null when the auth is not scope-limited)."""
@@ -1056,8 +1099,17 @@ class AthenaClient:
     def list_spaces(self) -> Any:
         return self._result(self._client.get("/spaces"))
 
-    def list_pages(self, space_id: int, *, include_archived: bool = False) -> Any:
-        params: dict[str, Any] = {}
+    def list_pages(
+        self,
+        space_id: int,
+        *,
+        include_archived: bool = False,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> Any:
+        """One page of a space's pages, without bodies:
+        {pages, next_cursor, has_more} (D2)."""
+        params: dict[str, Any] = self._params(limit=limit, cursor=cursor)
         if include_archived:  # only send it when set, so the default stays clean
             params["include_archived"] = True
         return self._result(

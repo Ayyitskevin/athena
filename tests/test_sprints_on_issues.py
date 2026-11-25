@@ -148,7 +148,7 @@ def test_issue_list_filtered_by_sprint(tmp_path):
 
         # The REST list and the web list share one filtering path — both narrow to
         # the sprint's issues only.
-        api = client.get(f"/issues?sprint={sid}", headers=H1).json()
+        api = client.get(f"/issues?sprint={sid}", headers=H1).json()["issues"]
         assert [i["id"] for i in api] == [in_sprint]
 
         page = client.get(f"/aegis/issues?sprint={sid}")

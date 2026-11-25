@@ -125,7 +125,8 @@ def test_board_filters_are_one_scoped_native_get_form(tmp_path):
         assert 'hx-sync="this:queue all"' in body
         assert 'hx-target=".board"' in body
         assert 'hx-swap="outerHTML"' in body
-        assert body.count('hx-include="closest form"') == 5
+        # Search, status, project, sprint, the lane grouping (U2) and Refresh.
+        assert body.count('hx-include="closest form"') == 6
         assert body.count('hx-sync="this:queue all"') == 1
         # Card forms stay native for no-JS use; JS sends through the stable source.
         assert 'hx-post="/aegis/boards/move/' not in body
@@ -197,7 +198,7 @@ def test_board_swimlanes_use_primary_assignee_kind(tmp_path):
 
         listed = {
             issue["id"]: issue["assignee_is_agent"]
-            for issue in client.get("/issues", headers=H1).json()
+            for issue in client.get("/issues", headers=H1).json()["issues"]
         }
         assert listed == {
             human_issue["id"]: False,

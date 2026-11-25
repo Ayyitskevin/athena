@@ -125,7 +125,9 @@ def test_uppercase_search_matches_same_rows_web_and_api(tmp_path):
         _make_issue(client, "apple pie")
         _make_issue(client, "banana bread")
 
-        api_titles = {row["title"] for row in client.get("/issues?search=APPLE").json()}
+        api_titles = {
+            row["title"] for row in client.get("/issues?search=APPLE").json()["issues"]
+        }
         assert api_titles == {"apple pie"}
 
         web = client.get("/aegis/issues?search=APPLE").text

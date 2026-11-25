@@ -75,7 +75,9 @@ def test_second_actor_is_refused_and_nothing_lands(tmp_path):
         assert forged.json()["detail"] == "run 'shared' is bound to another actor"
         # The refused write rolled back WHOLE: no issue row, no event, and the
         # run's trail still has exactly one author.
-        assert [i["title"] for i in c.get("/issues", headers=H1).json()] == ["ann's"]
+        assert [i["title"] for i in c.get("/issues", headers=H1).json()["issues"]] == [
+            "ann's"
+        ]
         events = c.get("/activity", params={"run_id": "shared"}, headers=H1).json()
         assert {e["actor_id"] for e in events} == {1}
     assert _bindings(db_file) == {"shared": 1}

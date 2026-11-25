@@ -106,18 +106,27 @@ def _sql(db_file: Path, statement: str, params=()) -> None:
 
 def _acquired_long_ago(db_file: Path, issue_id: int | None = None) -> None:
     """The clock passes: the claim (its `claimed` event and the lease row) was
-    taken an hour ago. The app has no injectable clock, and a test never sleeps."""
+    taken an hour ago. The app has no injectable clock, and a test never sleeps.
+
+    One timestamp for both rows. Each statement used to read the clock itself,
+    and when the two fell either side of a second the lease was a second newer
+    than its `claimed` event: the claim then had no event at or after it, read
+    as untagged, and the test waiting for a missed check-in failed (seen once
+    in a full run)."""
+    conn = db.connect(db_file)
+    try:
+        (then,) = conn.execute("SELECT datetime('now', '-1 hour')").fetchone()
+    finally:
+        conn.close()
     where = "" if issue_id is None else f" AND target_id = {int(issue_id)}"
     _sql(
         db_file,
-        "UPDATE activity SET created_at = datetime('now', '-1 hour') "
+        "UPDATE activity SET created_at = ? "
         f"WHERE verb = 'claimed' AND target_kind = 'issue'{where}",
+        (then,),
     )
     lease_where = "" if issue_id is None else f" WHERE issue_id = {int(issue_id)}"
-    _sql(
-        db_file,
-        f"UPDATE issue_leases SET claimed_at = datetime('now', '-1 hour'){lease_where}",
-    )
+    _sql(db_file, f"UPDATE issue_leases SET claimed_at = ?{lease_where}", (then,))
 
 
 def _acquired_at(db_file: Path, issue_id: int) -> datetime:

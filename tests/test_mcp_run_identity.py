@@ -138,7 +138,7 @@ def test_reads_are_also_stamped_but_recorded_nowhere(tmp_path):
     # reads is harmless — and it means an agent's whole session shares one run.
     tc, ath, db_file = _harness(tmp_path, run_id="mcp-session")
     try:
-        ath.list_issues()
+        ath.list_issues()["issues"]
         assert _events(db_file, "created") == []  # reads created no events
     finally:
         tc.__exit__(None, None, None)

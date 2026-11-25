@@ -40,7 +40,7 @@ def test_create_then_list_issue(tmp_path):
 
         listing = client.get("/issues")
         assert listing.status_code == 200
-        assert [i["title"] for i in listing.json()] == ["ship it"]
+        assert [i["title"] for i in listing.json()["issues"]] == ["ship it"]
 
 
 def test_missing_actor_header_is_rejected(tmp_path):
@@ -164,7 +164,9 @@ def test_list_filters_by_status(tmp_path):
         _seed_user(db_file)
         _mk(client, "open one")
         _mk(client, "done one", status="done")
-        titles = [i["title"] for i in client.get("/issues?status=done").json()]
+        titles = [
+            i["title"] for i in client.get("/issues?status=done").json()["issues"]
+        ]
         assert titles == ["done one"]
 
 
@@ -178,9 +180,13 @@ def test_list_search_matches_title_or_body_case_insensitively(tmp_path):
         _mk(client, "Login bug", body="crashes on submit")
         _mk(client, "Dashboard", body="add a Widget")
         _mk(client, "Unrelated", body="nothing here")
-        by_title = {i["title"] for i in client.get("/issues?search=login").json()}
+        by_title = {
+            i["title"] for i in client.get("/issues?search=login").json()["issues"]
+        }
         assert by_title == {"Login bug"}
-        by_body = {i["title"] for i in client.get("/issues?search=WIDGET").json()}
+        by_body = {
+            i["title"] for i in client.get("/issues?search=WIDGET").json()["issues"]
+        }
         assert by_body == {"Dashboard"}
 
 
@@ -201,7 +207,7 @@ def test_list_filters_by_label(tmp_path):
             json={"label_id": lab["id"]},
             headers={"X-Athena-Actor": "1"},
         )
-        titles = [i["title"] for i in client.get("/issues?label=bug").json()]
+        titles = [i["title"] for i in client.get("/issues?label=bug").json()["issues"]]
         assert titles == ["has bug label"]
 
 
@@ -212,7 +218,7 @@ def test_list_unknown_label_matches_nothing(tmp_path):
     with TestClient(app) as client:
         _seed_user(db_file)
         _mk(client, "something")
-        assert client.get("/issues?label=ghost").json() == []
+        assert client.get("/issues?label=ghost").json()["issues"] == []
 
 
 def test_list_filters_compose(tmp_path):
@@ -233,7 +239,9 @@ def test_list_filters_compose(tmp_path):
         )
         titles = [
             i["title"]
-            for i in client.get("/issues?status=done&search=login&label=auth").json()
+            for i in client.get("/issues?status=done&search=login&label=auth").json()[
+                "issues"
+            ]
         ]
         assert titles == ["urgent login fix"]
 
@@ -245,14 +253,15 @@ def test_list_no_filters_returns_all(tmp_path):
         _seed_user(db_file)
         _mk(client, "one")
         _mk(client, "two")
-        assert len(client.get("/issues").json()) == 2
+        assert len(client.get("/issues").json()["issues"]) == 2
 
 
 def test_list_is_paginated_and_bounded(tmp_path):
     # WHY: GET /issues is anon-reachable, so an unbounded list is a credential-free
     # DoS vector (pull the whole table in one request) — the same gap A5 closed on
-    # /issues/search. The page is capped (≤ 100, default 50) and offset walks it, over
-    # a stable id order; out-of-range limits are rejected at the boundary (422).
+    # /issues/search. The page is capped (≤ 100, default 50) and the cursor walks it
+    # (H6, D2), over a stable id order; out-of-range limits are rejected at the
+    # boundary (422), and so is the offset the cursor replaced.
     db_file = tmp_path / "page.db"
     app = create_app(db_file)
     with TestClient(app) as client:
@@ -261,22 +270,24 @@ def test_list_is_paginated_and_bounded(tmp_path):
 
         first_two = client.get("/issues?limit=2")
         assert first_two.status_code == 200
-        assert [i["id"] for i in first_two.json()] == ids[:2]
-        # offset walks the pages, same stable order.
-        assert [i["id"] for i in client.get("/issues?limit=2&offset=2").json()] == ids[
-            2:4
-        ]
-        assert [i["id"] for i in client.get("/issues?limit=2&offset=4").json()] == ids[
-            4:
-        ]
+        assert [i["id"] for i in first_two.json()["issues"]] == ids[:2]
+        # next_cursor walks the pages, same stable order.
+        second = client.get(
+            "/issues", params={"limit": 2, "cursor": first_two.json()["next_cursor"]}
+        ).json()
+        assert [i["id"] for i in second["issues"]] == ids[2:4]
+        last = client.get(
+            "/issues", params={"limit": 2, "cursor": second["next_cursor"]}
+        ).json()
+        assert [i["id"] for i in last["issues"]] == ids[4:]
+        assert last["has_more"] is False and last["next_cursor"] is None
 
         # The cap is enforced at the boundary — no unbounded/garbage page sizes.
         assert client.get("/issues?limit=0").status_code == 422
         assert client.get("/issues?limit=-1").status_code == 422
         assert client.get("/issues?limit=101").status_code == 422
-        assert client.get("/issues?offset=-1").status_code == 422
-        assert client.get(f"/issues?offset={issues.MAX_OFFSET}").status_code == 200
-        assert client.get(f"/issues?offset={issues.MAX_OFFSET + 1}").status_code == 422
+        assert client.get("/issues?offset=0").status_code == 422
+        assert client.get("/issues?cursor=nonsense").status_code == 422
 
 
 def test_list_data_layer_rejects_unbindable_offset(tmp_path):
@@ -300,6 +311,8 @@ def test_list_default_page_size_is_bounded(tmp_path):
         _seed_user(db_file)
         for n in range(55):
             _mk(client, f"n{n}")
-        assert len(client.get("/issues").json()) == 50
+        assert len(client.get("/issues").json()["issues"]) == 50
         # The tail is reachable by paging past the first page.
-        assert len(client.get("/issues?offset=50").json()) == 5
+        cursor = client.get("/issues").json()["next_cursor"]
+        rest = client.get("/issues", params={"cursor": cursor}).json()
+        assert len(rest["issues"]) == 5 and rest["has_more"] is False

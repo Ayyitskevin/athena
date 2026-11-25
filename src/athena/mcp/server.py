@@ -40,6 +40,7 @@ from pydantic import AfterValidator, Field, ValidationError
 
 from athena.aegis import (
     automation,
+    comments,
     delegations,
     fleet_metrics,
     fleet_work,
@@ -52,6 +53,8 @@ from athena.aegis import (
 from athena.core import (
     dispatch,
     event_wait,
+    idempotency,
+    list_cursor,
     notifications,
     run_context,
     run_control_commands,
@@ -61,6 +64,7 @@ from athena.core import (
 from athena.mcp.client import AthenaClient, AthenaError
 from athena.mcp import config as mcp_config, resources, results
 from athena.mcp.results import ListResult, ListShape, ObjectShape
+from athena.mentor import pages
 from athena.workflows import workspace_search
 
 
@@ -144,7 +148,6 @@ EligibleAccountLimit = Annotated[
     Field(strict=True, ge=1, le=issue_commands.ELIGIBLE_ACCOUNTS_MAX_LIMIT),
 ]
 EligibleAccountCursor = Annotated[str, Field(min_length=1, max_length=32)]
-IssueListOffset = Annotated[int, Field(strict=True, ge=0, le=issues.MAX_OFFSET)]
 IssueFilterId = Annotated[
     int,
     Field(strict=True, ge=0, le=issues.MAX_SQLITE_INTEGER),
@@ -239,6 +242,16 @@ DigestWindowMinutes = Annotated[
 MuteUntil = Annotated[str, Field(max_length=notifications.MAX_MUTE_UNTIL_CHARS)]
 # Where a list starts: the offset a truncated list's `next` names.
 ListOffset = Annotated[int, Field(strict=True, ge=0)]
+# Where a D2 list resumes: the route's next_cursor, which a truncated list's
+# `next` names; passed back unchanged.
+ListCursor = Annotated[
+    str, Field(min_length=1, max_length=list_cursor.MAX_CURSOR_CHARS)
+]
+PageListLimit = Annotated[int, Field(strict=True, ge=1, le=pages.LIST_MAX_LIMIT)]
+CommentListLimit = Annotated[int, Field(strict=True, ge=1, le=comments.LIST_MAX_LIMIT)]
+IndeterminateKeyLimit = Annotated[
+    int, Field(strict=True, ge=1, le=idempotency.INDETERMINATE_MAX_LIMIT)
+]
 # A place in a sectioned answer (the desk, a floor), as a `_truncated` key
 # names it: keys and row indexes.
 AnswerSection = Annotated[
@@ -722,8 +735,9 @@ def _budget_cuts(
 ) -> list[results.Cut]:
     """Where an object answer may be cut to its budget, and what reads on.
 
-    The long texts are an issue's or a page's body and an edit's prior body (the
-    rest is read by body_offset) and the work-context packet's description and
+    The long texts are an issue's, a page's or a comment's body and an edit's
+    prior body (the rest is read by body_offset) and the work-context packet's
+    description and
     comments; the
     long lists are the packet's activity, the delegation inbox and the event
     feed, each continued by its own paging. The desk declares none: its lanes
@@ -755,6 +769,21 @@ def _budget_cuts(
                         "event_id": event_id,
                         "body_offset": base + kept,
                     },
+                },
+            )
+        ]
+    if (
+        name == "get_issue_comment"
+        and isinstance(result.get("body"), str)
+        and {"id", "issue_id"} <= set(result)
+    ):
+        comment = {"issue_id": result["issue_id"], "comment_id": result["id"]}
+        return [
+            results.Cut(
+                ("body",),
+                lambda kept: {
+                    "tool": name,
+                    "arguments": {**comment, "body_offset": base + kept},
                 },
             )
         ]
@@ -792,10 +821,17 @@ def _work_context_cuts(packet: dict[str, Any]) -> list[results.Cut]:
     """The packet gives up its oldest activity first, then its comments' text
     (each down to an excerpt), and its description last: that is the task."""
     issue_id = packet["issue"]["id"]
-    comments = packet.get("comments") or {}
-    first_shown = int(comments.get("visible_total") or 0) - len(
-        comments.get("items") or []
-    )
+    shown = (packet.get("comments") or {}).get("items") or []
+
+    def comment_reader(kept: int) -> dict[str, Any]:
+        # Each cut comment is marked `truncated` and read whole by its id; the
+        # first one cut is named here.
+        longer = [item for item in shown if item["body"]["total_chars"] > kept]
+        first = (longer or shown)[0]
+        return {
+            "tool": "get_issue_comment",
+            "arguments": {"issue_id": issue_id, "comment_id": first["id"]},
+        }
 
     def activity_clipped(fitted: dict[str, Any], kept: int) -> None:
         fitted["recent_activity"]["clipped"] = True
@@ -820,14 +856,7 @@ def _work_context_cuts(packet: dict[str, Any]) -> list[results.Cut]:
         ),
         results.Cut(
             ("comments", "items"),
-            lambda kept: {
-                "tool": "list_issue_comments",
-                "arguments": {
-                    "issue_id": issue_id,
-                    "offset": max(first_shown, 0),
-                    "include_body": True,
-                },
-            },
+            comment_reader,
             comments_cut,
             each=("body", "text"),
             floor=results.EXCERPT_CHARS,

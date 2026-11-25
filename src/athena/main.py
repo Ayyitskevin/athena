@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import hashlib
+import os
 import logging
 import secrets
 from pathlib import Path
@@ -80,6 +81,7 @@ from athena.core import (
     security_api,
     sessions,
     idempotency_api,
+    idempotency_commands,
     tokens_api,
     undo,
     users,
@@ -422,6 +424,24 @@ def create_app(
         else:
             _logger.info("schema already current; no migrations to apply")
         app.state.db_path = resolved_db
+        # A process that is the only one serving this database knows that any
+        # idempotency key still "executing" has no owner: its process is gone
+        # (H14). With another process serving, nothing is assumed.
+        serving_lock, alone = background.join_serving(resolved_db)
+        if alone and serving_lock is not None:
+            conn = db.connect(resolved_db)
+            try:
+                orphaned = idempotency_commands.orphan_executing(conn)
+            finally:
+                conn.close()
+            background.keep_serving(serving_lock)
+            if orphaned:
+                _logger.warning(
+                    "idempotency: %d key(s) left executing by a process that no "
+                    "longer exists now answer idempotency_indeterminate; an admin "
+                    "lists them with GET /idempotency-keys/indeterminate",
+                    orphaned,
+                )
         # Only athena-serve marks its own start; athena-demo pins a listener too.
         _log_cookie_notice(
             launched=config.SERVED_BY_ATHENA_SERVE and expected_server is not None
@@ -453,8 +473,13 @@ def create_app(
             yield
         finally:
             db.end_serving(resolved_db)
-            # Shutdown: stop the background loops cleanly.
-            await loops.stop()
+            # Shutdown: stop the background loops cleanly, then leave the
+            # processes serving this database.
+            try:
+                await loops.stop()
+            finally:
+                if serving_lock is not None:
+                    os.close(serving_lock)
 
     app = FastAPI(title="Athena", lifespan=lifespan, docs_url=None, redoc_url=None)
     # The footer states which build rendered the page. Not decoration: a
@@ -952,6 +977,7 @@ def create_app(
     app.include_router(aegis_forge_api.router)
     app.include_router(tokens_api.router)
     app.include_router(idempotency_api.router)
+    app.include_router(idempotency_api.admin_router)
     app.include_router(agent_runs_api.router)
     app.include_router(run_controls_api.router)
     app.include_router(answerability_api.router)

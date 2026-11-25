@@ -42,7 +42,7 @@ around:
 5. **Operator Playbook → Fleet operating guide** into its linked issues.
 
 Paste the printed MCP config into Claude Code, Claude Desktop, or any MCP
-client, and the seeded agent can work that database as itself — the 38 tools
+client, and the seeded agent can work that database as itself — the 39 tools
 of the `seat+knowledge` profile the config names, launched by the absolute path
 of this checkout's `athena-mcp`, every write on the trail under its own
 identity.

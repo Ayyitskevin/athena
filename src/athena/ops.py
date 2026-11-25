@@ -638,11 +638,12 @@ def _shared_directory(directory: Path) -> str | None:
 def _athena_entries(database: Path, attach_dir: Path | None) -> set[str]:
     """The exact names Athena keeps beside its database: the database, its
     ``-wal``, ``-shm`` and ``-journal`` files, the copy a remedy keeps, the
-    lock of the background loops, and the configured attachment directory when
-    it lives there."""
+    locks of the background loops and of the serving processes, and the
+    configured attachment directory when it lives there."""
     names = {database.name + suffix for suffix in ("", "-wal", "-shm", "-journal")}
     names.add(database.name + ".kept")
     names.add(database.name + background.LOCK_SUFFIX)
+    names.add(database.name + background.SERVING_SUFFIX)
     if attach_dir is not None and attach_dir.absolute().parent == database.parent:
         names.add(attach_dir.name)
     return names

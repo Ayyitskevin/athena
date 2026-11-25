@@ -153,7 +153,7 @@ def test_my_open_issues_drops_assignments_in_hidden_projects(tmp_path):
         _bootstrap(client)
         conn, priv, pub = _scenario(client, db_file)
         # Assign one hidden issue and the public one to the outsider.
-        hidden = client.get("/issues", headers=H_ADMIN).json()
+        hidden = client.get("/issues", headers=H_ADMIN).json()["issues"]
         priv_iid = next(i["id"] for i in hidden if i["title"] == "Hidden A")
         pub_iid = next(i["id"] for i in hidden if i["title"] == "Public one")
         client.put(

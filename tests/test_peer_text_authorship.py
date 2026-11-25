@@ -29,13 +29,14 @@ from typing import Any, Literal, Union, get_args, get_origin
 from pydantic import BaseModel
 
 from athena.aegis import work_context_api
+from athena.aegis.api import CommentListOut
 from athena.aegis.api import CommentOut as IssueCommentOut
 from athena.aegis.api import IssuePriorTextOut
 from athena.aegis.notification_priority_api import PriorityInboxOut, PrioritySummaryOut
 from athena.aegis.project_brief_models import Excerpt
 from athena.core.notifications_api import NotificationOut
 from athena.main import create_app
-from athena.mentor.api import PageCommentOut, PageOut, PageVersionOut
+from athena.mentor.api import PageCommentOut, PageListOut, PageOut, PageVersionOut
 
 AUTHOR = "authored_by"
 
@@ -45,11 +46,13 @@ READS: dict[tuple[str, str], tuple[type[BaseModel], ...]] = {
         work_context_api.IssueWorkContextOut,
         work_context_api.IssueWorkContextBriefOut,
     ),
-    ("get", "/issues/{issue_id}/comments"): (IssueCommentOut,),
+    # H6: the comment and page lists answer a D2 page of their rows.
+    ("get", "/issues/{issue_id}/comments"): (CommentListOut,),
+    ("get", "/issues/{issue_id}/comments/{comment_id}"): (IssueCommentOut,),
     ("get", "/issues/{issue_id}/prior-texts/{event_id}"): (IssuePriorTextOut,),
     ("get", "/pages/{page_id}/comments"): (PageCommentOut,),
     ("get", "/pages/{page_id}"): (PageOut,),
-    ("get", "/spaces/{space_id}/pages"): (PageOut,),
+    ("get", "/spaces/{space_id}/pages"): (PageListOut,),
     ("get", "/pages/by-title"): (PageOut,),
     ("get", "/pages/{page_id}/versions"): (PageVersionOut,),
     ("get", "/pages/{page_id}/versions/{version}"): (PageVersionOut,),
@@ -179,6 +182,8 @@ NOT_PEER_WRITTEN: dict[str, tuple[str, str]] = {
         "an issue priority (low, medium, high, urgent)",
     ),
     # --- page reads -----------------------------------------------------------------
+    "aegis.api.CommentListOut.next_cursor": (ID, "the list's opaque cursor (H6)"),
+    "mentor.api.PageListOut.next_cursor": (ID, "the list's opaque cursor (H6)"),
     "mentor.api.LabelOut.name": (NAME, "a label's name"),
     "mentor.api.LabelOut.color": (ID, "a label's colour token"),
     # --- the desk (no response model: keyed by lane path) ------------------------
@@ -907,7 +912,9 @@ def test_instruction_shaped_peer_text_reaches_another_agent_marked_as_data(tmp_p
         }
         assert notified == {writer_id: by_writer, 1: by_operator}
 
-        listed = ok(client.get(f"/issues/{issue['id']}/comments", headers=reader))
+        listed = ok(client.get(f"/issues/{issue['id']}/comments", headers=reader))[
+            "comments"
+        ]
         assert INJECTION in listed[0]["body"]
         assert [row[AUTHOR] for row in listed] == [by_writer, by_operator]
         read_page = ok(client.get(f"/pages/{page['id']}", headers=reader))

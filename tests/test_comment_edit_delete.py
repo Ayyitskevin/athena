@@ -57,7 +57,7 @@ def test_author_can_edit_own_comment(tmp_path):
         )
         assert r.status_code == 200
         assert r.json()["body"] == "edited"
-        listed = client.get(f"/issues/{issue_id}/comments").json()
+        listed = client.get(f"/issues/{issue_id}/comments").json()["comments"]
         assert listed[0]["body"] == "edited"
 
 
@@ -77,7 +77,7 @@ def test_non_author_cannot_edit_comment(tmp_path):
             headers={"X-Athena-Actor": "2"},  # Bob, not the author
         )
         assert r.status_code == 403
-        listed = client.get(f"/issues/{issue_id}/comments").json()
+        listed = client.get(f"/issues/{issue_id}/comments").json()["comments"]
         assert listed[0]["body"] == "ann's words"  # unchanged
 
 
@@ -142,7 +142,7 @@ def test_author_can_delete_own_comment(tmp_path):
             headers={"X-Athena-Actor": "1"},
         )
         assert r.status_code == 204
-        assert client.get(f"/issues/{issue_id}/comments").json() == []
+        assert client.get(f"/issues/{issue_id}/comments").json()["comments"] == []
 
 
 def test_non_author_cannot_delete_comment(tmp_path):
@@ -158,7 +158,7 @@ def test_non_author_cannot_delete_comment(tmp_path):
             headers={"X-Athena-Actor": "2"},  # not the author
         )
         assert r.status_code == 403
-        assert len(client.get(f"/issues/{issue_id}/comments").json()) == 1
+        assert len(client.get(f"/issues/{issue_id}/comments").json()["comments"]) == 1
 
 
 def _seed_admin_and_two_members(db_file):
@@ -193,14 +193,14 @@ def test_admin_can_delete_another_users_comment_but_member_cannot(tmp_path):
             f"/issues/{issue_id}/comments/{comment_id}", headers={"X-Athena-Actor": "3"}
         )
         assert member.status_code == 403
-        assert len(client.get(f"/issues/{issue_id}/comments").json()) == 1
+        assert len(client.get(f"/issues/{issue_id}/comments").json()["comments"]) == 1
 
         # The admin may moderate it away.
         admin = client.delete(
             f"/issues/{issue_id}/comments/{comment_id}", headers={"X-Athena-Actor": "1"}
         )
         assert admin.status_code == 204
-        assert client.get(f"/issues/{issue_id}/comments").json() == []
+        assert client.get(f"/issues/{issue_id}/comments").json()["comments"] == []
 
     conn = db.connect(db_file)
     latest = conn.execute(
@@ -230,7 +230,7 @@ def test_admin_cannot_edit_another_users_comment(tmp_path):
         )
         assert r.status_code == 403
         assert (
-            client.get(f"/issues/{issue_id}/comments").json()[0]["body"]
+            client.get(f"/issues/{issue_id}/comments").json()["comments"][0]["body"]
             == "ann's words"
         )
 
@@ -290,7 +290,7 @@ def test_web_author_can_delete_then_non_author_cannot(tmp_path):
         _login(client, "bob@e.com", "Bob")  # user 2, replaces session cookie
         forbidden = client.post(f"/aegis/issues/{issue_id}/comments/{c1}/delete")
         assert forbidden.status_code == 403
-        assert len(client.get(f"/issues/{issue_id}/comments").json()) == 2
+        assert len(client.get(f"/issues/{issue_id}/comments").json()["comments"]) == 2
 
         # Ann logs back in and deletes her own.
         _login(client, "ann@e.com", "Ann")
@@ -298,7 +298,7 @@ def test_web_author_can_delete_then_non_author_cannot(tmp_path):
             f"/aegis/issues/{issue_id}/comments/{c2}/delete", follow_redirects=False
         )
         assert ok.status_code == 303
-        remaining = client.get(f"/issues/{issue_id}/comments").json()
+        remaining = client.get(f"/issues/{issue_id}/comments").json()["comments"]
         assert [r["id"] for r in remaining] == [c1]
 
 
@@ -320,7 +320,7 @@ def test_web_admin_can_delete_another_users_comment(tmp_path):
             f"/aegis/issues/{issue_id}/comments/{cid}/delete", follow_redirects=False
         )
         assert ok.status_code == 303
-        assert client.get(f"/issues/{issue_id}/comments").json() == []
+        assert client.get(f"/issues/{issue_id}/comments").json()["comments"] == []
 
 
 def test_web_author_can_edit_own_comment(tmp_path):
@@ -336,4 +336,7 @@ def test_web_author_can_edit_own_comment(tmp_path):
             follow_redirects=False,
         )
         assert ok.status_code == 303
-        assert client.get(f"/issues/{issue_id}/comments").json()[0]["body"] == "after"
+        assert (
+            client.get(f"/issues/{issue_id}/comments").json()["comments"][0]["body"]
+            == "after"
+        )

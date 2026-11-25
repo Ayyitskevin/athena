@@ -52,19 +52,29 @@ _LIVE_LEASE = leases.live_lease_sql("i.id")
 # surfaces disagreeing about what "sort by priority" means is a bug we already had.
 _PRIORITY_RANK = issues.PRIORITY_RANK_SQL
 
-_ORDER_BY: dict[str, str] = {
-    "created-asc": "i.created_at ASC, i.id ASC",
-    "created-desc": "i.created_at DESC, i.id DESC",
-    "id-asc": "i.id ASC",
-    "id-desc": "i.id DESC",
+#
+# Each sort is its ORDER BY columns as (expression, descending, value type), the id
+# last so the order is total. The same columns are the keyset a list cursor resumes
+# after (core/list_cursor.py): the next page starts strictly after the last row's
+# values, so an issue created between two pages never repeats a row the way an
+# offset did.
+_SORT_KEYS: dict[str, tuple[tuple[str, bool, type], ...]] = {
+    "created-asc": (("i.created_at", False, str), ("i.id", False, int)),
+    "created-desc": (("i.created_at", True, str), ("i.id", True, int)),
+    "id-asc": (("i.id", False, int),),
+    "id-desc": (("i.id", True, int),),
     # "desc" for priority means most urgent first, which is the HIGHEST rank —
     # the reverse of the numeric direction, and the reading an operator expects.
-    "priority-asc": f"{_PRIORITY_RANK} ASC, i.id DESC",
-    "priority-desc": f"{_PRIORITY_RANK} DESC, i.id DESC",
-    "status-asc": "i.status ASC, i.id DESC",
-    "status-desc": "i.status DESC, i.id DESC",
+    "priority-asc": ((_PRIORITY_RANK, False, int), ("i.id", True, int)),
+    "priority-desc": ((_PRIORITY_RANK, True, int), ("i.id", True, int)),
+    "status-asc": (("i.status", False, str), ("i.id", True, int)),
+    "status-desc": (("i.status", True, str), ("i.id", True, int)),
     # Most idle first: the oldest last-work time leads.
-    "idle-desc": f"{_IDLE_ANCHOR} ASC, i.id DESC",
+    "idle-desc": ((_IDLE_ANCHOR, False, str), ("i.id", True, int)),
+}
+_ORDER_BY: dict[str, str] = {
+    sort: ", ".join(f"{expr} {'DESC' if desc else 'ASC'}" for expr, desc, _ in keys)
+    for sort, keys in _SORT_KEYS.items()
 }
 
 # The status-category expression, over the LEFT JOIN this module adds below.
@@ -317,6 +327,60 @@ def run_query(
     )
     rows = conn.execute(sql, [*params, limit, offset]).fetchall()
     return [issues.to_issue(row) for row in rows]
+
+
+def cursor_tag(query: Query) -> str:
+    """The list a cursor of this query belongs to: one per sort, so a cursor
+    from one order is never read as a place in another."""
+    return f"issues:{query.sort}"
+
+
+def cursor_types(query: Query) -> tuple[type, ...]:
+    """The value types of a cursor key for this query's sort."""
+    return tuple(kind for _, _, kind in _SORT_KEYS[query.sort])
+
+
+def query_page(
+    conn: sqlite3.Connection,
+    query: Query,
+    *,
+    actor: dict | None,
+    visible_project_ids: set[int] | None,
+    limit: int,
+    after: list | None = None,
+) -> tuple[list[dict], list | None]:
+    """One page of a compiled query: at most ``limit`` issues strictly after the
+    sort key ``after`` (None: from the start), and the key the next page resumes
+    after, or None when no issue follows.
+
+    The keyset predicate compares the sort's own ORDER BY expressions with the
+    last row's values, column by column (``(a > x) OR (a = x AND id < y)``), so a
+    page starts exactly where the previous one ended in that order."""
+    where, params, order_by = compile_query(
+        conn, query, actor=actor, visible_project_ids=visible_project_ids
+    )
+    keys = _SORT_KEYS[query.sort]
+    if after is not None:
+        if len(after) != len(keys):
+            raise QueryCompileError("cursor does not belong to this sort")
+        alternatives = []
+        for depth, (expr, desc, _) in enumerate(keys):
+            ties = [f"{tied} = ?" for tied, _, _ in keys[:depth]]
+            alternatives.append(
+                "(" + " AND ".join([*ties, f"{expr} {'<' if desc else '>'} ?"]) + ")"
+            )
+            params = [*params, *after[:depth], after[depth]]
+        where = f"({where}) AND ({' OR '.join(alternatives)})"
+    sql = f"{issues.select_sql()}{_JOIN} WHERE {where} ORDER BY {order_by} LIMIT ?"
+    rows = conn.execute(sql, [*params, limit + 1]).fetchall()
+    page = [issues.to_issue(row) for row in rows[:limit]]
+    if len(rows) <= limit:
+        return page, None
+    columns = ", ".join(expr for expr, _, _ in keys)
+    last = conn.execute(
+        f"SELECT {columns} FROM issues i WHERE i.id = ?", (page[-1]["id"],)
+    ).fetchone()
+    return page, list(last)
 
 
 def count_query(

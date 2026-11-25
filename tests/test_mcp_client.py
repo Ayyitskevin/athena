@@ -20,6 +20,7 @@ from support import answer_fields, replayed_fields
 from athena.main import create_app
 from athena.aegis import automation, issues
 from athena.core import db, dispatch
+from athena.core.list_cursor import MAX_CURSOR_CHARS
 from athena.mcp.client import AthenaClient, AthenaError
 
 
@@ -408,6 +409,14 @@ MUTATION_CASES = [
         lambda c, k: c.clear_agent_budget(9, idempotency_key=k),
     ),
     (
+        "resolve_idempotency_key",
+        "POST",
+        "/idempotency-keys/5/resolve",
+        lambda c, k: c.resolve_idempotency_key(
+            5, key="run-7/step:2", outcome="applied", idempotency_key=k
+        ),
+    ),
+    (
         "label_page",
         "POST",
         "/pages/4/labels",
@@ -558,6 +567,10 @@ MCP_MUTATION_CASES = [
     ("set_approval_policy", {"user_id": 9, "action_kind": "issue.close"}),
     ("set_agent_budget", {"user_id": 9, "window": "day", "action_limit": 50}),
     ("clear_agent_budget", {"user_id": 9}),
+    (
+        "resolve_idempotency_key",
+        {"key_id": 5, "key": "run-7/step:2", "outcome": "applied"},
+    ),
     ("label_page", {"page_id": 4, "label_id": 9}),
     ("unlabel_page", {"page_id": 4, "label_id": 9}),
     (
@@ -590,6 +603,14 @@ MCP_SPRINT_RESOURCE_CASES = [
 ]
 
 
+_D2_LISTS = {
+    "list_issues": "issues",
+    "search_work": "issues",
+    "list_pages": "pages",
+    "list_issue_comments": "comments",
+}
+
+
 class _MCPRecordingAthenaClient:
     def __init__(self):
         self.calls = []
@@ -599,6 +620,9 @@ class _MCPRecordingAthenaClient:
             self.calls.append((name, args, kwargs))
             if name in {"yield_claim", "delete_sprint"}:
                 return None
+            if name in _D2_LISTS:
+                # H6: these routes answer one D2 page.
+                return {_D2_LISTS[name]: [], "next_cursor": None, "has_more": False}
             return [] if name in {"delegate_issue", "list_sprints"} else {}
 
         return record
@@ -837,13 +861,14 @@ def test_list_issues_forwards_sprint_only_when_explicit():
     [
         {"limit": None},
         {"limit": 50.0},
-        {"offset": False},
-        {"offset": "0"},
+        {"limit": True},
+        {"limit": "50"},
     ],
 )
 def test_issue_list_invalid_sdk_types_cannot_disappear_as_defaults(params):
+    # H6: the list pages by cursor, so limit is the one number left to check.
     transport = _RecordingClient()
-    with pytest.raises(ValueError, match="limit and offset"):
+    with pytest.raises(ValueError, match="limit must be an integer"):
         AthenaClient(client=transport).list_issues(**params)
     assert transport.calls == []
 
@@ -965,7 +990,7 @@ def test_issue_lifecycle_through_the_client(tmp_path):
         assert moved["status"] == "in_progress"
 
         ath.comment_on_issue(issue["id"], "on it")
-        assert ath.list_issues(status="in_progress")[0]["id"] == issue["id"]
+        assert ath.list_issues(status="in_progress")["issues"][0]["id"] == issue["id"]
 
         # Full-text search spans the issue we just made.
         hits = ath.search("ship")
@@ -1071,7 +1096,7 @@ def test_pages_through_the_client(tmp_path):
         page = ath.create_page(space_id=space["id"], title="Runbook", body="# Step")
         assert page["title"] == "Runbook"
         assert ath.get_page(page["id"])["id"] == page["id"]
-        assert [p["id"] for p in ath.list_pages(space["id"])] == [page["id"]]
+        assert [p["id"] for p in ath.list_pages(space["id"])["pages"]] == [page["id"]]
         updated = ath.update_page(page["id"], body="# Step 1\n# Step 2")
         assert "Step 2" in updated["body"]
         assert any(s["key"] == "ENG" for s in ath.list_spaces())
@@ -1094,7 +1119,9 @@ def test_find_pages_by_title_through_the_client(tmp_path):
         # A unique title resolves to exactly one page.
         onboarding = ath.find_pages_by_title("Onboarding")
         assert [p["id"] for p in onboarding] == [
-            p["id"] for p in ath.list_pages(eng["id"]) if p["title"] == "Onboarding"
+            p["id"]
+            for p in ath.list_pages(eng["id"])["pages"]
+            if p["title"] == "Onboarding"
         ]
 
         # A reused title returns every match (case-insensitively), newest space last.
@@ -1301,13 +1328,16 @@ def test_archive_unarchive_through_the_client(tmp_path):
         gone = ath.create_issue(title="gone")
         assert ath.archive_issue(gone["id"])["archived_at"] is not None
         # Default listing hides it; include_archived reveals it.
-        assert [i["id"] for i in ath.list_issues()] == [keep["id"]]
-        assert {i["id"] for i in ath.list_issues(include_archived=True)} == {
+        assert [i["id"] for i in ath.list_issues()["issues"]] == [keep["id"]]
+        assert {i["id"] for i in ath.list_issues(include_archived=True)["issues"]} == {
             keep["id"],
             gone["id"],
         }
         assert ath.unarchive_issue(gone["id"])["archived_at"] is None
-        assert {i["id"] for i in ath.list_issues()} == {keep["id"], gone["id"]}
+        assert {i["id"] for i in ath.list_issues()["issues"]} == {
+            keep["id"],
+            gone["id"],
+        }
     finally:
         tc.__exit__(None, None, None)
 
@@ -1682,14 +1712,16 @@ def test_list_issues_mcp_sprint_filter_returns_actor_kinds(tmp_path):
         assert {
             issue["title"]: issue["assignee_is_agent"] for issue in rows
         } == expected
-        pages = []
-        for offset in (0, 2):
-            page = asyncio.run(
-                server.call_tool(
-                    "list_issues", {**filters, "limit": 2, "offset": offset}
-                )
+        # Paged two at a time, following each answer's `next` (a cursor, H6).
+        pages, arguments = [], {**filters, "limit": 2}
+        while True:
+            page = json.loads(
+                asyncio.run(server.call_tool("list_issues", arguments))[0][0].text
             )
-            pages.extend(json.loads(page[0][0].text)["items"])
+            pages.extend(page["items"])
+            if not page["truncated"]:
+                break
+            arguments = {**arguments, **page["next"]}
         assert pages == rows
     finally:
         tc.__exit__(None, None, None)
@@ -1703,7 +1735,7 @@ def test_client_replays_one_logical_mutation_and_surfaces_mismatch(tmp_path):
         replay = ath.create_issue(title="one logical write", idempotency_key=key)
 
         assert replayed_fields(replay) == first
-        assert [issue["id"] for issue in ath.list_issues()] == [first["id"]]
+        assert [issue["id"] for issue in ath.list_issues()["issues"]] == [first["id"]]
         assert [
             event["verb"] for event in ath.recent_events(kind="issue")["events"]
         ] == ["created"]
@@ -2038,7 +2070,8 @@ def test_list_issues_mcp_tool_forwards_strict_sprint_ids(sprint):
             for value in (True, False, "7", 7.0, -1, issues.MAX_SQLITE_INTEGER + 1)
         ],
         *[{"limit": value} for value in (False, "5", 1.0, 0, 101)],
-        *[{"offset": value} for value in (False, "0", 0.0, -1, issues.MAX_OFFSET + 1)],
+        # H6: a cursor replaced the offset; it is the route's own, unchanged.
+        *[{"cursor": value} for value in ("", 7, "x" * (MAX_CURSOR_CHARS + 1))],
     ],
 )
 def test_list_issues_mcp_rejects_invalid_filter_or_page_before_dispatch(invalid):
@@ -2476,7 +2509,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
 
         # An omitted key remains backward-compatible and creates real data.
         asyncio.run(server.call_tool("create_issue", {"title": "via mcp"}))
-        assert any(i["title"] == "via mcp" for i in ath.list_issues())
+        assert any(i["title"] == "via mcp" for i in ath.list_issues()["issues"])
 
         # A caller-supplied key survives separate MCP invocations and coalesces
         # them into one logical REST mutation.
@@ -2487,7 +2520,9 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         first = asyncio.run(server.call_tool("create_issue", keyed_args))
         replay = asyncio.run(server.call_tool("create_issue", keyed_args))
         assert replayed_fields(replay) == answer_fields(first)
-        assert [i["title"] for i in ath.list_issues()].count("via mcp once") == 1
+        assert [i["title"] for i in ath.list_issues()["issues"]].count(
+            "via mcp once"
+        ) == 1
         import json
 
         from mcp.server.fastmcp.exceptions import ToolError
@@ -2506,7 +2541,9 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         marker = "ATHENA_ERROR_JSON="
         payload = json.loads(str(mismatch.value).split(marker, 1)[1])
         assert payload["code"] == "idempotency_mismatch"
-        assert [i["title"] for i in ath.list_issues()].count("via mcp once") == 1
+        assert [i["title"] for i in ath.list_issues()["issues"]].count(
+            "via mcp once"
+        ) == 1
         assert len(ath.recent_events(kind="issue")["events"]) == created_events
 
         # The real tool traverses FastMCP -> AthenaClient -> REST -> command -> DB.

@@ -215,7 +215,7 @@ def _seed_over_api(client):
 def test_the_guide_is_an_ordinary_space_over_the_api(client):
     result = _seed_over_api(client)
     space_id = result["space"]["id"]
-    listed = client.get(f"/spaces/{space_id}/pages", headers=H1).json()
+    listed = client.get(f"/spaces/{space_id}/pages", headers=H1).json()["pages"]
     assert len(listed) == len(guide.PAGES)
 
     # Readable page by page, searchable, and exportable — nothing special-cased.

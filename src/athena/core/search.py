@@ -27,12 +27,25 @@ import re
 import sqlite3
 from typing import TypedDict, cast
 
-from athena.core import access
+from athena.core import access, db
 
 # SQLite binds integer query parameters as signed 64-bit values. Keep the
 # pagination contract inside that range so an oversized request is rejected at
 # the boundary instead of surfacing as an sqlite3 OverflowError.
 MAX_OFFSET = 2**63 - 1
+
+#: How many matching entries one search ranks: the newest this many the caller
+#: may see, of the kind asked for and not archived (H5). Ranking needs a score for
+#: every candidate, so without a bound a search for a common word scored every
+#: entry that contains it, and its cost grew with the workspace's history. A word
+#: in fewer entries than this is ranked exactly as before; for a commoner word the
+#: best hits are found among its newest entries, and paging stops at the window's
+#: end. "Newest" is the order entries were last written: an edit re-indexes its
+#: source, so an edited issue, page or comment is new again.
+RANK_WINDOW = 1_000
+
+# bm25() column order is (kind, source_id, title, body); weight title 2x body.
+_RANK = "bm25(search_index, 0.0, 0.0, 2.0, 1.0)"
 
 
 # The searchable kinds and how to read each one's text: the table, its title column
@@ -267,14 +280,18 @@ def _visibility_clause(
     actor may see: an issue hit whose project is visible (or backlog), a page hit whose
     space is visible, and a COMMENT hit whose parent issue/page is visible on the same
     rule (a comment inherits its parent's audience). Returns ('', []) for an admin (who
-    sees all — no gate needed). The subqueries resolve the visible source ids from the
-    visible project/space sets, so we never enumerate them in Python. An actor with no
+    sees all — no gate needed). The visible project/space sets are bound as
+    parameters, so we never enumerate source ids in Python. An actor with no
     visible spaces matches no pages (nor page comments); backlog issues (no project)
     always pass, so do comments on them.
 
-    A comment kind NOT listed in the disjunction would be dropped entirely (source_id in
-    nothing), so every searchable kind must appear here — the reason this gate and the
-    _SOURCE map are edited together."""
+    Each arm asks about the one hit in hand, by its source row's primary key (H5):
+    a hit costs a lookup or two, and no search builds the list of every visible
+    issue, comment or page first, which made every search read all of them.
+
+    A comment kind NOT listed in the disjunction would be dropped entirely (no
+    arm can pass it), so every searchable kind must appear here — the reason this
+    gate and the _SOURCE map are edited together."""
     vis_projects = access.visible_project_filter(conn, actor)
     if vis_projects is None:  # admin → unrestricted
         return "", []
@@ -283,27 +300,33 @@ def _visibility_clause(
     params: list = []
     if vis_projects:
         ph = ",".join("?" for _ in vis_projects)
-        issue_where = f"project_id IS NULL OR project_id IN ({ph})"
+        issue_where = f"(gi.project_id IS NULL OR gi.project_id IN ({ph}))"
     else:
-        issue_where = "project_id IS NULL"
+        issue_where = "gi.project_id IS NULL"
     if vis_spaces:
         ph2 = ",".join("?" for _ in vis_spaces)
-        page_where = f"space_id IN ({ph2})"
+        page_where = f"gp.space_id IN ({ph2})"
     else:
-        page_where = "0"  # no visible spaces → no page (or page-comment) hits
+        page_where = ""  # no visible spaces → no page (or page-comment) hits
 
-    # The visible-issue and visible-page id sets, reused for both the entity hits and the
-    # comment hits that hang off them. Params are appended in clause order: issue set,
-    # issue-comment set (issue params again), page set, page-comment set (space again).
-    issue_src = f"SELECT id FROM issues WHERE {issue_where}"
-    ic_src = (
-        f"SELECT c.id FROM comments c JOIN issues i ON i.id = c.issue_id "
-        f"WHERE {issue_where.replace('project_id', 'i.project_id')}"
+    # One correlated arm per kind, each reading the hit's own source row (and a
+    # comment's parent) by primary key. Params are appended in clause order: issue
+    # set, issue-comment set (issue params again), page set, page-comment set
+    # (space again).
+    issue_src = (
+        "SELECT 1 FROM issues gi WHERE gi.id = search_index.source_id "
+        f"AND {issue_where}"
     )
-    page_src = f"SELECT id FROM pages WHERE {page_where}"
+    ic_src = (
+        "SELECT 1 FROM comments gc JOIN issues gi ON gi.id = gc.issue_id "
+        f"WHERE gc.id = search_index.source_id AND {issue_where}"
+    )
+    page_src = (
+        f"SELECT 1 FROM pages gp WHERE gp.id = search_index.source_id AND {page_where}"
+    )
     pc_src = (
-        f"SELECT c.id FROM page_comments c JOIN pages pg ON pg.id = c.page_id "
-        f"WHERE {page_where.replace('space_id', 'pg.space_id')}"
+        "SELECT 1 FROM page_comments gc JOIN pages gp ON gp.id = gc.page_id "
+        f"WHERE gc.id = search_index.source_id AND {page_where}"
     )
     if vis_projects:
         params.extend(vis_projects)  # issue_src
@@ -311,11 +334,17 @@ def _visibility_clause(
     if vis_spaces:
         params.extend(vis_spaces)  # page_src
         params.extend(vis_spaces)  # pc_src
+    # No visible space: no page arm at all, so no page or page comment can pass.
+    page_arms = (
+        f"OR (kind = 'page' AND EXISTS ({page_src})) "
+        f"OR (kind = 'page_comment' AND EXISTS ({pc_src}))"
+        if page_where
+        else ""
+    )
     clause = (
-        f"AND ((kind = 'issue' AND source_id IN ({issue_src})) "
-        f"OR (kind = 'issue_comment' AND source_id IN ({ic_src})) "
-        f"OR (kind = 'page' AND source_id IN ({page_src})) "
-        f"OR (kind = 'page_comment' AND source_id IN ({pc_src}))) "
+        f"AND ((kind = 'issue' AND EXISTS ({issue_src})) "
+        f"OR (kind = 'issue_comment' AND EXISTS ({ic_src})) "
+        f"{page_arms}) "
     )
     return clause, params
 
@@ -348,6 +377,11 @@ def search(
     first. `limit`/`offset` page
     the ranked result set, so a caller can fetch one window at a time.
 
+    Only the newest RANK_WINDOW matching entries that pass every filter below are
+    ranked (H5): a search's cost is bounded by that window, not by how many
+    entries in the whole history contain the word. Past the window's end a page
+    is empty.
+
     `ids` optionally restricts the hits to these source ids — the generic hook that
     lets a caller intersect full-text relevance with a structured pre-filter (e.g.
     aegis narrows an issue search to the issues that match status/label/project).
@@ -374,9 +408,10 @@ def search(
     match = _to_title_any_match(query) if title_any else _to_match(query)
     if not match:
         return []
+    # The window: the newest RANK_WINDOW matching entries this search may return,
+    # walked down the index newest first, each filtered as it is reached.
     sql = (
-        "SELECT kind, source_id, title, "
-        "snippet(search_index, 3, '[', ']', '…', 10) AS snippet "
+        f"SELECT rowid AS entry, {_RANK} AS score "
         "FROM search_index WHERE search_index MATCH ? "
     )
     params: list = [match]
@@ -398,20 +433,50 @@ def search(
         # when its own row is archived — and a COMMENT is dropped when its PARENT is
         # archived, matching how the parent itself drops out (an archived doc hides its
         # discussion too). Applied in SQL before LIMIT/OFFSET, so paging stays correct.
+        # Asked of the hit's own row by primary key, never as a list of every
+        # archived source (which read every comment on every search).
         sql += (
-            "AND NOT (kind = 'issue' AND source_id IN "
-            "(SELECT id FROM issues WHERE archived_at IS NOT NULL)) "
-            "AND NOT (kind = 'page' AND source_id IN "
-            "(SELECT id FROM pages WHERE archived_at IS NOT NULL)) "
-            "AND NOT (kind = 'issue_comment' AND source_id IN "
-            "(SELECT c.id FROM comments c JOIN issues i ON i.id = c.issue_id "
-            "WHERE i.archived_at IS NOT NULL)) "
-            "AND NOT (kind = 'page_comment' AND source_id IN "
-            "(SELECT c.id FROM page_comments c JOIN pages pg ON pg.id = c.page_id "
-            "WHERE pg.archived_at IS NOT NULL)) "
+            "AND NOT (kind = 'issue' AND EXISTS (SELECT 1 FROM issues ai "
+            "WHERE ai.id = search_index.source_id AND ai.archived_at IS NOT NULL)) "
+            "AND NOT (kind = 'page' AND EXISTS (SELECT 1 FROM pages ap "
+            "WHERE ap.id = search_index.source_id AND ap.archived_at IS NOT NULL)) "
+            "AND NOT (kind = 'issue_comment' AND EXISTS (SELECT 1 FROM comments ac "
+            "JOIN issues ai ON ai.id = ac.issue_id "
+            "WHERE ac.id = search_index.source_id AND ai.archived_at IS NOT NULL)) "
+            "AND NOT (kind = 'page_comment' AND EXISTS (SELECT 1 FROM page_comments ac "
+            "JOIN pages ap ON ap.id = ac.page_id "
+            "WHERE ac.id = search_index.source_id AND ap.archived_at IS NOT NULL)) "
         )
-    # bm25() column order is (kind, source_id, title, body); weight title 2x body.
-    sql += "ORDER BY bm25(search_index, 0.0, 0.0, 2.0, 1.0) LIMIT ? OFFSET ?"
+    sql += "ORDER BY rowid DESC LIMIT ?"
+    params.append(RANK_WINDOW)
+    # The page: best first within the window. Equal scores keep index order,
+    # oldest entry first, the order the single ranked read gave them.
+    page = f"SELECT entry FROM ({sql}) ORDER BY score, entry LIMIT ? OFFSET ?"
     params.extend([limit, offset])
-    rows = conn.execute(sql, params).fetchall()
-    return _enrich(conn, [dict(r) for r in rows])
+    with db.transaction(conn):  # one snapshot for the page and its text
+        entries = [row["entry"] for row in conn.execute(page, params)]
+        if not entries:
+            return []
+        # Only the page's entries are read again for their text and snippet: one
+        # walk of the matches between the page's lowest and highest entry, inside
+        # the window. Naming the entries as a key list instead (`rowid IN (...)`)
+        # makes FTS5 search the whole match list once per entry.
+        placeholders = ",".join("?" for _ in entries)
+        rows = conn.execute(
+            "SELECT rowid AS entry, kind, source_id, title, "
+            "snippet(search_index, 3, '[', ']', '…', 10) AS snippet "
+            "FROM search_index WHERE search_index MATCH ? "
+            f"AND rowid >= ? AND rowid <= ? AND +rowid IN ({placeholders})",
+            [match, min(entries), max(entries), *entries],
+        ).fetchall()
+    found = {row["entry"]: row for row in rows}
+    hits = [
+        {
+            "kind": found[entry]["kind"],
+            "source_id": found[entry]["source_id"],
+            "title": found[entry]["title"],
+            "snippet": found[entry]["snippet"],
+        }
+        for entry in entries
+    ]
+    return _enrich(conn, hits)

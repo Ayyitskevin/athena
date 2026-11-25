@@ -473,6 +473,15 @@ _ENTRIES: tuple[RefusalCode, ...] = (
         ),
     ),
     RefusalCode(
+        code="idempotency_applied",
+        statuses=(409,),
+        meaning=(
+            "The earlier request under this key ended with an unknown outcome, "
+            "and an operator has since confirmed it was applied. Do not send it "
+            "again, under this key or a new one; read the target for its state."
+        ),
+    ),
+    RefusalCode(
         code="idempotency_authorization_changed",
         statuses=(409,),
         meaning=(

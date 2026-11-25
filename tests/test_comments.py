@@ -51,7 +51,7 @@ def test_comment_is_stamped_to_the_author_and_listed(tmp_path):
 
         listing = client.get(f"/issues/{issue_id}/comments")
         assert listing.status_code == 200
-        assert [x["body"] for x in listing.json()] == ["looking into it"]
+        assert [x["body"] for x in listing.json()["comments"]] == ["looking into it"]
 
 
 def test_comments_list_is_chronological(tmp_path):
@@ -68,7 +68,10 @@ def test_comments_list_is_chronological(tmp_path):
                 json={"body": text},
                 headers={"X-Athena-Actor": "1"},
             )
-        bodies = [x["body"] for x in client.get(f"/issues/{issue_id}/comments").json()]
+        bodies = [
+            x["body"]
+            for x in client.get(f"/issues/{issue_id}/comments").json()["comments"]
+        ]
         assert bodies == ["first", "second", "third"]
 
 

@@ -98,14 +98,16 @@ def _seed(admin: TestClient) -> dict[str, Any]:
     small = issue("a small budget issue", "short")
     for item in (big, small):
         ok(admin.post(f"/issues/{item['id']}/delegate", json={"user_id": sol}), 201)
-    for number in range(COMMENT_COUNT):
+    comment_ids = [
         ok(
             admin.post(
                 f"/issues/{big['id']}/comments",
                 json={"body": f"comment {number}: " + _text(900, "comment")},
             ),
             201,
-        )
+        )["id"]
+        for number in range(COMMENT_COUNT)
+    ]
     # One mention lands in the seat's inbox, for mark_notification_read.
     ok(
         admin.post(
@@ -190,6 +192,7 @@ def _seed(admin: TestClient) -> dict[str, Any]:
         "ray": ray,
         "project": project,
         "big": big,
+        "first_comment": comment_ids[0],
         "small": small,
         "label": label,
         "candidate_id": submitted["candidate_submission"]["candidate_id"],
@@ -227,6 +230,10 @@ def _plan(world: dict[str, Any], admin: TestClient) -> list[Step]:
         ("get_issue", lambda s: {"issue_id": big}),
         ("get_issue_work_context", lambda s: {"issue_id": big}),
         ("list_issue_comments", lambda s: {"issue_id": big}),
+        (
+            "get_issue_comment",
+            lambda s: {"issue_id": big, "comment_id": world["first_comment"]},
+        ),
         ("get_issue_history", lambda s: {"issue_id": big}),
         (
             "get_issue_prior_text",
@@ -628,7 +635,9 @@ def test_list_and_search_rows_are_summaries(seeded_run):
     hits = _call(server, "search_work", {"q": "budget"})["items"]
     assert hits and all("body" not in row and "title" in row for row in hits)
     pages = _call(server, "list_pages", {"space_id": world["space"]["id"]})["items"]
-    rest = seeded_run["seat_http"].get(f"/spaces/{world['space']['id']}/pages").json()
+    rest = (
+        seeded_run["seat_http"].get(f"/spaces/{world['space']['id']}/pages").json()
+    )["pages"]
     assert [row["id"] for row in pages] == [row["id"] for row in rest]
     assert len(pages) >= 12
     assert all("body" not in row and "title" in row for row in pages)
@@ -638,14 +647,18 @@ def test_list_and_search_rows_are_summaries(seeded_run):
     assert all(
         "body" not in item["issue"] for item in desk["work"]["delegations"]["items"]
     )
-    # The REST answers are unchanged: they still carry the bodies.
-    assert all("body" in row for row in rest)
+    # The REST page list carries no body either (H6): GET /pages/{id} has it.
+    assert all("body" not in row for row in rest)
 
 
 def test_comments_page_through_by_next_with_excerpts_or_bodies(seeded_run):
     server = seeded_run["server"]
     issue_id = seeded_run["world"]["big"]["id"]
-    rest = seeded_run["seat_http"].get(f"/issues/{issue_id}/comments").json()
+    rest = (
+        seeded_run["seat_http"]
+        .get(f"/issues/{issue_id}/comments", params={"limit": 200})
+        .json()["comments"]
+    )
     seen, arguments = [], {"issue_id": issue_id}
     while True:
         page = _call(server, "list_issue_comments", arguments)
@@ -666,10 +679,11 @@ def test_comments_page_through_by_next_with_excerpts_or_bodies(seeded_run):
     first = bodies["items"][0]
     assert first["body"] == rest[0]["body"][:100]
     assert first["_truncated"]["body"]["total_chars"] == len(rest[0]["body"])
+    # The rest of a cut body is one comment read, from where the cut ended (H6).
     reread = first["_truncated"]["body"]["next"]
-    assert reread["tool"] == "list_issue_comments"
-    whole = _call(server, reread["tool"], reread["arguments"])["items"][0]
-    assert whole["body"] == rest[0]["body"]
+    assert reread["tool"] == "get_issue_comment"
+    rest_of_it = _call(server, reread["tool"], reread["arguments"])
+    assert first["body"] + rest_of_it["body"] == rest[0]["body"]
 
 
 # --- the fitting rules, unit by unit ---------------------------------------------

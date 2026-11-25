@@ -33,7 +33,7 @@ def _bootstrap(client):
 
 
 def _ids(client):
-    return sorted(i["id"] for i in client.get("/issues", headers=H1).json())
+    return sorted(i["id"] for i in client.get("/issues", headers=H1).json()["issues"])
 
 
 def test_same_key_replays_one_create(tmp_path):
@@ -554,7 +554,9 @@ def test_a_restarted_mcp_session_replays_the_key_it_was_given(tmp_path):
         after = asyncio.run(create("mcp-6f5e4d3c2b1a"))
         titles = [
             issue["title"]
-            for issue in client.get("/issues", headers={"X-Athena-Actor": "1"}).json()
+            for issue in client.get("/issues", headers={"X-Athena-Actor": "1"}).json()[
+                "issues"
+            ]
         ]
 
     assert after["id"] == before["id"]

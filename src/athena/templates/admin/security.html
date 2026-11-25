@@ -63,7 +63,7 @@
 <form method="get" action="/admin/security" class="activity-filters">
     <label>
         Kind
-        <select name="verb" onchange="this.form.submit()">
+        <select name="verb" data-autosubmit>
             <option value="">Any refusal</option>
             {% for v in verbs %}
             <option value="{{ v }}"{{ " selected" if selected_verb == v }}>{{ v.replace("_", " ") }}</option>

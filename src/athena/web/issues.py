@@ -37,6 +37,7 @@ from athena.core import (
 from athena.core.deps import get_conn
 from athena.core.ids import RowIdQuery
 from athena.web.browsing import (
+    attach_claims,
     attach_labels,
     int_or_none,
     readonly_response,
@@ -186,6 +187,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         offset=(page - 1) * per_page,
     )
     attach_labels(conn, paged)  # one bulk query over this page's rows
+    attach_claims(conn, paged)  # and one for who holds each live claim (U2)
 
     def page_url(page_num: int, *, sort_by: str = sort, order_by: str = order) -> str:
         return _issues_url(

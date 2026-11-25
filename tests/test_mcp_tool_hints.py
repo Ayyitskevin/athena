@@ -168,6 +168,8 @@ def test_the_destructive_writes_are_the_ones_that_lose_something():
         "delete_automation_rule",
         "delete_sprint",
         "offboard_agent",
+        # Forgetting a key lets its request run again; nothing undoes that (H14).
+        "resolve_idempotency_key",
         "revoke_agent_tokens",
         "set_watch_preference",
         "unwatch",

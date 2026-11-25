@@ -99,6 +99,18 @@ makes a hot statement stop reading history adds its row here, with the test.
 | The oldest events after the desk cursor (`operator_since._events_after`), one arm at a time | `GET /desk/since` | `tests/test_desk_trail_reads.py` |
 | The ready rule (`ready_queue._evaluate`), over open candidates, once per desk read | `GET /desk`, `GET /desk/ready`, `POST /issues/claim-next` | `tests/test_ready_open_candidates.py` |
 | The `is:ready` query atom (`ready_queue.ready_clause`), over the same open candidates | `GET /issues?q=is:ready`, saved filters | `tests/test_ready_open_candidates.py` (its work; its plan is the calling query's) |
+| The project brief's latest completion per issue (`project_brief._build`), one seek of each issue's own trail down `idx_activity_target` | `GET /projects/{id}/brief` | `tests/test_history_bounded_reads.py` (its plan, and its work as other projects' history grows) |
+| Full-text search (`search.search`): the newest `RANK_WINDOW` matching entries, each one's visibility and archive state asked of its own row by key | `GET /search`, `GET /issues/search`, `GET /search/workspace` (plain words), `/find` | `tests/test_history_bounded_reads.py` (its plan, its work as a common word's history grows, and the window) |
+
+`search.RANK_WINDOW` is 1,000: a search ranks the 1,000 newest matching
+entries the caller may see, of the kind asked for and not archived. A word in
+fewer entries is ranked exactly as before. For a commoner word the best hits
+are found among its newest entries, and paging stops at the window's end.
+"Newest" is the order entries were last written, so an edited issue, page or
+comment is new again. This is a limit the search did not have: before it, a
+search for a word in every issue scored every entry containing it, and built
+the list of every visible and every archived issue and comment to filter them,
+on every search.
 
 ## Where the bounds do not hold
 
@@ -125,3 +137,28 @@ Each is a condition, with what it costs; none changes an answer.
   offers the open candidates as a key lookup, but the plan is the calling
   query's: after ANALYZE SQLite may scan a small issues table instead. Its
   work test passes with and without statistics.
+- **The project brief reads every issue of its project** (`GET
+  /projects/{id}/brief`), closed ones included, through
+  `idx_issues_project`: the open count, the claims, the blockers and the
+  latest completions each walk them. It no longer reads any other project's
+  history, nor an issue's events older than its newest completion. The number
+  of issues that ever reported a completion (`latest_completions.visible_total`)
+  is a count over the project's history and has no index that answers it; a
+  limit on that count, or reading only open issues for the other lanes (an
+  index over (project, status) or the ready rule's open-candidate read), would
+  bound the rest.
+- **A search whose newest matches are hidden or of another kind.** The window
+  walks matching entries newest first and skips each one the caller may not
+  see, that is archived, or that is not of the kind asked for, so it walks
+  past all of those before filling. A `kind=page` search for a word that
+  thousands of newer issues contain reads those issues' entries first.
+- **The idle sort is not bounded** (`sort:idle-desc`, `idle:` atoms). Its key
+  is each issue's newest native work event, read per issue down
+  `idx_activity_target`, for every issue the query matches, closed ones
+  included, and the whole set is sorted before the page is taken. No existing
+  index orders issues by that key. Bounding it needs a stored per-issue
+  last-work time with an index, kept by the recorder or a trigger and
+  backfilled by a migration, and even then `is:open sort:idle-desc` would walk
+  past every closed issue, which are the most idle. A partial index of native
+  work events by (target, time) halves the per-issue cost and leaves it linear.
+  Neither is built; the choice is the owner's.

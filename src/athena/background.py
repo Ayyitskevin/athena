@@ -54,6 +54,52 @@ def _take(path: Path) -> tuple[int | None, str]:
     return descriptor, ""
 
 
+SERVING_SUFFIX = ".serving.lock"
+
+
+def serving_lock_path(db_path: str | Path) -> Path:
+    """The file every process serving the database at ``db_path`` holds open."""
+    return Path(f"{db_path}{SERVING_SUFFIX}")
+
+
+def join_serving(db_path: str | Path) -> tuple[int | None, bool]:
+    """Join the processes serving this database, and say whether this one is
+    alone (H14).
+
+    Every serving process holds a shared lock on the serving file for as long
+    as it serves. A process that can first take the lock exclusively knows no
+    other process is serving: whatever an earlier process left half done has
+    no owner. It then keeps the lock shared. Returns the descriptor to close
+    when serving ends, and whether this process was alone when it joined; a
+    file that cannot be locked gives ``(None, False)``, which claims nothing.
+    """
+    descriptor = None
+    try:
+        descriptor = os.open(
+            serving_lock_path(db_path),
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+            0o600,
+        )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            alone = True
+        except BlockingIOError:
+            alone = False
+            # Waits only while a process that is starting holds it exclusively.
+            fcntl.flock(descriptor, fcntl.LOCK_SH)
+    except OSError:
+        if descriptor is not None:
+            os.close(descriptor)
+        return None, False
+    return descriptor, alone
+
+
+def keep_serving(descriptor: int) -> None:
+    """Turn the exclusive lock ``join_serving`` took when alone into the shared
+    one, once what only a lone process may do is done."""
+    fcntl.flock(descriptor, fcntl.LOCK_SH)
+
+
 class Loops:
     """One app's background loops: none until ``start``, and none at all in a
     process that does not hold the lock."""

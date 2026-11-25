@@ -595,6 +595,7 @@ _IDEMPOTENCY_API_ROOTS = (
     "/attachments",
     "/automation",
     "/filters",
+    "/idempotency-keys",
     "/issues",
     "/labels",
     "/notifications",
@@ -1159,6 +1160,19 @@ class IdempotencyMiddleware:
                 if scope_issue_id is not None:
                     refusal["issue_id"] = int(scope_issue_id)
                 await _send_json_response(send, refusal, status_code=409)
+                return
+            if claim.kind == "applied":
+                await _send_json_response(
+                    send,
+                    {
+                        "detail": (
+                            "An operator confirmed the earlier request under "
+                            "this Idempotency-Key was applied; do not send it again"
+                        ),
+                        "code": "idempotency_applied",
+                    },
+                    status_code=409,
+                )
                 return
             if claim.kind == "indeterminate":
                 await _send_json_response(

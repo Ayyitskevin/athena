@@ -139,12 +139,13 @@ def test_issue_sprint_filter_does_not_become_a_private_sprint_oracle(tmp_path):
         assert (
             outsider.status_code == unknown.status_code == anonymous.status_code == 200
         )
-        assert outsider.json() == unknown.json() == anonymous.json() == []
+        empty = {"issues": [], "next_cursor": None, "has_more": False}
+        assert outsider.json() == unknown.json() == anonymous.json() == empty
         assert [
             row["id"]
             for row in client.get(
                 "/issues", params={"sprint": sid}, headers=H_CREATOR
-            ).json()
+            ).json()["issues"]
         ] == [issue["id"]]
 
 

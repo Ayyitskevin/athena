@@ -99,7 +99,8 @@ def test_rest_list_hides_private_from_outsider_and_anonymous(tmp_path):
 
         def titles(headers=None):
             return {
-                i["title"] for i in client.get("/issues", headers=headers or {}).json()
+                i["title"]
+                for i in client.get("/issues", headers=headers or {}).json()["issues"]
             }
 
         # The outsider and the signed-out caller see the public + backlog issues, never
@@ -120,12 +121,14 @@ def test_rest_list_opens_to_a_granted_member(tmp_path):
         _bootstrap(client)
         priv, pub, back, pid, conn = _scenario(client, db_file)
         assert "Hidden bug" not in {
-            i["title"] for i in client.get("/issues", headers=H_OUTSIDER).json()
+            i["title"]
+            for i in client.get("/issues", headers=H_OUTSIDER).json()["issues"]
         }
 
         access.add_project_member(conn, pid, 3, added_by=2, commit=True)
         assert "Hidden bug" in {
-            i["title"] for i in client.get("/issues", headers=H_OUTSIDER).json()
+            i["title"]
+            for i in client.get("/issues", headers=H_OUTSIDER).json()["issues"]
         }
 
 

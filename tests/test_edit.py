@@ -51,7 +51,7 @@ def test_patch_edits_title_and_body(tmp_path):
         assert r.json()["title"] == "fixed title"
         assert r.json()["body"] == "fixed body"
         # Persists across a fresh read.
-        again = client.get("/issues").json()[0]
+        again = client.get("/issues").json()["issues"][0]
         assert again["title"] == "fixed title"
         assert again["body"] == "fixed body"
 

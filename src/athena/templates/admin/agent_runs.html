@@ -319,31 +319,3 @@
 {% endif %}
 </section>
 {% endblock %}
-
-{% block scripts %}
-<script>
-document.querySelectorAll("[data-copy-command]").forEach((button) => {
-    button.addEventListener("click", async () => {
-        const command = button.getAttribute("data-copy-command") || "";
-        try {
-            await navigator.clipboard.writeText(command);
-            const original = button.textContent;
-            button.textContent = "Copied";
-            window.setTimeout(() => {
-                button.textContent = original;
-            }, 1600);
-        } catch {
-            const fallback = document.createElement("textarea");
-            fallback.value = command;
-            fallback.setAttribute("readonly", "readonly");
-            fallback.style.position = "fixed";
-            fallback.style.opacity = "0";
-            document.body.appendChild(fallback);
-            fallback.select();
-            document.execCommand("copy");
-            document.body.removeChild(fallback);
-        }
-    });
-});
-</script>
-{% endblock %}

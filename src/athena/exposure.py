@@ -65,13 +65,14 @@ class RouteExposure:
 
 
 #: ``route_exposure`` of the packaged app, with anonymous reads on and off
-#: (pinned by ``tests/test_anonymous_read_exposure.py``).
+#: (pinned by ``tests/test_anonymous_read_exposure.py``). H6 added one REST read,
+#: ``GET /issues/{issue_id}/comments/{comment_id}``, open as the comment list is.
 ROUTE_COUNTS: dict[bool, RouteExposure] = {
     True: RouteExposure(
-        rest=53, rest_total=105, browser=57, browser_total=57, documents=2
+        rest=54, rest_total=107, browser=57, browser_total=57, documents=2
     ),
     False: RouteExposure(
-        rest=3, rest_total=105, browser=3, browser_total=57, documents=2
+        rest=3, rest_total=107, browser=3, browser_total=57, documents=2
     ),
 }
 

@@ -8,9 +8,10 @@ arguments that continue (merge them into the same call's arguments); otherwise
 absent answer.
 
 The helpers here build that envelope from whatever paging the REST route
-already has, so a tool states its paging once: ``paged`` for an offset route,
-``window`` for a route that only takes a limit, ``listing`` for a route that
-returns everything it has.
+already has, so a tool states its paging once: ``cursor_page`` for a route
+that pages in D2's vocabulary (``cursor`` in, ``next_cursor`` and ``has_more``
+out), ``paged`` for an offset route, ``window`` for a route that only takes a
+limit, ``listing`` for a route that returns everything it has.
 
 They also keep the answer within the call's response budget (A6, set by the
 server around each call with ``budget``): a list over budget keeps the rows
@@ -141,6 +142,50 @@ def paged(items: Sequence[Any], *, limit: int, offset: int) -> ListResult:
         truncated=full,
         next={"offset": offset + len(items)} if full else None,
         resume=lambda kept: {"offset": offset + kept},
+    )
+
+
+#: One page of a D2 route as a tool sees it: the rows (already shaped), the
+#: route's ``next_cursor`` and its ``has_more``.
+CursorPage = tuple[Sequence[Any], str | None, bool]
+
+
+def cursor_page(fetch: Callable[[int], CursorPage], *, limit: int) -> ListResult:
+    """A page of a route that pages in D2's vocabulary, continued by the
+    route's own cursor: ``fetch(n)`` reads ``n`` rows from the call's cursor.
+
+    The list is truncated exactly when the route says ``has_more``, and ``next``
+    is ``{"cursor": next_cursor}``. Over the call's budget, the route is asked
+    again for the rows that fit, so the cursor a caller resumes from is always
+    one the route handed out (a tool never makes one up, and never re-reads the
+    whole list to find its place); ``next`` then also names that smaller
+    ``limit``, so the following call asks for what fits from the start."""
+    asked = limit
+    rows, next_cursor, has_more = fetch(asked)
+    while True:
+        items = list(rows)
+        continuation: dict[str, Any] | None = None
+        if has_more:
+            continuation = {"cursor": next_cursor}
+            if asked < limit:
+                continuation["limit"] = asked
+        answer = _envelope(items, has_more, continuation)
+        cap = _BUDGET.get()
+        if cap is None or len(items) < 2 or serialized_size(answer) <= cap:
+            return answer
+        asked = _rows_within(items, next_cursor, cap)
+        rows, next_cursor, has_more = fetch(asked)
+
+
+def _rows_within(items: list[Any], next_cursor: str | None, cap: int) -> int:
+    """How many of ``items`` a truncated envelope holds within ``cap`` (at least
+    one). The shorter page's cursor is not known until it is read; this page's
+    stands in for its length, and a longer one is caught on the next turn."""
+    stand_in = {"cursor": next_cursor or "", "limit": len(items)}
+    return _largest_fitting(
+        lambda kept: serialized_size(_envelope(items[:kept], True, stand_in)) <= cap,
+        1,
+        len(items) - 1,
     )
 
 

@@ -71,11 +71,16 @@ def _heartbeat_overdue(db_file):
     never checked in has missed its check-in (U7). The app has no injectable
     clock, and a test never sleeps."""
     conn = db.connect(db_file)
+    # One timestamp for both rows: each statement reading the clock itself can
+    # leave the lease a second newer than its `claimed` event, and the claim
+    # then reads as untagged.
+    (then,) = conn.execute("SELECT datetime('now', '-1 hour')").fetchone()
     conn.execute(
-        "UPDATE activity SET created_at = datetime('now', '-1 hour') "
-        "WHERE verb = 'claimed' AND target_kind = 'issue'"
+        "UPDATE activity SET created_at = ? "
+        "WHERE verb = 'claimed' AND target_kind = 'issue'",
+        (then,),
     )
-    conn.execute("UPDATE issue_leases SET claimed_at = datetime('now', '-1 hour')")
+    conn.execute("UPDATE issue_leases SET claimed_at = ?", (then,))
     conn.commit()
     conn.close()
 

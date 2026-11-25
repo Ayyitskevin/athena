@@ -59,7 +59,7 @@ def test_project_brief_native_completion_guard_loss_fails(tmp_path):
     package_root = _tree_copy(tmp_path)
     target = package_root / "aegis" / "project_brief.py"
     source = target.read_text(encoding="utf-8")
-    guard = "AND a.imported_at IS NULL"
+    guard = "AND la.imported_at IS NULL"  # the latest completion's per-issue seek
     assert source.count(guard) == 1
     pristine = _run(package_root)
     assert pristine.returncode == 0, pristine.stderr

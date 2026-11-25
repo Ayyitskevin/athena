@@ -98,6 +98,47 @@ def list_pages_in_space(
     return [dict(row) for row in rows]
 
 
+#: The REST page list's bounds (H6): a page of summaries a call.
+LIST_DEFAULT_LIMIT = 100
+LIST_MAX_LIMIT = 200
+
+# The page list's columns: every page column but the body, which the page's own
+# read carries. A list of a thousand pages is a few hundred kilobytes of titles,
+# not megabytes of bodies.
+_SUMMARY_COLUMNS = (
+    "id, space_id, parent_id, title, created_by, created_at, updated_by, "
+    "updated_at, archived_at"
+)
+
+
+def list_page_summaries(
+    conn: sqlite3.Connection,
+    space_id: int,
+    *,
+    limit: int,
+    after: tuple[str, int] | None = None,
+    include_archived: bool = False,
+) -> tuple[list[dict], bool]:
+    """One page of a space's pages, without bodies: at most ``limit`` rows after
+    the (title, id) ``after`` names, alphabetical by title (case-insensitive) and
+    then by id, so the order is total and a page added or renamed elsewhere in
+    the list never moves a row across the cursor. Returns the rows and whether
+    more follow. Archived pages are hidden unless ``include_archived``, as in
+    :func:`list_pages_in_space`."""
+    sql = f"SELECT {_SUMMARY_COLUMNS} FROM pages WHERE space_id = ?"
+    params: list = [space_id]
+    if not include_archived:
+        sql += " AND archived_at IS NULL"
+    if after is not None:
+        sql += (
+            " AND (title > ? COLLATE NOCASE OR (title = ? COLLATE NOCASE AND id > ?))"
+        )
+        params += [after[0], after[0], after[1]]
+    sql += " ORDER BY title COLLATE NOCASE, id LIMIT ?"
+    rows = conn.execute(sql, [*params, limit + 1]).fetchall()
+    return [dict(row) for row in rows[:limit]], len(rows) > limit
+
+
 def find_pages_by_title(
     conn: sqlite3.Connection,
     title: str,
