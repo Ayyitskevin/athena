@@ -44,6 +44,7 @@ from athena.core import (
     workers,
 )
 from athena.core.deps import get_conn
+from athena.core.ids import MAX_SQLITE_INTEGER
 from athena.mcp.config import (
     athena_mcp_command,
     PRINTABLE_PROFILES,
@@ -88,15 +89,62 @@ def _reported_spend(
     }
 
 
-def _agents_redirect(**query: str) -> RedirectResponse:
+def _agents_redirect(
+    *, agent_id: int | None = None, anchor: bool = True, **query: str
+) -> RedirectResponse:
     """Send the operator back to the agents page with one encoded value per key.
 
     Error and notice text can contain & # ? = (it may echo input), so it must be
-    encoded rather than pasted into the URL."""
+    encoded rather than pasted into the URL.
+
+    ``agent_id`` is the agent the action was made on (U10): the page opens that
+    agent's section and says the outcome there, and the fragment scrolls to it.
+    ``anchor`` is off when the agent has no section to return to (it was just
+    removed); the outcome still names it."""
+    if agent_id is not None:
+        query["agent"] = str(agent_id)
     query_string = "&".join(
         f"{key}={quote(value, safe='')}" for key, value in query.items()
     )
-    return RedirectResponse(f"/admin/agents?{query_string}", status_code=303)
+    fragment = f"#agent-{agent_id}" if agent_id is not None and anchor else ""
+    return RedirectResponse(f"/admin/agents?{query_string}{fragment}", status_code=303)
+
+
+# What each outcome says: its lead, the word that joins the agent's name to it,
+# and the rest. With the agent it reads "Paused Sol: every ..."; without one
+# (an agent this page no longer has, or a link somebody shortened) the same
+# words with no name.
+_OUTCOMES: dict[str, tuple[str, str, str | None]] = {
+    "offboarded": (
+        "Offboarded",
+        " ",
+        "demoted to viewer, sessions and tokens revoked.",
+    ),
+    "removed": (
+        "Removed",
+        " ",
+        "offboarded and hidden from every list; history stays attributed. "
+        "Restore via POST /users/{id}/restore.",
+    ),
+    "paused": ("Paused", " ", "every authenticated action is refused until resumed."),
+    "resumed": ("Resumed", " ", "the account is active again."),
+    "budget_set": (
+        "Budget set",
+        " for ",
+        "metered writes are now capped for this window.",
+    ),
+    "budget_cleared": (
+        "Budget cleared",
+        " for ",
+        "metered writes are unlimited again.",
+    ),
+    "gate_changed": ("Approval policy updated", " for ", None),
+}
+
+
+def _outcome(lead: str, joiner: str, rest: str | None, name: str | None) -> str:
+    said = lead if name is None else f"{lead}{joiner}{name}"
+    return f"{said}." if rest is None else f"{said}: {rest}"
 
 
 def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
@@ -187,6 +235,7 @@ def agents_admin(
     gate_changed: str | None = Query(None),
     notice: str | None = Query(None),
     error: str | None = Query(None),
+    agent: int | None = Query(None, ge=1, le=MAX_SQLITE_INTEGER),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
@@ -195,35 +244,39 @@ def agents_admin(
     if err is not None:
         return err
     assert user is not None, "admin_required accepted a missing user"
+    # The agent the action was made on (U10). Its name is read, never taken
+    # from the URL; a removed agent is still named, as its outcome is about it.
+    acted_on = None if agent is None else users.get_user(conn, agent)
+    name = None if acted_on is None else acted_on["name"]
     # Post/redirect/get carries the outcome back as a query param so a refresh
     # doesn't re-post the destructive action.
+    flags = {
+        "offboarded": offboarded,
+        "removed": removed,
+        "paused": paused,
+        "resumed": resumed,
+        "budget_set": budget_set,
+        "budget_cleared": budget_cleared,
+    }
+    outcome = next((key for key, value in flags.items() if value), None)
     if revoked is not None:
-        notice = f"Revoked {revoked} live token{'' if revoked == 1 else 's'}."
-    elif offboarded:
-        notice = "Offboarded: demoted to viewer, sessions and tokens revoked."
-    elif removed:
-        notice = (
-            "Removed: offboarded and hidden from every list; history stays "
-            "attributed. Restore via POST /users/{id}/restore."
-        )
-    elif paused:
-        notice = "Paused: every authenticated action is refused until resumed."
-    elif resumed:
-        notice = "Resumed: the account is active again."
-    elif budget_set:
-        notice = "Budget set: metered writes are now capped for this window."
-    elif budget_cleared:
-        notice = "Budget cleared: metered writes are unlimited again."
+        tokens_revoked = f"Revoked {revoked} live token{'' if revoked == 1 else 's'}"
+        notice = _outcome(tokens_revoked, " of ", None, name)
+    elif outcome is not None:
+        notice = _outcome(*_OUTCOMES[outcome], name)
     elif decided == "approve":
         notice = "Approved: the requester may retry that action once."
     elif decided == "reject":
         notice = "Rejected: the requester is told to stop rather than wait."
     elif gate_changed:
-        notice = "Approval policy updated."
+        notice = _outcome(*_OUTCOMES["gate_changed"], name)
+    context = _agents_context(conn, user, notice=notice, error=error)
+    # The outcome is said in the section it was made in, which opens; an agent
+    # the page does not list has none, and the outcome is said at the top.
+    listed = {row["user"]["id"] for row in context["agents"]}
+    context["acted_on_agent_id"] = agent if agent in listed else None
     return templates.TemplateResponse(
-        request=request,
-        name="admin/agents.html",
-        context=_agents_context(conn, user, notice=notice, error=error),
+        request=request, name="admin/agents.html", context=context
     )
 
 
@@ -637,17 +690,22 @@ def request_worker_kill(
     withdrawing = cancel.strip().lower() in ("1", "true", "on", "yes")
     try:
         if withdrawing:
-            worker_commands.cancel_kill(conn, actor=user, worker_id=worker_id)
+            worker = worker_commands.cancel_kill(conn, actor=user, worker_id=worker_id)
         else:
-            worker_commands.request_kill(conn, actor=user, worker_id=worker_id)
+            worker = worker_commands.request_kill(conn, actor=user, worker_id=worker_id)
     except worker_commands.WorkerCommandError as exc:
         return _agents_redirect(error=str(exc.detail))
+    # Which worker, and whose: the page lists several, under several agents.
+    owner = users.get_user(conn, worker["agent_id"])
+    which = worker["node_label"] or worker["worker_key"]
+    if owner is not None:
+        which = f"{which} ({owner['name']})"
     notice = (
-        "Kill request withdrawn."
+        f"Kill request for {which} withdrawn."
         if withdrawing
-        else "Worker asked to stop; it will be told on its next heartbeat."
+        else f"{which} asked to stop; it will be told on its next heartbeat."
     )
-    return _agents_redirect(notice=notice)
+    return _agents_redirect(agent_id=worker["agent_id"], notice=notice)
 
 
 @router.post(
@@ -683,10 +741,10 @@ def set_approval_policy(
                 action_kind=action_kind.strip(),
             )
     except approval_commands.ApprovalDecisionError as exc:
-        return _agents_redirect(error=exc.detail)
+        return _agents_redirect(agent_id=user_id, error=exc.detail)
     except ValueError as exc:
-        return _agents_redirect(error=str(exc))
-    return RedirectResponse("/admin/agents?gate_changed=1", status_code=303)
+        return _agents_redirect(agent_id=user_id, error=str(exc))
+    return _agents_redirect(agent_id=user_id, gate_changed="1")
 
 
 @router.post(
@@ -711,15 +769,14 @@ def set_agent_budget(
     assert user is not None, "admin_required accepted a missing user"
     raw = action_limit.strip()
     if not raw.isdigit():
-        return RedirectResponse(
-            "/admin/agents?error=Action+limit+must+be+a+whole+number.",
-            status_code=303,
+        return _agents_redirect(
+            agent_id=user_id, error="Action limit must be a whole number."
         )
     coordination_raw = coordination_limit.strip()
     if coordination_raw and not coordination_raw.isdigit():
-        return RedirectResponse(
-            "/admin/agents?error=Coordination+limit+must+be+a+whole+number+or+empty.",
-            status_code=303,
+        return _agents_redirect(
+            agent_id=user_id,
+            error="Coordination limit must be a whole number or empty.",
         )
     try:
         budget_commands.set_budget(
@@ -731,10 +788,10 @@ def set_agent_budget(
             coordination_limit=int(coordination_raw) if coordination_raw else None,
         )
     except budget_commands.BudgetCommandError as exc:
-        return _agents_redirect(error=exc.detail)
+        return _agents_redirect(agent_id=user_id, error=exc.detail)
     except ValueError as exc:
-        return _agents_redirect(error=str(exc))
-    return RedirectResponse("/admin/agents?budget_set=1", status_code=303)
+        return _agents_redirect(agent_id=user_id, error=str(exc))
+    return _agents_redirect(agent_id=user_id, budget_set="1")
 
 
 @router.post(
@@ -753,8 +810,8 @@ def clear_agent_budget(
     try:
         budget_commands.clear_budget(conn, actor_id=user["id"], target_user_id=user_id)
     except budget_commands.BudgetCommandError as exc:
-        return _agents_redirect(error=exc.detail)
-    return RedirectResponse("/admin/agents?budget_cleared=1", status_code=303)
+        return _agents_redirect(agent_id=user_id, error=exc.detail)
+    return _agents_redirect(agent_id=user_id, budget_cleared="1")
 
 
 @router.post(
@@ -773,8 +830,8 @@ def pause_agent(
             conn, actor=user, target_user_id=user_id, paused=True
         )
     except agent_commands.AgentCommandError as exc:
-        return _agents_redirect(error=str(exc))
-    return RedirectResponse("/admin/agents?paused=1", status_code=303)
+        return _agents_redirect(agent_id=user_id, error=str(exc))
+    return _agents_redirect(agent_id=user_id, paused="1")
 
 
 @router.post(
@@ -793,8 +850,8 @@ def resume_agent(
             conn, actor=user, target_user_id=user_id, paused=False
         )
     except agent_commands.AgentCommandError as exc:
-        return _agents_redirect(error=str(exc))
-    return RedirectResponse("/admin/agents?resumed=1", status_code=303)
+        return _agents_redirect(agent_id=user_id, error=str(exc))
+    return _agents_redirect(agent_id=user_id, resumed="1")
 
 
 @router.post(
@@ -813,9 +870,9 @@ def revoke_agent_tokens(
             conn, actor=user, target_user_id=user_id
         )
     except agent_commands.AgentCommandError as exc:
-        return _agents_redirect(error=str(exc))
-    return RedirectResponse(
-        f"/admin/agents?revoked={result['revoked_token_count']}", status_code=303
+        return _agents_redirect(agent_id=user_id, error=str(exc))
+    return _agents_redirect(
+        agent_id=user_id, revoked=str(result["revoked_token_count"])
     )
 
 
@@ -833,8 +890,8 @@ def offboard_agent(
     try:
         agent_commands.offboard_user(conn, actor=user, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
-        return _agents_redirect(error=str(exc))
-    return RedirectResponse("/admin/agents?offboarded=1", status_code=303)
+        return _agents_redirect(agent_id=user_id, error=str(exc))
+    return _agents_redirect(agent_id=user_id, offboarded="1")
 
 
 @router.post(
@@ -851,8 +908,9 @@ def remove_agent(
     try:
         agent_commands.remove_user(conn, actor=user, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
-        return _agents_redirect(error=str(exc))
-    return RedirectResponse("/admin/agents?removed=1", status_code=303)
+        return _agents_redirect(agent_id=user_id, error=str(exc))
+    # A removed agent has no section left to return to; the outcome names it.
+    return _agents_redirect(agent_id=user_id, anchor=False, removed="1")
 
 
 @router.get("/admin/agents/runs", response_class=HTMLResponse)

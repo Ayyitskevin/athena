@@ -16,8 +16,12 @@
     </div>
 </div>
 
+{# An outcome is said where the action was made (U10): inside the agent's
+   section when it was made on one this page lists, and here otherwise. #}
+{% if not acted_on_agent_id %}
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
 {% if notice %}<div class="success">{{ notice }}</div>{% endif %}
+{% endif %}
 
 {% if unanswered_kills %}
 <section class="panel" aria-labelledby="unanswered-kills-heading">
@@ -320,18 +324,32 @@
 {% if agents %}
 <div class="agent-admin-list">
     {% for agent in agents %}
-    <section class="panel">
-        <div class="panel-head">
-            <h2>{{ agent.user.name }} <span class="chip" data-tone="agent">agent</span>{% if agent.user.paused_at %} <span class="chip" data-tone="warning">paused</span>{% endif %}</h2>
-        </div>
-        <div class="panel-body">
+    {# One agent, one disclosure with its own address (U10). It is shut until
+       opened, so the page is a list of agents and not every agent's detail;
+       the one an action was just made on opens, with the outcome inside. #}
+    <details class="agent-row" id="agent-{{ agent.user.id }}"{% if acted_on_agent_id == agent.user.id %} open{% endif %}>
+        <summary>
+            <div class="agent-identity">
+                <span class="name">{{ agent.user.name }} <span class="chip" data-tone="agent">agent</span>{% if agent.user.paused_at %} <span class="chip" data-tone="warning">paused</span>{% endif %}</span>
+                <span class="email">{{ agent.user.email }} &middot; {{ agent.user.role }}</span>
+            </div>
+            <div class="agent-posture">
+                <span class="chip" data-tone="neutral">{{ agent.live_token_count }} live token{{ "s" if agent.live_token_count != 1 }}</span>
+                {% if agent.budget and agent.budget.remaining == 0 %}<span class="chip" data-tone="danger">budget spent</span>{% endif %}
+                {% if agent.workers %}<span class="chip" data-tone="neutral">{{ agent.workers | length }} worker{{ "s" if agent.workers | length != 1 }}</span>{% endif %}
+            </div>
+        </summary>
+        <div class="agent-body">
+            {% if acted_on_agent_id == agent.user.id %}
+            {% if error %}<div class="error">{{ error }}</div>{% endif %}
+            {% if notice %}<div class="success">{{ notice }}</div>{% endif %}
+            {% endif %}
             <p class="muted">
-                {{ agent.user.email }} &middot; {{ agent.user.role }} &middot; created {{ agent.user.created_at }}
+                created {{ agent.user.created_at }}
                 {% if agent.last_activity_at %} &middot; last active {{ agent.last_activity_at }}{% endif %}
             </p>
             <div class="agent-admin-counts">
-                <span class="chip" data-tone="neutral">{{ agent.live_token_count }} live token{{ "s" if agent.live_token_count != 1 }}</span>
-                <span class="chip" data-tone="neutral">{{ agent.revoked_token_count }} revoked</span>
+                <span class="chip" data-tone="neutral">{{ agent.revoked_token_count }} revoked token{{ "s" if agent.revoked_token_count != 1 }}</span>
                 {% if agent.budget %}
                 <span class="chip" data-tone="neutral">
                     {{ agent.budget.action_used }}/{{ agent.budget.action_limit }} actions this {{ agent.budget.window }}
@@ -591,7 +609,7 @@
             {% endwith %}
         </div>
         </div>
-    </section>
+    </details>
     {% endfor %}
 </div>
 {% else %}
