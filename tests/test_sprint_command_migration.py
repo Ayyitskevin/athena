@@ -15,7 +15,7 @@ audit facts, attribution, atomicity, no-op silence, and transport parity.
 from fastapi.testclient import TestClient
 
 from athena.aegis import sprint_commands, sprints
-from athena.core import db
+from athena.core import db, users
 from athena.main import create_app
 
 H1 = {"X-Athena-Actor": "1"}
@@ -123,7 +123,10 @@ def test_create_rolls_back_the_row_when_audit_fails(tmp_path):
     try:
         try:
             sprint_commands.create_sprint(
-                conn, actor_id=1, project_id=project["id"], name="Doomed"
+                conn,
+                actor=users.get_user(conn, 1),
+                project_id=project["id"],
+                name="Doomed",
             )
             raise AssertionError("expected the recorder failure to propagate")
         except RuntimeError:
@@ -155,7 +158,9 @@ def test_delete_rolls_back_the_row_when_audit_fails(tmp_path):
     activity.record = boom
     try:
         try:
-            sprint_commands.delete_sprint(conn, actor_id=1, sprint_id=sprint["id"])
+            sprint_commands.delete_sprint(
+                conn, actor=users.get_user(conn, 1), sprint_id=sprint["id"]
+            )
             raise AssertionError("expected the recorder failure to propagate")
         except RuntimeError:
             pass

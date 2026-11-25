@@ -71,6 +71,21 @@ def test_cli_defaults_to_product_with_explicit_quick_option(
     assert f"PROFILE: {expected}" in capsys.readouterr().out
 
 
+def test_every_profile_runs_the_command_debt_ratchet():
+    # G1: the two command-migration debts only go down, and only a check the gate
+    # runs can say so. The stage is quick, so the quick and changed profiles run
+    # it as well as the product profile, beside the other static checks.
+    stage = next(stage for stage in gate.STAGES if stage.name == "command-debts")
+    assert stage.command[1:] == ("scripts/generate_command_debtors.py", "--check")
+    assert stage.ci_commands == (
+        ".venv/bin/python scripts/generate_command_debtors.py --check",
+    )
+    for profile in ("quick", "product"):
+        called = []
+        gate.run_profile(profile, lambda stage: called.append(stage.name) or True)
+        assert "command-debts" in called, profile
+
+
 def test_ci_check_inventory_cannot_drift():
     _assert_ci_check_inventory(Path(".github/workflows/ci.yml").read_text())
 

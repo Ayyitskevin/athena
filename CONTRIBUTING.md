@@ -130,6 +130,7 @@ python3.12 -m venv .venv
 .venv/bin/python scripts/check_imported_at_guards.py
 .venv/bin/python scripts/check_surface_parity.py
 .venv/bin/python scripts/check_surface_counts.py
+.venv/bin/python scripts/generate_command_debtors.py --check
 scripts/coverage.sh
 ```
 
@@ -165,6 +166,11 @@ measures the routes, MCP tools and tables and fails unless
 `scripts/surface_counts.toml` accounts for each (B6b): a change that adds or
 removes one records a `[[change]]` there, and an addition says what it earns
 (`earns`), so the prune ledger's counts cannot go stale and growth is argued.
+`generate_command_debtors.py --check` holds `docs/COMMAND_MIGRATION.md`'s two
+generated debt tables to the code and each count to its ceiling in
+`[tool.athena.command_debts]` of `pyproject.toml`: a count above its ceiling
+fails naming the new debtor, and one below it fails with "lower the ceiling to
+N", so the debts only go down (G1).
 `scripts/coverage.sh` runs the complete test suite with
 full-source branch coverage, writes evidence outside the checkout, and enforces
 the floors configured in `pyproject.toml`. The floors are a ratchet:

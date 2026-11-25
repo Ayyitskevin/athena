@@ -82,10 +82,15 @@ def outside_blocks(text: str) -> str:
     return _BLOCK.sub("", text)
 
 
-def write_or_check(doc: Path, content: str, *, repo: Path, command: str) -> int:
-    """The shared ``main`` tail: rewrite ``doc``, or with ``--check`` report drift."""
+def write_or_check(
+    doc: Path, content: str, *, repo: Path, command: str, check: bool | None = None
+) -> int:
+    """The shared ``main`` tail: rewrite ``doc``, or with ``--check`` report drift.
+    ``check`` overrides reading ``--check`` from the command line."""
     relative = doc.relative_to(repo)
-    if "--check" in sys.argv[1:]:
+    if check is None:
+        check = "--check" in sys.argv[1:]
+    if check:
         if doc.read_text() != content:
             sys.stderr.write(f"{relative} is stale — regenerate with `{command}`\n")
             return 1

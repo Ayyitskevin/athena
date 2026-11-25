@@ -38,6 +38,7 @@ CHANGED_STAGES = [
     "routes",
     "surface-parity",
     "surface-counts",
+    "command-debts",
     "selected-tests",
 ]
 RULE = (
@@ -194,9 +195,9 @@ def test_quick_receipt_is_unchanged(capsys):
     output = capsys.readouterr().out
     assert output.splitlines()[-7:] == [
         "STAGES RUN: lint, format, imports, ownership, transactions, imported-at, "
-        "styles, routes, surface-parity, surface-counts",
+        "styles, routes, surface-parity, surface-counts, command-debts",
         "STAGES PASSED: lint, format, imports, ownership, transactions, "
-        "imported-at, styles, routes, surface-parity, surface-counts",
+        "imported-at, styles, routes, surface-parity, surface-counts, command-debts",
         "NOT RUN: dependencies",
         "NOT RUN: typecheck",
         "NOT RUN: coverage",
@@ -311,8 +312,11 @@ def miniature(tmp_path):
     for name in ("gate.sh", "gate.py", "select_tests.py"):
         shutil.copy(ROOT / "scripts" / name, scripts / name)
     for stage in gate.STAGES:
-        # The contract checkers belong to the real tree; here each just passes.
-        if stage.command[1:2] and stage.command[1].startswith("scripts/check_"):
+        # The contract checkers (and the debt ratchet, which runs a generator's
+        # --check) belong to the real tree; here each just passes.
+        if stage.command[1:2] and stage.command[1].startswith(
+            ("scripts/check_", "scripts/generate_")
+        ):
             (repo / stage.command[1]).write_text("print('synthetic check')\n")
     # The test interpreter, by way of the path the wrapper requires.
     python = repo / ".venv/bin/python"

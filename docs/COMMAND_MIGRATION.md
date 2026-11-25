@@ -40,7 +40,7 @@ of debt the code states mechanically are generated below it, under
 |---|---|---|
 | Issue core | Create; title/body/status/priority; assignee, project, and sprint placement; blocked-close policy enforcement/override; parent hierarchy; archive/restore; labels; contributors/delegation; typed dependency link/unlink; REST/browser comment create/edit/delete — **the comment commands now take a resolved actor and own their gate**: issue visibility and author-ownership (with the delete-only admin moderation override) are checked INSIDE the command's write transaction, so an ownership test and the write it guards can no longer straddle a boundary, and a caller reaching the command directly is refused rather than trusted. Automation keeps a narrow documented bypass (`create_comment_as_automation`), mirroring `update_issue_as_automation` | None known in the comment path beyond the automation entry point, which takes a bare actor id by design (see [Generated debtors](#generated-debtors)) |
 | Projects | Issue placement uses the issue command; project create/edit/delete, each recording its lifecycle event with `commit=False` so the event commits with its write or not at all; delete also owns the no-issues/no-sprints refusal, checked inside its immediate transaction and raised as a typed `conflict` that REST and the browser both map to 409; blocked-close policy configuration; visibility flip (with the creator's roster row) and membership grant/revoke | Every project command but the blocked-close policy still takes a bare actor id rather than the resolved actor (see [Generated debtors](#generated-debtors)). Creator-only authorization and the name/key uniqueness pre-checks still run at the transport, outside the command's transaction, so a create or rename racing another onto the same name or key surfaces the constraint failure as a 500 (it writes nothing). Before 2026-11-22 the lifecycle events committed ahead of their write (review ARCH-1), so a delete that then failed at the foreign key left a permanent `deleted_project` event for a live project; a trail written before then can carry one |
-| Sprints | Create, descriptive edit, start, complete, and delete — each atomic with its lifecycle event across REST and the browser | Every sprint command still takes a bare actor id rather than the resolved actor (slice rule 1; see [Generated debtors](#generated-debtors)) |
+| Sprints | Create, descriptive edit, start, complete, and delete — each atomic with its lifecycle event across REST and the browser. **The sprint commands now take a resolved actor and own their gate (G1)**: project visibility (hidden reads as missing) and creator-only management are checked INSIDE each command's write transaction, so a caller reaching a command directly is refused rather than trusted, mirroring the comment commands. Both transports still run the same gate first for their wire statuses, and keep role and token scope (`issue_write_actor`, the cockpit's read-only refusal) | The delete's no-issues precondition still runs at the transport, outside the command's transaction (rule 2): an issue placed in the sprint between that count and the delete meets the foreign key (a 500 that writes nothing), not a 409. The cockpit cannot edit a sprint (`scripts/surface_parity.toml`) |
 | Project statuses | Add/remove own the row change, its `project_status_added`/`project_status_removed` event, and the authorization — evaluated from live rows inside the write lock — in one transaction; the in-use guard and the delete no longer straddle a transaction boundary | Statuses cannot be renamed or reordered, so a typo is add-plus-remove; an agent that created a project may still configure its lifecycle, which is preserved prior behavior rather than a settled decision |
 | Mentor | REST/browser page-comment create/edit/delete; full page lifecycle — create/edit/move/hard-delete/version-restore/archive-restore (atomic mutation + audit; edit adds If-Match optimistic concurrency); page label attach/detach (atomic join write + audit, REST/browser/MCP parity); full space lifecycle — create/edit/hard-delete/visibility/membership; page-from-template create and the idempotent daily note, both ordinary metered page-create commands | **The page and page-comment commands now own their gate**: each takes a resolved actor and checks space/page visibility (hidden reads as missing, never 403) — and, for comments, author-ownership with the delete-only admin moderation override — INSIDE its own write transaction, mirroring the aegis comment commands. Page delete also owns the no-cascade children rule and reads the audit title from the row under its own lock. Role and token scope stay at each transport (`docs_write_actor`), as they do for the aegis comment commands |
 | Labels (vocabulary) | Attach/detach on issues and pages is command-backed and audited (see the Issue core and Mentor rows). Standalone `POST /labels` is `label_commands.create_label`: the insert and its `label_created` event commit together, and a duplicate name — including the loser of a create race — is a conflict (409) | Vocabulary growth stays unmetered, the same deliberate choice as the other non-issue writes listed under Agent budgets |
@@ -72,6 +72,38 @@ These two tables are generated from the code by
 `scripts/generate_command_debtors.py`; `tests/test_command_debtors_doc.py` fails
 when they drift. Regenerate, never edit them.
 
+**Both counts are a ratchet: they only go down (G1).** Each has a ceiling in
+`[tool.athena.command_debts]` of `pyproject.toml`, beside the coverage floors,
+and the gate's `command-debts` stage (`generate_command_debtors.py --check`,
+in every profile and in CI) holds each count to it from both sides, the way
+`scripts/check_coverage.py` holds the floors:
+
+- **Above its ceiling fails, naming the new debtor.** A new command that takes
+  a bare actor id, or a new entry in the ownership check's allowlist, does not
+  simply appear in a table below; it fails the gate. The generator will not
+  rewrite this document while a count is above its ceiling, so the committed
+  table stays the last accepted list and the failure can name what is new.
+  Pay it instead (take the resolved actor; move the write behind a command).
+  Raising a ceiling weakens the gate, as lowering a coverage floor does.
+- **Below its ceiling fails with "lower the ceiling to N".** A change that pays
+  debt lowers the ceiling in the same commit, so the paid debt cannot silently
+  grow back in a later one.
+
+The ceilings live in `pyproject.toml` rather than in the generator because they
+are hand-set policy numbers, reviewed like the coverage floors, and a reviewer
+should find every number that moves only one way in one table. They are not
+restated here: the generated counts below equal them whenever the gate passes.
+
+**Every later change that touches a debtor pays it.** A change that edits the
+body of a command listed below converts it to take the resolved actor and own
+its gate — the whole module where that is coherent, as the Sprints row was —
+and lowers the ceiling; a change that edits a transport's listed write moves
+it behind a command or says in its PR why it stays. No check enforces this
+half: telling a payment-worthy edit from a typo fix or a shared-helper rename
+needs a diff base and judgment the gate does not have, and a check that failed
+every touch would push fixes away from the code that most needs them. The
+ratchet makes the payment stick once made; review asks for it.
+
 **Commands that take a bare actor id** (slice rule 1 below). The rule: every
 public top-level function of a `*_commands.py` module under `src/athena/` that
 has a parameter named `actor_id` and none named `actor`. A name ending in
@@ -87,7 +119,6 @@ recorder that only attributes an event, so the app-level refusal recorders
 | `athena.aegis.comment_commands` | — | `create_comment_as_automation` |
 | `athena.aegis.issue_commands` | — | `update_issue_as_automation`, `attach_label_as_automation`, `add_contributor_as_automation` |
 | `athena.aegis.project_commands` | `create_project`, `update_project`, `delete_project`, `set_project_visibility`, `add_project_member`, `remove_project_member` | — |
-| `athena.aegis.sprint_commands` | `create_sprint`, `update_sprint`, `start_sprint`, `complete_sprint`, `delete_sprint` | — |
 | `athena.core.approval_commands` | `decide`, `set_policy`, `clear_policy`, `open_request` | — |
 | `athena.core.budget_commands` | `set_budget`, `clear_budget`, `record_exhaustion` | — |
 | `athena.core.oidc_commands` | `link_identity`, `unlink_identity` | — |
@@ -97,7 +128,7 @@ recorder that only attributes an event, so the app-level refusal recorders
 | `athena.core.webhook_commands` | `register_webhook`, `set_webhook_active`, `delete_webhook` | — |
 | `athena.mentor.space_commands` | `create_space`, `edit_space`, `delete_space`, `set_space_visibility`, `add_space_member`, `remove_space_member` | — |
 
-*42 commands in 13 modules.*
+*37 commands in 12 modules.*
 <!-- END GENERATED debtors:bare-actor-id -->
 
 **Writes outside a command.** Every exception in `ALLOWED_TRANSPORT_WRITES` of

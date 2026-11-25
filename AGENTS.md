@@ -29,9 +29,9 @@ of the handbook; where a handbook is present, it governs.
   settings.
 - **No secrets in the record.** Never commit a credential or put one in a log,
   a PR, an issue or a document.
-- **Do not weaken the gate.** Never lower a coverage floor, extend
-  `ALLOWED_PRAGMAS`, add a checker exemption, or skip or delete a test to get
-  green. Fix the code or add the test.
+- **Do not weaken the gate.** Never lower a coverage floor, raise a
+  command-debt ceiling, extend `ALLOWED_PRAGMAS`, add a checker exemption, or
+  skip or delete a test to get green. Fix the code or add the test.
 - **Migrations are forward-only**, and hidden things read as missing (404),
   never as forbidden (403).
 
@@ -109,6 +109,10 @@ Therefore:
   is the first migrated slice; legacy mutation+activity pairs remain migration
   debt, not a pattern to copy. Any new write—or existing split write you change—
   must move behind a shared command rather than adding another transport copy.
+  The two debts [`docs/COMMAND_MIGRATION.md`](docs/COMMAND_MIGRATION.md)
+  generates (commands that take a bare actor id, writes outside a command) are
+  a ratchet with ceilings in `pyproject.toml`: they only go down, and a change
+  that edits a listed debtor pays it and lowers the ceiling in the same commit.
 - **One command-error dialect.** A command refuses with a transport-neutral
   *kind* — a closed string vocabulary per command module (`"not_found"`,
   `"invalid"`, `"conflict"`, ...) plus a human `detail` — never an HTTP status
@@ -165,7 +169,7 @@ check, generator and the changed profile's selection.
 | Agent-facing REST route | `src/athena/<pkg>/<name>_api.py` (refuse with `Refusal(code=...)`); a body derives from `RequestBody` in `src/athena/core/request_models.py`; a new router is included in `src/athena/main.py` | `scripts/generate_agent_api.py` if a tool calls it | `tests/test_agent_openapi.py`, `tests/test_request_bodies_closed.py`, `tests/test_refusal_codes.py`, `tests/test_write_ownership.py` |
 | Browser route | `src/athena/web/<name>.py` and `src/athena/templates/` (read `docs/DESIGN_SYSTEM.md` first); a new router is included in `src/athena/main.py` with `browser_dependencies` | — | `tests/test_agent_openapi.py`, `tests/test_template_contracts.py`, `tests/test_csp_no_unsafe_inline.py` |
 | Refusal code | `src/athena/core/refusal_codes.py` | `scripts/generate_agent_api.py` | `tests/test_refusal_codes.py` (runs `scripts/check_refusal_codes.py`), `tests/test_agent_api_doc.py` |
-| Write command | `src/athena/<pkg>/<name>_commands.py` (takes `actor`, refuses with a `kind`, passes `commit=` to writers); the route's `*STATUS_BY_KIND` and `*CODE_BY_KIND` | `scripts/generate_command_debtors.py` | `tests/test_transaction_commits.py`, `tests/test_write_ownership.py`, `tests/test_command_error_dialect.py`, `tests/test_command_debtors_doc.py` |
+| Write command | `src/athena/<pkg>/<name>_commands.py` (takes `actor`, refuses with a `kind`, passes `commit=` to writers); the route's `*STATUS_BY_KIND` and `*CODE_BY_KIND`; a paid debt's ceiling in `pyproject.toml` | `scripts/generate_command_debtors.py` | `tests/test_transaction_commits.py`, `tests/test_write_ownership.py`, `tests/test_command_error_dialect.py`, `tests/test_command_debtors_doc.py` |
 | Migration | a new `src/athena/core/migrations/NNNN_<name>.sql`, next number; never edit an applied one | — | `tests/test_migration_integrity.py`, `tests/test_migrations_atomic.py` (the changed profile runs the full suite) |
 | Setting | a `Setting` in `src/athena/config.py` | `scripts/generate_settings_doc.py` | `tests/test_settings_registry.py` |
 | Activity reader | the reader, and a `[[guarded]]` or `[[exempt]]` entry in `src/athena/<pkg>/imported_at_guards.toml` | — | `tests/test_imported_at_guards.py` |
@@ -197,8 +201,8 @@ check, generator and the changed profile's selection.
 1. Run `scripts/gate.sh` (default `product` profile): it executes the local product
    inventory in `scripts/gate.py`, including dependency validation, lint, formatting,
    type checks, architectural checks (import contracts, write ownership, transaction
-   commits, `imported_at` guards, template styles and routes, surface parity) and
-   full-suite coverage. Explicit `--profile quick`
+   commits, `imported_at` guards, template styles and routes, surface parity,
+   command-debt ceilings) and full-suite coverage. Explicit `--profile quick`
    is partial and cannot replace product evidence. Nor can `--profile changed`, the
    inner loop: while you work, run it for the static stages, the type check and the
    tests selected from your diff (see CONTRIBUTING.md); the product profile stays

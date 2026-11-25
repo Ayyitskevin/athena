@@ -759,6 +759,20 @@ def _sprints_signin(verb: str = "manage sprints") -> HTMLResponse:
     )
 
 
+_SPRINT_WEB_STATUS = {"not_found": 404, "forbidden": 403}
+
+
+def _sprint_refusal(exc: sprint_commands.SprintCommandError) -> HTMLResponse:
+    """A sprint command's own refusal. The gates in this module answer first, so
+    this is reached only when the command's in-transaction re-check disagrees with
+    them (the project changed hands or visibility between the two)."""
+    detail = str(exc)
+    return BrowserRefusal(
+        f'<div class="error">{html.escape(detail[:1].upper() + detail[1:])}.</div>',
+        status_code=_SPRINT_WEB_STATUS[exc.kind],
+    )
+
+
 def _authorize_sprint_write(conn, sprint_id: int, user: dict):
     """Resolve a sprint the user may manage, or an error response. Returns
     (sprint, None) on success, or (None, HTMLResponse). Managing a sprint is the
@@ -865,16 +879,19 @@ def create_sprint_web(
             '<div class="error">Sprint name is required.</div>', status_code=400
         )
     # The command owns the row and its atomic 'sprint_created' event — the same one
-    # REST calls.
-    sprint_commands.create_sprint(
-        conn,
-        actor_id=user["id"],
-        project_id=project_id,
-        name=name,
-        goal=goal.strip(),
-        start_date=start_date.strip() or None,
-        end_date=end_date.strip() or None,
-    )
+    # REST calls — and re-checks the gate above inside its transaction.
+    try:
+        sprint_commands.create_sprint(
+            conn,
+            actor=user,
+            project_id=project_id,
+            name=name,
+            goal=goal.strip(),
+            start_date=start_date.strip() or None,
+            end_date=end_date.strip() or None,
+        )
+    except sprint_commands.SprintCommandError as exc:
+        return _sprint_refusal(exc)
     return RedirectResponse(f"/aegis/projects/{project_id}/sprints", status_code=303)
 
 
@@ -889,14 +906,15 @@ def start_sprint_web(
     if err is not None:
         return err
     try:
-        sprint_commands.start_sprint(conn, actor_id=user["id"], sprint_id=sprint_id)
+        sprint_commands.start_sprint(conn, actor=user, sprint_id=sprint_id)
     except sprints.SprintStateError as exc:
         return BrowserRefusal(
             f'<div class="error">{html.escape(str(exc))}</div>', status_code=409
         )
-    except sprint_commands.SprintCommandError:
+    except sprint_commands.SprintCommandError as exc:
+        if exc.kind != "not_found":
+            return _sprint_refusal(exc)
         # Vanished past the authorization gate — land back on the list, which 404s.
-        pass
     return RedirectResponse(
         f"/aegis/projects/{sprint['project_id']}/sprints", status_code=303
     )
@@ -913,14 +931,15 @@ def complete_sprint_web(
     if err is not None:
         return err
     try:
-        sprint_commands.complete_sprint(conn, actor_id=user["id"], sprint_id=sprint_id)
+        sprint_commands.complete_sprint(conn, actor=user, sprint_id=sprint_id)
     except sprints.SprintStateError as exc:
         return BrowserRefusal(
             f'<div class="error">{html.escape(str(exc))}</div>', status_code=409
         )
-    except sprint_commands.SprintCommandError:
+    except sprint_commands.SprintCommandError as exc:
+        if exc.kind != "not_found":
+            return _sprint_refusal(exc)
         # Vanished past the authorization gate — land back on the list, which 404s.
-        pass
     return RedirectResponse(
         f"/aegis/projects/{sprint['project_id']}/sprints", status_code=303
     )
@@ -941,8 +960,12 @@ def delete_sprint_web(
             '<div class="error">Move its issues out of the sprint first.</div>',
             status_code=409,
         )
-    # The command owns the delete and its atomic 'sprint_deleted' event.
-    sprint_commands.delete_sprint(conn, actor_id=user["id"], sprint_id=sprint_id)
+    # The command owns the delete and its atomic 'sprint_deleted' event, and
+    # re-checks the gate above inside its transaction.
+    try:
+        sprint_commands.delete_sprint(conn, actor=user, sprint_id=sprint_id)
+    except sprint_commands.SprintCommandError as exc:
+        return _sprint_refusal(exc)
     return RedirectResponse(
         f"/aegis/projects/{sprint['project_id']}/sprints", status_code=303
     )

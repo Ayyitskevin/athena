@@ -178,6 +178,13 @@ STAGES = (
         (".venv/bin/python scripts/check_surface_counts.py",),
     ),
     Stage(
+        "command-debts",
+        (PYTHON, "scripts/generate_command_debtors.py", "--check"),
+        True,
+        ("Check command-migration debts",),
+        (".venv/bin/python scripts/generate_command_debtors.py --check",),
+    ),
+    Stage(
         "coverage",
         ("bash", "scripts/coverage.sh"),
         False,
