@@ -29,7 +29,7 @@ def assign_issue_to_seat(
     note: str = "",
     radio: Callable[..., dict] | None = None,
 ) -> dict:
-    spec = fleet_roster.find_declared_seat(seat_slug)
+    spec = fleet_roster.find_declared_seat(conn, seat_slug)
     if spec is None:
         raise AssignError(f"unknown seat {seat_slug!r}")
     if spec.get("kind") == "operator":

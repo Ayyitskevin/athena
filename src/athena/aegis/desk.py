@@ -262,7 +262,7 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
             "is_admin": identity.is_admin(actor),
             # None when this account is not a declared fleet seat. Same slug
             # as Buzz / systemd / drift-check when it is.
-            "seat_slug": fleet_roster.seat_slug_for_email(actor.get("email")),
+            "seat_slug": fleet_roster.seat_slug_for_email(conn, actor.get("email")),
             # Your notebook page: id, last edit and a bounded excerpt, or null
             # when you have none yet (POST /desk/notebook creates it; this read
             # never does).

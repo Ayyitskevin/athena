@@ -48,7 +48,9 @@ Two agents can still read the same office shape at once. Sitting down is
 ```
 
 `seat_slug` is the same identifier as Buzz, systemd (`buzz-acp-grok`), and
-`drift-check`. Undeclared accounts get `null`.
+`drift-check`. Undeclared accounts get `null`. Seats are declared by an admin
+on the Fleet roster or over `/fleet/seats`, and a new instance has none
+(see [OPERATIONS.md](OPERATIONS.md#declared-fleet-seats)).
 
 `seated` is true only when there is **exactly one** active lease. Two active
 leases set a warning: pick a chair and release the other.

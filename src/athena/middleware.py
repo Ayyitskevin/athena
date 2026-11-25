@@ -595,6 +595,7 @@ _IDEMPOTENCY_API_ROOTS = (
     "/attachments",
     "/automation",
     "/filters",
+    "/fleet/seats",
     "/idempotency-keys",
     "/issues",
     "/labels",

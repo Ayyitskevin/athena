@@ -2,6 +2,7 @@
 
 from fastapi.testclient import TestClient
 import pytest
+from support import declare_seat
 
 from athena.aegis import office
 from athena.core import db
@@ -54,6 +55,7 @@ def test_floor_lists_empty_and_occupied_chairs(
             },
             headers={"X-Athena-Actor": "1"},
         ).json()
+        declare_seat(client, "grok", email="grok@agents.local")
         client.put(
             f"/issues/{seated['id']}/assignee",
             json={"assignee_id": grok["user"]["id"]},
@@ -176,6 +178,7 @@ def test_floor_assign_sits_an_empty_chair(tmp_path):
             },
             headers={"X-Athena-Actor": "1"},
         )
+        declare_seat(client, "grok", email="grok@agents.local")
         client.post(
             "/login",
             data={"email": "admin@e.com", "password": "secret"},

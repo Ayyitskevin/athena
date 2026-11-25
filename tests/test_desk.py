@@ -17,6 +17,7 @@ import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
+from support import declare_seat
 
 from athena.aegis import desk, desk_commands
 from athena.core import db
@@ -98,6 +99,9 @@ def test_a_fresh_agent_desk_is_empty_and_says_so_without_lying(tmp_path):
         _bootstrap(client)
         sol = _agent(client)
         grok = _agent(client, email="grok@agents.local", name="Grok")
+        # A new instance declares no seat (D27); grok's desk names the one
+        # declared for it.
+        declare_seat(client, "grok", email="grok@agents.local")
         board = _desk(client, _bearer(sol))
         grok_desk = _desk(client, _bearer(grok))
         assert grok_desk["identity"]["seat_slug"] == "grok"

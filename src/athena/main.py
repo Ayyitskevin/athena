@@ -71,6 +71,7 @@ from athena.core import (
     security_events,
     events_api,
     feed_observers,
+    fleet_seats_api,
     notifications_api,
     provenance,
     rate_limits,
@@ -970,6 +971,7 @@ def create_app(
     app.include_router(users_api.router)
     app.include_router(approvals_api.router)
     app.include_router(workers_api.router)
+    app.include_router(fleet_seats_api.router)
     app.include_router(security_api.router)
     app.include_router(mentor_learnings_api.router)
     app.include_router(aegis_dispatch_api.router)

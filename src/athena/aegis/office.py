@@ -119,7 +119,7 @@ def _build_office(
 ) -> dict:
     """This actor's cubicle. ``inbox_items`` avoids a second delegation read
     when the desk already has them."""
-    seat_slug = fleet_roster.seat_slug_for_email(actor.get("email"))
+    seat_slug = fleet_roster.seat_slug_for_email(conn, actor.get("email"))
     active = leases.active_leases_held_by(
         conn, holder_id=int(actor["id"]), limit=1, now=now
     )
@@ -179,7 +179,7 @@ def build_occupancy(
     for lease in leases.list_active_leases(conn):
         holder = users.get_user(conn, int(lease["holder_id"]))
         email = None if holder is None else holder.get("email")
-        slug = fleet_roster.seat_slug_for_email(email)
+        slug = fleet_roster.seat_slug_for_email(conn, email)
         issue = issues.get_issue(conn, int(lease["issue_id"]))
         rows.append(
             {
@@ -248,7 +248,7 @@ def build_floor(
                 "holder_id": lease["holder_id"],
                 "holder_name": lease.get("holder_name"),
                 "seat_slug": fleet_roster.seat_slug_for_email(
-                    None if holder is None else holder.get("email")
+                    conn, None if holder is None else holder.get("email")
                 ),
                 "declared_paths": list(lease.get("declared_paths") or []),
                 "coordination_root": lease.get("coordination_root"),
@@ -282,7 +282,9 @@ def build_floor(
                 "priority": issue.get("priority"),
                 "assignee_id": issue.get("assignee_id"),
                 "assignee_name": issue.get("assignee_name"),
-                "assignee_seat_slug": fleet_roster.seat_slug_for_email(assignee_email),
+                "assignee_seat_slug": fleet_roster.seat_slug_for_email(
+                    conn, assignee_email
+                ),
                 "room": room_row,
                 "occupied": occupant is not None,
                 "occupant": occupant,
@@ -299,7 +301,7 @@ def build_floor(
                     issue_key=issue.get("key"),
                     issue_id=issue_id,
                     seat_slug=(None if occupant is None else occupant.get("seat_slug"))
-                    or fleet_roster.seat_slug_for_email(assignee_email),
+                    or fleet_roster.seat_slug_for_email(conn, assignee_email),
                 ),
             }
         )

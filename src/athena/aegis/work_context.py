@@ -708,7 +708,7 @@ def build_work_context(
             },
             "issue_etag": issue_etag,
             "seat_slug": fleet_roster.seat_slug_for_email(
-                None if actor is None else actor.get("email")
+                conn, None if actor is None else actor.get("email")
             ),
             "protocol": {
                 "claim_one_issue": True,

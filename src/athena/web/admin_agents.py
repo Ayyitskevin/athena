@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from html import escape
 import json
+import re
 import sqlite3
 from urllib.parse import quote
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -38,6 +39,7 @@ from athena.core import (
     run_replay,
     users,
     fleet_roster,
+    fleet_seat_commands,
     worker_commands,
     workers,
 )
@@ -244,6 +246,15 @@ def _fleet_page_context(
     ]
     return {
         "roster": roster,
+        # A starting slug for the declare form on each seatless agent's row:
+        # the address's local part, cut to what a slug may hold. The admin may
+        # change it; the command validates whatever is sent.
+        "suggested_slugs": {
+            agent["id"]: _suggested_slug(agent["email"])
+            for agent in roster["undeclared_athena_agents"]
+        },
+        "seat_kinds": fleet_roster.SEAT_KINDS,
+        "unit_scopes": fleet_roster.UNIT_SCOPES,
         "open_issues": open_issues,
         "assignable": assignable,
         "radio_configured": config.buzz_radio_configured(),
@@ -259,6 +270,9 @@ def fleet_roster_page(
     assigned: str | None = Query(None),
     seat: str | None = Query(None),
     radio: str | None = Query(None),
+    declared: str | None = Query(None),
+    edited: str | None = Query(None),
+    removed: str | None = Query(None),
     error: str | None = Query(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
@@ -269,7 +283,16 @@ def fleet_roster_page(
     if err is not None:
         return err
     notice = None
-    if assigned:
+    if declared:
+        notice = f"Declared seat {declared}."
+    elif edited:
+        notice = f"Saved seat {edited}."
+    elif removed:
+        notice = (
+            f"Removed seat {removed}. Its account, if it had one, is kept and "
+            "now has no seat."
+        )
+    elif assigned:
         notice = f"Assigned {assigned} to {seat or 'seat'}."
         if radio == "sent":
             notice += " Radio posted to command-deck."
@@ -327,6 +350,147 @@ def fleet_assign_issue(
     radio = (result.get("radio") or {}).get("status") or "skipped"
     return RedirectResponse(
         f"/admin/fleet?assigned={result['issue_key']}&seat={result['seat']}&radio={radio}",
+        status_code=303,
+    )
+
+
+#: How the cockpit answers a seat command's refusal kind.
+_SEAT_STATUS_BY_KIND: dict[str, int] = {
+    "forbidden": 403,
+    "not_found": 404,
+    "conflict": 409,
+    "invalid": 400,
+}
+
+
+def _suggested_slug(email: str | None) -> str:
+    local = (email or "").split("@", 1)[0].lower()
+    slug = re.sub(r"[^a-z0-9-]+", "-", local).strip("-")
+    return slug[:40].rstrip("-")
+
+
+def _seat_form_fields(
+    name: str, email: str, kind: str, unit: str, unit_scope: str, buzz_pubkey: str
+) -> dict[str, str]:
+    return {
+        "name": name,
+        "email": email,
+        "kind": kind,
+        "unit": unit,
+        "unit_scope": unit_scope,
+        "buzz_pubkey": buzz_pubkey,
+    }
+
+
+def _seat_refused(
+    request: Request,
+    conn: sqlite3.Connection,
+    exc: fleet_seat_commands.FleetSeatCommandError,
+) -> HTMLResponse:
+    return get_templates().TemplateResponse(
+        request=request,
+        name="admin/fleet.html",
+        context=_fleet_page_context(conn, error=exc.detail),
+        status_code=_SEAT_STATUS_BY_KIND[exc.kind],
+    )
+
+
+@router.post(
+    "/admin/fleet/seats",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def declare_fleet_seat(
+    request: Request,
+    slug: str = Form(""),
+    name: str = Form(""),
+    email: str = Form(""),
+    kind: str = Form("seat"),
+    unit: str = Form(""),
+    unit_scope: str = Form("user"),
+    buzz_pubkey: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Declare a seat from the cockpit: the command REST's POST /fleet/seats
+    calls. Empty optional fields mean none."""
+    user = getattr(request.state, "user", None)
+    err = admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None, "admin_required accepted a missing user"
+    try:
+        seat = fleet_seat_commands.declare_seat(
+            conn,
+            actor=user,
+            slug=slug,
+            **_seat_form_fields(name, email, kind, unit, unit_scope, buzz_pubkey),
+        )
+    except fleet_seat_commands.FleetSeatCommandError as exc:
+        return _seat_refused(request, conn, exc)
+    return RedirectResponse(
+        f"/admin/fleet?declared={quote(seat['slug'], safe='')}", status_code=303
+    )
+
+
+@router.post(
+    "/admin/fleet/seats/{slug}",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def edit_fleet_seat(
+    request: Request,
+    slug: str,
+    name: str = Form(""),
+    email: str = Form(""),
+    kind: str = Form("seat"),
+    unit: str = Form(""),
+    unit_scope: str = Form("user"),
+    buzz_pubkey: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Save a seat's edit form. The form sends every field, so an empty one
+    clears it; the slug is the seat's key and is not edited."""
+    user = getattr(request.state, "user", None)
+    err = admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None, "admin_required accepted a missing user"
+    try:
+        seat = fleet_seat_commands.update_seat(
+            conn,
+            actor=user,
+            slug=slug,
+            changes=_seat_form_fields(name, email, kind, unit, unit_scope, buzz_pubkey),
+        )
+    except fleet_seat_commands.FleetSeatCommandError as exc:
+        return _seat_refused(request, conn, exc)
+    return RedirectResponse(
+        f"/admin/fleet?edited={quote(seat['slug'], safe='')}", status_code=303
+    )
+
+
+@router.post(
+    "/admin/fleet/seats/{slug}/remove",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def remove_fleet_seat(
+    request: Request,
+    slug: str,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Remove a seat. The account it named is kept."""
+    user = getattr(request.state, "user", None)
+    err = admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None, "admin_required accepted a missing user"
+    try:
+        removed = fleet_seat_commands.remove_seat(conn, actor=user, slug=slug)
+    except fleet_seat_commands.FleetSeatCommandError as exc:
+        return _seat_refused(request, conn, exc)
+    return RedirectResponse(
+        f"/admin/fleet?removed={quote(removed['seat']['slug'], safe='')}",
         status_code=303,
     )
 

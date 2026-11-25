@@ -8,6 +8,7 @@ units, send Buzz messages, or claim a process is alive.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 import socket
 import sqlite3
@@ -19,106 +20,68 @@ from athena.core import users, workers
 SCHEMA = "athena.fleet_roster.v1"
 DEFAULT_ASSIGN_CHANNEL = "3fc2b270-cd0b-4a6b-afcd-f10471caffb2"  # command-deck
 
-# Public Buzz identities and unit names. These are not secrets.
-# email is the Athena handle when the seat has been onboarded.
-# unit_scope says which systemd manager owns the unit: cloud seats run as user
-# units ("user", the default); the hardened local workers run as system units
-# under isolated service accounts ("system") — probing them with --user reports
-# "missing" forever, which is exactly the drift this field repairs.
-DECLARED_SEATS: tuple[dict[str, str | None], ...] = (
-    {
-        "slug": "kevin",
-        "name": "Kevin",
-        "email": "kevin@athena.local",
-        "unit": None,
-        "buzz_pubkey": "2bee90a820486a2b2e8ea97e8b058f4201cd6eac6ac15e98d9727bccd8f6f580",
-        "kind": "operator",
-    },
-    {
-        "slug": "claude",
-        "name": "Claude",
-        "email": "claude@agents.local",
-        "unit": "buzz-acp-claude.service",
-        "buzz_pubkey": "c55e70289ba2cb6f5acb2ab0c9c39a6f20d23000ff57c58d568193dbaab20041",
-        "kind": "seat",
-    },
-    {
-        "slug": "codex",
-        "name": "Codex",
-        "email": "codex@agents.local",
-        "unit": "buzz-acp-codex.service",
-        "buzz_pubkey": "c92269929d4b5d48282f39858a43d90737edfce526bf6a3a6899b5e6f5abe3f8",
-        "kind": "seat",
-    },
-    {
-        "slug": "kimi",
-        "name": "Kimi",
-        "email": "kimi@agents.local",
-        "unit": "buzz-acp-kimi.service",
-        "buzz_pubkey": "537d7a475446bb89f0429068a7810f8f9d550371e7ab6be5ae89b3b94b75220e",
-        "kind": "seat",
-    },
-    {
-        "slug": "grok",
-        "name": "Grok",
-        "email": "grok@agents.local",
-        "unit": "buzz-acp-grok.service",
-        "buzz_pubkey": "f6f7c025959f0a215184e8e92e623dd5a798f86024df191c00c1674fbb191c8e",
-        "kind": "seat",
-    },
-    {
-        "slug": "glm",
-        "name": "GLM",
-        "email": None,
-        "unit": "buzz-acp-glm.service",
-        "buzz_pubkey": "6c390afaff47b4aaacda404a60694fae43e86f071c15d7eae3abf5fe009fdc6f",
-        "kind": "seat",
-    },
-    {
-        "slug": "muse",
-        "name": "Muse",
-        "email": "muse@agents.local",
-        "unit": "buzz-seat-muse.service",
-        "unit_scope": "system",
-        "buzz_pubkey": "a6466cb725ec90e9c759317df1bb5120c951474b7cf62ae5cb84f5bdeae98aa0",
-        "kind": "local_ollama",
-    },
-    {
-        "slug": "qwen",
-        "name": "Qwen",
-        "email": "qwen@agents.local",
-        "unit": "buzz-seat-qwen.service",
-        "unit_scope": "system",
-        "buzz_pubkey": "7c29f9b39e7cb588617d9ed694ad2ed591aa77006d613e6b8b25a660f70f8020",
-        "kind": "local_ollama",
-    },
+# The declared seats live in the fleet_seats table (migration 0093, decision
+# D27): an existing instance kept the eight seats this module once listed, a new
+# one starts with none, and an admin declares, edits and removes them through
+# core/fleet_seat_commands.py. A seat carries public Buzz identities and unit
+# names, never a secret. email is the Athena handle when the seat has been
+# onboarded. unit_scope says which systemd manager owns the unit: cloud seats
+# run as user units ("user", the default); the hardened local workers run as
+# system units under isolated service accounts ("system") — probing them with
+# --user reports "missing" forever.
+#
+# Read from the table on every call, never cached: a seat declared in the
+# cockpit is the desk's seat_slug on the next read.
+#
+# Retired seats are REMOVED, not tombstoned: an agent account left behind shows
+# up under undeclared_athena_agents, which is the honest reading — leftover
+# state the operator has not cleaned up yet, not a seat we still claim to run.
+
+SEAT_KINDS = ("operator", "seat", "local_ollama")
+UNIT_SCOPES = ("user", "system")
+
+_SEAT_COLUMNS = (
+    "id, slug, name, email, unit, unit_scope, buzz_pubkey, kind, created_at, updated_at"
 )
-# Retired seats are REMOVED, not tombstoned: nemotron (retired 2026-08-16) left
-# an agent account behind, and that account showing up under
-# undeclared_athena_agents is the honest reading — leftover state the operator
-# has not cleaned up yet, not a seat we still claim to run.
 
 UnitProbe = Callable[[str, str], dict]
 
 
-def find_declared_seat(slug: str) -> dict[str, str | None] | None:
-    wanted = slug.strip().lower()
-    for spec in DECLARED_SEATS:
-        if str(spec["slug"]).lower() == wanted:
-            return spec
-    return None
+def list_seats(
+    conn: sqlite3.Connection, *, after_id: int = 0, limit: int = -1
+) -> list[dict]:
+    """The declared seats in declaration order (``id``); ``limit`` -1 is all."""
+    return [
+        dict(row)
+        for row in conn.execute(
+            f"SELECT {_SEAT_COLUMNS} FROM fleet_seats WHERE id > ? ORDER BY id LIMIT ?",
+            (after_id, limit),
+        )
+    ]
 
 
-def seat_slug_for_email(email: str | None) -> str | None:
+def find_declared_seat(conn: sqlite3.Connection, slug: str) -> dict | None:
+    row = conn.execute(
+        f"SELECT {_SEAT_COLUMNS} FROM fleet_seats WHERE slug = ?",
+        (slug.strip().lower(),),
+    ).fetchone()
+    return None if row is None else dict(row)
+
+
+def find_seat_by_email(conn: sqlite3.Connection, email: str) -> dict | None:
+    row = conn.execute(
+        f"SELECT {_SEAT_COLUMNS} FROM fleet_seats WHERE email = ?",
+        (email.strip().lower(),),
+    ).fetchone()
+    return None if row is None else dict(row)
+
+
+def seat_slug_for_email(conn: sqlite3.Connection, email: str | None) -> str | None:
     """Map an Athena email to the declared fleet slug, or None if undeclared."""
     if not email:
         return None
-    wanted = email.strip().lower()
-    for spec in DECLARED_SEATS:
-        listed = spec.get("email")
-        if listed and str(listed).lower() == wanted:
-            return str(spec["slug"])
-    return None
+    seat = find_seat_by_email(conn, email)
+    return None if seat is None else str(seat["slug"])
 
 
 def athena_assignable_seats(conn: sqlite3.Connection) -> list[dict]:
@@ -128,7 +91,7 @@ def athena_assignable_seats(conn: sqlite3.Connection) -> list[dict]:
     to be up; radio will skip if they are dark.
     """
     rows: list[dict] = []
-    for spec in DECLARED_SEATS:
+    for spec in list_seats(conn):
         if spec.get("kind") == "operator" or not spec.get("email"):
             continue
         account = _athena_account(conn, str(spec["email"]))
@@ -145,10 +108,10 @@ def athena_assignable_seats(conn: sqlite3.Connection) -> list[dict]:
     return rows
 
 
-def assignable_seat_slugs() -> tuple[str, ...]:
+def assignable_seat_slugs(conn: sqlite3.Connection) -> tuple[str, ...]:
     return tuple(
         str(spec["slug"])
-        for spec in DECLARED_SEATS
+        for spec in list_seats(conn)
         if spec.get("kind") != "operator" and spec.get("email")
     )
 
@@ -256,15 +219,16 @@ def build_roster(
     *,
     probe: UnitProbe | None = None,
     now: datetime | None = None,
-    declared: tuple[dict[str, str | None], ...] | None = None,
+    declared: Sequence[Mapping[str, str | None]] | None = None,
 ) -> dict:
-    """Compose the operator roster. ``probe`` is injectable so tests do not
-    talk to systemd."""
+    """Compose the operator roster from the declared seats (``fleet_seats``,
+    or ``declared`` when a test hands its own). ``probe`` is injectable so tests
+    do not talk to systemd."""
     probe_fn = probe_systemd_unit if probe is None else probe
     clock = datetime.now(UTC) if now is None else now
     if clock.tzinfo is None:
         clock = clock.replace(tzinfo=UTC)
-    seats_in = declared if declared is not None else DECLARED_SEATS
+    seats_in = declared if declared is not None else list_seats(conn)
 
     seats: list[dict] = []
     claimed_emails: set[str] = set()
@@ -350,11 +314,16 @@ def build_roster(
                 f"seat {seat['slug']}: {seat['email']} resolves to a "
                 "non-agent account — the declaration points at a person"
             )
-    for account in undeclared:
-        drift.append(
-            f"athena agent {account['email']} is not a declared seat — "
-            "declare it or offboard it"
-        )
+    # An agent no seat claims is drift only against a declaration. With no seat
+    # declared there is nothing to drift from: an instance that has not taken
+    # up the roster (every new one, D27) lists its agents as seatless, and the
+    # page offers to declare a seat for each, without an alert.
+    if seats:
+        for account in undeclared:
+            drift.append(
+                f"athena agent {account['email']} is not a declared seat — "
+                "declare it or offboard it"
+            )
 
     return {
         "schema": SCHEMA,

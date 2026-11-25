@@ -1665,6 +1665,49 @@ history rows. A heartbeat-only identifier remains an operational sidecar; it doe
 not become a replayable activity run unless activity events are later written with
 that run id.
 
+### Declared fleet seats
+
+The Fleet roster (`/admin/fleet`, JSON twin `/admin/fleet.json`) compares the
+seats you declared with what this host and Athena observe: each seat's systemd
+unit, its Athena account and its worker report. "Assign to a seat" on that page
+and on a project floor offers the declared seats that have an agent account, and
+`seat_slug` in the desk, office and work-context packets is the slug of the seat
+that declares the reader's email.
+
+Seats are data (decision D27), kept in the `fleet_seats` table. An instance that
+already had users when migration 0093 ran kept the eight seats the source once
+listed; a new instance starts with none, and with none the page shows no "Roster
+drift" alert: agents onboarded through the cockpit are listed as having no seat,
+each with a **Declare a seat** form on its row. Once any seat is declared, an
+agent account no seat declares is drift again, and its row keeps the same form.
+
+An admin declares, edits and removes seats from the page's forms or over REST.
+Each write is recorded on the trail (`declared_fleet_seat`, `edited_fleet_seat`,
+`removed_fleet_seat`) and accepts an `Idempotency-Key`:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8000/fleet/seats \
+  -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"slug": "sol", "name": "Sol", "email": "sol@agents.local", "kind": "seat",
+       "unit": "buzz-acp-sol.service", "unit_scope": "user"}'
+curl -fsS http://127.0.0.1:8000/fleet/seats -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN"
+curl -fsS -X PATCH http://127.0.0.1:8000/fleet/seats/sol \
+  -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"unit_scope": "system"}'
+curl -fsS -X DELETE http://127.0.0.1:8000/fleet/seats/sol \
+  -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN"
+```
+
+The slug is the seat's key (Buzz, systemd, the checkout branch, `seat_slug`): it
+is lower case, unique and never edited; remove the seat and declare another to
+rename one. An email belongs to at most one seat. A taken slug or email is
+refused `409 conflict`. `kind` is `operator`, `seat` or `local_ollama`;
+`unit_scope` names the systemd manager that owns the unit (`user` for cloud
+seats, `system` for the hardened local workers). Removing a seat keeps the
+account it named. The list pages in the usual way (`cursor` in, `next_cursor`
+and `has_more` out). Every seat route is admin only; there is no MCP tool for
+them.
+
 ## Durable API Retry Keys
 
 Authenticated REST mutations under Athena's durable-idempotency API roots accept an
