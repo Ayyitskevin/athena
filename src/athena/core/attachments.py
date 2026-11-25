@@ -27,6 +27,8 @@ import stat
 import tempfile
 from typing import BinaryIO, cast
 
+from athena.core import db
+
 # Columns safe to return to a caller — never `stored_name` (an internal disk
 # detail; the download route resolves it from the id).
 _PUBLIC_COLS = (
@@ -304,30 +306,33 @@ def store(
 
     The metadata insert starts first, then a private staged file is synced and
     atomically published before commit. Any insert, write, publication, or commit
-    failure explicitly rolls the database back; a published blob is synchronously
-    removed before the error escapes. The caller validates size/emptiness at the
-    boundary. Raises sqlite3.IntegrityError if uploaded_by is not a real user.
+    failure rolls the database back (``db.transaction`` owns both); a published
+    blob is synchronously removed before the error escapes. The caller validates
+    size/emptiness at the boundary. Raises sqlite3.IntegrityError if uploaded_by
+    is not a real user.
+
+    Inside a caller's transaction the insert is a savepoint and the blob is
+    published when this returns; a caller that then rolls back leaves the blob
+    for reconciliation. A command composes ``insert_and_publish`` instead, which
+    hands it the path to unlink.
     """
     published: Path | None = None
     try:
-        pending = insert_and_publish(
-            conn,
-            target_kind=target_kind,
-            target_id=target_id,
-            filename=filename,
-            content_type=content_type,
-            data=data,
-            uploaded_by=uploaded_by,
-            attach_dir=attach_dir,
-        )
-        published = pending.blob_path
-        conn.commit()
+        with db.transaction(conn):
+            pending = insert_and_publish(
+                conn,
+                target_kind=target_kind,
+                target_id=target_id,
+                filename=filename,
+                content_type=content_type,
+                data=data,
+                uploaded_by=uploaded_by,
+                attach_dir=attach_dir,
+            )
+            published = pending.blob_path
     except BaseException:
-        try:
-            conn.rollback()
-        finally:
-            if published is not None:
-                _unlink_blob_path(published)
+        if published is not None:
+            _unlink_blob_path(published)
         raise
     return pending.attachment
 
@@ -391,16 +396,15 @@ def delete(
     The database row commits before the non-transactional unlink. A missing blob is
     already the desired end state. Any other unlink/fsync failure propagates so the
     caller cannot claim full cleanup; reconciliation will report the leftover orphan.
+    Inside a caller's transaction the delete is a savepoint, and the unlink still
+    happens when this returns; a command composes ``delete_row`` and unlinks after
+    its own commit instead.
     """
-    deleted = delete_row(conn, attachment_id)
+    with db.transaction(conn):
+        deleted = delete_row(conn, attachment_id)
     if deleted is None:
         return False
     _, stored = deleted
-    try:
-        conn.commit()
-    except BaseException:
-        conn.rollback()
-        raise
     _unlink_blob_path(disk_path(attach_dir, stored))
     return True
 

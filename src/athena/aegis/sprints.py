@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from athena.core import db
+
 PLANNED = "planned"
 ACTIVE = "active"
 COMPLETED = "completed"
@@ -164,20 +166,11 @@ def start_sprint(
     if not commit:
         return _start_sprint_locked(conn, sprint_id)
     # The "one active sprint per project" rule is a check (active_sprint) then a write.
-    # Run both inside one BEGIN IMMEDIATE so two concurrent starts can't each read "no
-    # active sprint" and both flip to active: the write lock serializes them, so the
-    # second re-checks against the first's committed result and is rejected.
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        sprint = _start_sprint_locked(conn, sprint_id)
-        if sprint is None:
-            conn.rollback()
-            return None
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    return sprint
+    # Run both inside one immediate transaction so two concurrent starts can't each
+    # read "no active sprint" and both flip to active: the write lock serializes them,
+    # so the second re-checks against the first's committed result and is rejected.
+    with db.transaction(conn, immediate=True):
+        return _start_sprint_locked(conn, sprint_id)
 
 
 def complete_sprint(

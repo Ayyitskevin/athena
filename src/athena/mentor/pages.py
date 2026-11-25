@@ -221,8 +221,8 @@ def update_page(
     changing fields the page is returned untouched and no version is cut.
 
     The snapshot-then-overwrite happens in one transaction so history can never
-    diverge from the live page. Left to itself (``commit=True``) it opens that
-    transaction with BEGIN IMMEDIATE so the page is re-read, the next version is
+    diverge from the live page. Left to itself (``commit=True``) it runs in its own
+    ``db.transaction(immediate=True)`` so the page is re-read, the next version is
     computed, and both writes land while this connection holds SQLite's write lock —
     without it two concurrent editors can both read COUNT()+1 == the same number and
     collide on UNIQUE(page_id, version). ``commit=False`` instead composes this inside
@@ -236,76 +236,66 @@ def update_page(
     the SET clause are hardcoded literals, never caller input, so the f-string is
     safe; values stay parameterized."""
     if commit:
-        conn.execute("BEGIN IMMEDIATE")
-    try:
-        page = get_page(conn, page_id)
-        if page is None:
-            if commit:
-                conn.rollback()
-            return None
-
-        fields = {
-            col: val
-            for col, val in (("title", title), ("body", body))
-            if val is not None
-        }
-        if not fields:
-            if commit:
-                conn.rollback()  # nothing to change — no new revision, release the lock
-            return page
-
-        next_version = (
-            conn.execute(
-                "SELECT COUNT(*) AS n FROM page_versions WHERE page_id = ?", (page_id,)
-            ).fetchone()["n"]
-            + 1
-        )
-        # The snapshot carries the SUPERSEDED revision's own run_id (like its edited_by
-        # and created_at) — the run that authored this content, not the run doing the
-        # superseding. NULL when that revision was a human write or predates 0052.
-        conn.execute(
-            "INSERT INTO page_versions "
-            "(page_id, version, title, body, edited_by, created_at, run_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                page_id,
-                next_version,
-                page["title"],
-                page["body"],
-                page["updated_by"],
-                page["updated_at"],
-                page["run_id"],
-            ),
-        )
-
-        # The live row now belongs to THIS edit's run (None for a human write), so the
-        # next snapshot attributes this content to the run that just wrote it.
-        assignments = ", ".join(f"{col} = ?" for col in fields)
-        conn.execute(
-            f"UPDATE pages SET {assignments}, updated_by = ?, "
-            "updated_at = datetime('now'), run_id = ? WHERE id = ?",
-            (*fields.values(), editor_id, run_context.get_run_id(), page_id),
-        )
-        # Re-index inside the write transaction (commit=False) so the derived link and
-        # search indexes commit or roll back WITH the edit — they can never reflect a
-        # rolled-back revision. Links only when the body changed (the only field that
-        # carries [[...]] tokens); search whenever title or body moved.
-        if "body" in fields:
-            links.sync_links(
-                conn,
-                source_kind="page",
-                source_id=page_id,
-                body=fields["body"],
-                commit=False,
+        with db.transaction(conn, immediate=True):
+            return update_page(
+                conn, page_id, editor_id=editor_id, title=title, body=body, commit=False
             )
-        if "title" in fields or "body" in fields:
-            search.index_document(conn, kind="page", source_id=page_id, commit=False)
-        if commit:
-            conn.commit()
-    except BaseException:
-        if commit:
-            conn.rollback()
-        raise
+    page = get_page(conn, page_id)
+    if page is None:
+        return None
+
+    fields = {
+        col: val for col, val in (("title", title), ("body", body)) if val is not None
+    }
+    if not fields:
+        return page  # nothing to change — no new revision
+
+    next_version = (
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM page_versions WHERE page_id = ?", (page_id,)
+        ).fetchone()["n"]
+        + 1
+    )
+    # The snapshot carries the SUPERSEDED revision's own run_id (like its edited_by
+    # and created_at) — the run that authored this content, not the run doing the
+    # superseding. NULL when that revision was a human write or predates 0052.
+    conn.execute(
+        "INSERT INTO page_versions "
+        "(page_id, version, title, body, edited_by, created_at, run_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            page_id,
+            next_version,
+            page["title"],
+            page["body"],
+            page["updated_by"],
+            page["updated_at"],
+            page["run_id"],
+        ),
+    )
+
+    # The live row now belongs to THIS edit's run (None for a human write), so the
+    # next snapshot attributes this content to the run that just wrote it.
+    assignments = ", ".join(f"{col} = ?" for col in fields)
+    conn.execute(
+        f"UPDATE pages SET {assignments}, updated_by = ?, "
+        "updated_at = datetime('now'), run_id = ? WHERE id = ?",
+        (*fields.values(), editor_id, run_context.get_run_id(), page_id),
+    )
+    # Re-index inside the write transaction (commit=False) so the derived link and
+    # search indexes commit or roll back WITH the edit — they can never reflect a
+    # rolled-back revision. Links only when the body changed (the only field that
+    # carries [[...]] tokens); search whenever title or body moved.
+    if "body" in fields:
+        links.sync_links(
+            conn,
+            source_kind="page",
+            source_id=page_id,
+            body=fields["body"],
+            commit=False,
+        )
+    if "title" in fields or "body" in fields:
+        search.index_document(conn, kind="page", source_id=page_id, commit=False)
     return get_page(conn, page_id)
 
 
@@ -350,19 +340,15 @@ def delete_page(conn: sqlite3.Connection, page_id: int) -> bool:
     resolve as 'broken', the same lazy-resolve contract as a not-yet-created
     target.)
 
-    Owns its own transaction (BEGIN IMMEDIATE) and post-commit side effects. The
+    Owns its own transaction (``db.transaction(immediate=True)``, a savepoint inside
+    a caller's) and post-commit side effects. The
     audited delete command instead composes the two halves — ``purge_page`` inside its
     transaction (so the row deletes and the ``page_deleted`` event commit together) and
     ``finalize_page_deletion`` after the commit."""
     if get_page(conn, page_id) is None:
         return False
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with db.transaction(conn, immediate=True):
         stored_names = purge_page(conn, page_id)
-        conn.commit()
-    except BaseException:
-        conn.rollback()
-        raise
     finalize_page_deletion(conn, page_id, stored_names)
     return True
 
@@ -504,29 +490,21 @@ def move(
     422/400. `page` is the already-fetched row; only its id/space_id are read (a move
     changes neither), while validate_move re-reads the live tree under the lock.
 
-    Left to itself (``commit=True``) it opens the write transaction with BEGIN
-    IMMEDIATE and owns the commit. ``commit=False`` instead composes inside the audited
+    Left to itself (``commit=True``) it runs in its own
+    ``db.transaction(immediate=True)``. ``commit=False`` instead composes inside the audited
     move command's own ``db.transaction(immediate=True)`` — which already holds the
     lock — so the re-parent and its ``page_moved`` event commit or roll back together;
     an illegal move returns (None, reason) without touching the row, and the command
     raises to roll back the (empty) savepoint."""
     if commit:
-        conn.execute("BEGIN IMMEDIATE")
-    try:
-        reason = validate_move(conn, page, new_parent_id)
-        if reason is not None:
-            if commit:
-                conn.rollback()
-            return None, reason
-        conn.execute(
-            "UPDATE pages SET parent_id = ? WHERE id = ?", (new_parent_id, page["id"])
-        )
-        if commit:
-            conn.commit()
-    except BaseException:
-        if commit:
-            conn.rollback()
-        raise
+        with db.transaction(conn, immediate=True):
+            return move(conn, page, new_parent_id, commit=False)
+    reason = validate_move(conn, page, new_parent_id)
+    if reason is not None:
+        return None, reason
+    conn.execute(
+        "UPDATE pages SET parent_id = ? WHERE id = ?", (new_parent_id, page["id"])
+    )
     return get_page(conn, page["id"]), None
 
 

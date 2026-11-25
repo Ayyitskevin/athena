@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.core import packet_time
+from athena.core import db, packet_time
 from athena.core.agent_signals import MAX_REQUEST_CHARS
 
 
@@ -36,22 +36,24 @@ def record_refusal(
     """Keep ``code`` as the newest refusal this agent account received.
 
     Runs on a connection of its own, after the refused request's work has
-    rolled back, and commits. Returns whether a row was written: an account
-    that is not an agent, or a status outside 400 to 499, writes nothing."""
+    rolled back, so its transaction is its own and commits: the record lands
+    though the request's work did not. Returns whether a row was written: an
+    account that is not an agent, or a status outside 400 to 499, writes
+    nothing."""
     if not 400 <= status_code <= 499 or not code or not _is_agent(conn, user_id):
         return False
     request = f"{method} {path}"[:MAX_REQUEST_CHARS]
-    conn.execute(
-        "INSERT INTO agent_last_signals (user_id, last_refusal_code, "
-        "last_refusal_status, last_refusal_request, last_refusal_at) "
-        "VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET "
-        "last_refusal_code = excluded.last_refusal_code, "
-        "last_refusal_status = excluded.last_refusal_status, "
-        "last_refusal_request = excluded.last_refusal_request, "
-        "last_refusal_at = excluded.last_refusal_at",
-        (user_id, code[:100], status_code, request, _now()),
-    )
-    conn.commit()
+    with db.transaction(conn):
+        conn.execute(
+            "INSERT INTO agent_last_signals (user_id, last_refusal_code, "
+            "last_refusal_status, last_refusal_request, last_refusal_at) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET "
+            "last_refusal_code = excluded.last_refusal_code, "
+            "last_refusal_status = excluded.last_refusal_status, "
+            "last_refusal_request = excluded.last_refusal_request, "
+            "last_refusal_at = excluded.last_refusal_at",
+            (user_id, code[:100], status_code, request, _now()),
+        )
     return True
 
 

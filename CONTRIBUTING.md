@@ -142,7 +142,12 @@ exception handlers, plus `web/` and `mcp/`) from writing except through
 command modules and the designated writers named in it,
 `check_transaction_commits.py` fails on a call inside a `db.transaction`
 block that commits (a writer whose `commit` is not `False` there, or one that
-commits whatever it is passed), and `check_imported_at_guards.py` pins every
+commits whatever it is passed) and, outside `core/db.py`, on a commit that no
+`commit` parameter governs and on a transaction opened or ended by hand
+(`execute("BEGIN ...")` and its kin): a writer takes `commit` or goes through
+`db.transaction`, and the few that must commit on their own are named, with
+the reason, in its `ALLOWED_OWN_TRANSACTIONS` (a stale entry fails), and
+`check_imported_at_guards.py` pins every
 native-only activity reader to its `imported_at IS NULL` guard (and FORGE.md's
 guard table to the checker, via `tests/test_imported_at_guards.py`). Readers are
 declared beside their code, in the `imported_at_guards.toml` of their package

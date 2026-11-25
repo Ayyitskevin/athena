@@ -85,6 +85,9 @@ def test_the_checker_runs_alone():
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "nothing inside a db.transaction block commits" in result.stdout
+    assert "nothing commits on its own or manages a transaction by hand" in (
+        result.stdout
+    )
 
 
 def test_it_finds_the_arch_1_shape_before_wave_0(tmp_path):
@@ -151,17 +154,235 @@ def test_a_committing_call_inside_the_block_fails(tmp_path, body):
     ],
 )
 def test_a_safe_call_inside_the_block_passes(tmp_path, body):
-    assert _violations(tmp_path, {"aegis.commands": _command(body)}) == []
+    found = _violations(tmp_path, {"aegis.commands": _command(body)})
+    # A nested def or lambda does not run in the block; its own commit is a
+    # finding of its own scope (G2, below), never of the command.
+    assert [v for v in found if v.function == "athena.aegis.commands.command"] == []
 
 
-def test_a_committing_call_outside_any_block_passes(tmp_path):
+def test_asking_a_writer_to_commit_outside_any_block_passes(tmp_path):
+    # The writer takes commit and commits only when asked; outside a block the
+    # caller may ask. (Inside one, the cases above fail.)
     source = (
         "from athena.core import activity\n"
         "def standalone(conn):\n"
         "    activity.record(conn, verb='v')\n"
-        "    conn.commit()\n"
+        "    activity.record(conn, verb='w', commit=True)\n"
     )
     assert _violations(tmp_path, {"aegis.commands": source}) == []
+
+
+# --- G2: nothing outside core/db.py commits on its own or opens a transaction
+
+
+def test_an_unconditional_commit_outside_any_block_fails(tmp_path):
+    # The shape G2 removes: a writer with no commit parameter that commits
+    # whatever its caller is doing. Called inside a command it would commit
+    # the command's first half.
+    source = (
+        "def unwatch(conn, user_id):\n"
+        "    conn.execute('DELETE FROM watches WHERE user_id = ?', (user_id,))\n"
+        "    conn.commit()\n"
+    )
+    found = _violations(tmp_path, {"core.notifications": source})
+
+    assert [(v.function, v.line) for v in found] == [
+        ("athena.core.notifications.unwatch", 3)
+    ]
+    assert "conn.commit() commits on its own" in found[0].detail
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "conn.execute('BEGIN IMMEDIATE')",
+        "conn.execute('begin')",
+        "conn.execute('  BEGIN DEFERRED TRANSACTION')",
+        "conn.execute(f'SAVEPOINT {name}')",
+        "conn.execute('RELEASE SAVEPOINT s')",
+        "conn.execute('ROLLBACK')",
+        "conn.executescript('BEGIN; UPDATE t SET x = 1; COMMIT;')",
+    ],
+)
+def test_a_transaction_managed_by_hand_fails(tmp_path, statement):
+    # start_sprint's and update_page's shape: BEGIN IMMEDIATE ... commit() under
+    # `if commit`. The commit is governed, the BEGIN is not db.transaction's.
+    source = (
+        "def start(conn, name='s', *, commit=True):\n"
+        "    if commit:\n"
+        f"        {statement}\n"
+        "    conn.execute('UPDATE sprints SET state = 1')\n"
+        "    if commit:\n"
+        "        conn.commit()\n"
+    )
+    found = _violations(tmp_path, {"aegis.sprints": source})
+
+    assert [(v.function, v.line) for v in found] == [("athena.aegis.sprints.start", 3)]
+    assert "manages a transaction by hand" in found[0].detail
+
+
+def test_a_hand_opened_transaction_inside_a_block_is_reported_once(tmp_path):
+    found = _violations(
+        tmp_path, {"aegis.commands": _command("conn.execute('COMMIT')")}
+    )
+    assert len(found) == 1
+    assert "commits inside db.transaction" in found[0].detail
+
+
+@pytest.mark.parametrize(
+    "source, function",
+    [
+        # A method, a nested function, a lambda, a class body, the module body.
+        (
+            "class Store:\n    def save(self, conn):\n        conn.commit()\n",
+            "athena.aegis.data.Store.save",
+        ),
+        (
+            "def outer(conn):\n    def inner():\n        conn.commit()\n    inner()\n",
+            "athena.aegis.data.outer.inner",
+        ),
+        ("def later(conn):\n    return lambda: conn.commit()\n", None),
+        ("class Boot:\n    CONN.commit()\n", "athena.aegis.data.Boot"),
+        ("CONN.execute('INSERT INTO t VALUES (1)')\nCONN.commit()\n", None),
+        (
+            "class Store:\n    def begin(self, conn):\n"
+            "        conn.execute('BEGIN IMMEDIATE')\n",
+            "athena.aegis.data.Store.begin",
+        ),
+    ],
+    ids=["method", "nested", "lambda", "class-body", "module-body", "method-begin"],
+)
+def test_a_commit_in_any_scope_outside_core_db_fails(tmp_path, source, function):
+    found = _violations(tmp_path, {"aegis.data": source})
+
+    assert len(found) == 1, found
+    if function is not None:
+        assert found[0].function == function
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # Governed: commits only when its caller asks.
+        "def watch(conn, *, commit):\n"
+        "    conn.execute('INSERT INTO watches VALUES (1)')\n"
+        "    if commit:\n"
+        "        conn.commit()\n",
+        # Governed by an early exit.
+        "def watch(conn, *, commit=True):\n"
+        "    conn.execute('INSERT INTO watches VALUES (1)')\n"
+        "    if not commit:\n"
+        "        return\n"
+        "    conn.commit()\n",
+        # Through db.transaction: it owns the commit, and composes.
+        "from athena.core import db\n"
+        "def unwatch(conn):\n"
+        "    with db.transaction(conn):\n"
+        "        conn.execute('DELETE FROM watches')\n",
+        "from athena.core import db\n"
+        "def start(conn, *, commit):\n"
+        "    if commit:\n"
+        "        with db.transaction(conn, immediate=True):\n"
+        "            return start(conn, commit=False)\n"
+        "    conn.execute('UPDATE sprints SET state = 1')\n",
+        # SQL that is not a transaction statement.
+        "def read(conn):\n"
+        "    conn.execute('SELECT 1 AS begin_at')\n"
+        "    conn.execute('UPDATE t SET ended = 1')\n",
+    ],
+    ids=["if-commit", "early-exit", "db-transaction", "recursive-block", "plain-sql"],
+)
+def test_a_writer_that_honours_commit_or_uses_db_transaction_passes(tmp_path, source):
+    assert _violations(tmp_path, {"core.notifications": source}) == []
+
+
+def test_a_local_named_commit_governs_nothing(tmp_path):
+    # Only the function's own commit parameter governs a commit point.
+    source = (
+        "def flush(conn):\n    commit = True\n    if commit:\n        conn.commit()\n"
+    )
+    assert len(_violations(tmp_path, {"aegis.data": source})) == 1
+
+
+def test_core_db_may_manage_its_own_transactions(tmp_path):
+    db_source = _DB + (
+        "def checkpoint(conn):\n"
+        "    conn.execute('BEGIN IMMEDIATE')\n"
+        "    conn.commit()\n"
+    )
+    assert _violations(tmp_path, {"core.db": db_source}) == []
+
+
+_SNAPSHOT = (
+    "def snapshot(conn):\n"
+    "    conn.execute('BEGIN')\n"
+    "    conn.rollback()\n"
+    "def stamp(conn):\n"
+    "    conn.execute('UPDATE tokens SET used = 1')\n"
+    "    conn.commit()\n"
+)
+
+
+def test_an_allowed_function_passes(tmp_path):
+    root = _package(tmp_path, {"core.export": _SNAPSHOT})
+    allowed = {
+        "athena.core.export.snapshot": "a read snapshot",
+        "athena.core.export.stamp": "advisory",
+    }
+    assert checker.find_violations(root, allowed=allowed) == []
+    # And only the functions it names.
+    found = checker.find_violations(root, allowed={"athena.core.export.stamp": "x"})
+    assert [v.function for v in found] == ["athena.core.export.snapshot"]
+
+
+def test_an_allowed_function_called_inside_a_block_still_fails(tmp_path):
+    command = _command(
+        "export.stamp(conn)",
+        imports="from athena.core import db, export\n",
+    )
+    root = _package(tmp_path, {"core.export": _SNAPSHOT, "aegis.commands": command})
+    allowed = {
+        "athena.core.export.snapshot": "a read snapshot",
+        "athena.core.export.stamp": "advisory",
+    }
+    found = checker.find_violations(root, allowed=allowed)
+    assert [v.function for v in found] == ["athena.aegis.commands.command"]
+    assert "athena.core.export.stamp commits whatever" in found[0].detail
+
+
+@pytest.mark.parametrize(
+    "name, reason",
+    [
+        ("athena.core.export.gone", "no such function"),
+        ("athena.core.export.converted", "no longer commits"),
+        ("athena.core.export", "no such function"),
+    ],
+)
+def test_a_stale_allow_list_entry_fails(tmp_path, name, reason):
+    source = _SNAPSHOT + (
+        "from athena.core import db\n"
+        "def converted(conn):\n"
+        "    with db.transaction(conn):\n"
+        "        conn.execute('UPDATE t SET x = 1')\n"
+    )
+    root = _package(tmp_path, {"core.export": source})
+    allowed = {
+        "athena.core.export.snapshot": "a read snapshot",
+        "athena.core.export.stamp": "advisory",
+        name: "was needed once",
+    }
+    found = checker.find_violations(root, allowed=allowed)
+    assert [v.function for v in found] == [name]
+    assert "stale allow-list entry" in found[0].detail
+    assert reason in found[0].detail
+
+
+def test_the_allow_list_is_short_reasoned_and_only_for_this_package(tmp_path):
+    for name, reason in checker.ALLOWED_OWN_TRANSACTIONS.items():
+        assert name.startswith("athena.") and len(reason.split()) >= 10, name
+    # Another tree is checked without it, so its entries are not reported stale.
+    root = _package(tmp_path, {})
+    assert checker.find_violations(root) == []
 
 
 @pytest.mark.parametrize(
@@ -211,13 +432,19 @@ def test_a_helper_must_honour_commit_false(tmp_path, helper, safe):
 
     found = _violations(tmp_path, {"aegis.data": data, "aegis.commands": command})
 
+    in_command = [v for v in found if v.function == "athena.aegis.commands.command"]
     if safe:
         assert found == []
     else:
-        assert len(found) == 1
+        assert len(in_command) == 1
         assert "athena.aegis.data.remove commits whatever its commit argument" in (
-            found[0].detail
+            in_command[0].detail
         )
+        # Where the helper commits by itself, that commit is its own finding too.
+        assert {v.function for v in found} <= {
+            "athena.aegis.commands.command",
+            "athena.aegis.data.remove",
+        }
 
 
 def test_commit_passed_through_inside_a_block_fails(tmp_path):

@@ -552,8 +552,8 @@ def get_cursor(conn: sqlite3.Connection) -> int:
 
 
 def _set_cursor(conn: sqlite3.Connection, value: int) -> None:
-    conn.execute("UPDATE automation_state SET cursor = ? WHERE id = 1", (value,))
-    conn.commit()
+    with db.transaction(conn):
+        conn.execute("UPDATE automation_state SET cursor = ? WHERE id = 1", (value,))
 
 
 def record_rule_failure(
@@ -981,11 +981,11 @@ def _get_schedule_scan_cursor(conn: sqlite3.Connection) -> int:
 
 
 def _set_schedule_scan_cursor(conn: sqlite3.Connection, value: int) -> None:
-    conn.execute(
-        "UPDATE automation_schedule_state SET scan_cursor = ? WHERE id = 1",
-        (value,),
-    )
-    conn.commit()
+    with db.transaction(conn):
+        conn.execute(
+            "UPDATE automation_schedule_state SET scan_cursor = ? WHERE id = 1",
+            (value,),
+        )
 
 
 def _due_schedule_rule_ids(

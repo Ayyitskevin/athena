@@ -581,3 +581,32 @@ def test_import_refuses_blocked_manifest(tmp_path):
             == 0
         )
         target.close()
+
+
+class _CallerFailed(Exception):
+    """The caller's own work fails after the replay returned."""
+
+
+def test_replay_rolls_back_with_the_transaction_it_was_called_in(tmp_path):
+    # G2: the replay runs in db.transaction(immediate=True), which is a savepoint
+    # inside a caller's transaction. Before, it opened BEGIN IMMEDIATE by hand
+    # (refused inside a transaction) and committed on its own.
+    bundle = _project_bundle(tmp_path)
+    target, *_ = _prepare_project_target(tmp_path / "target-composed.db")
+    manifest = portability.build_import_manifest(target, bundle)
+
+    try:
+        with db.transaction(target):
+            result = portability.replay_import_manifest(target, bundle, manifest)
+            assert result["status"] == "imported"
+            raise _CallerFailed
+    except _CallerFailed:
+        pass
+    else:
+        raise AssertionError("the caller's failure should propagate")
+
+    assert (
+        target.execute("SELECT COUNT(*) FROM projects WHERE key='RPL'").fetchone()[0]
+        == 0
+    )
+    target.close()

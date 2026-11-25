@@ -1,4 +1,4 @@
-"""Fail on a committing call inside a ``with db.transaction(...)`` block.
+"""Fail on a commit that ``db.transaction`` does not own.
 
 ``db.transaction`` owns the final commit or rollback of the work inside it
 (B5, docs/plans/AGENTIC_USE_SPEC_ATHENA.md). Anything that commits underneath
@@ -6,16 +6,52 @@ it splits one atomic write in two: the part before the commit lands even when
 the rest of the block then fails. Review ARCH-1 was exactly that, a lifecycle
 event recorded through a helper whose ``commit`` parameter defaulted to true.
 
-What a finding is. A statement lexically inside the body of a ``with`` whose
-item is a call to ``athena.core.db.transaction`` (nested ``def`` and ``lambda``
-bodies excluded, since they do not run there) fails when it is:
+And every write either takes a ``commit`` parameter, committing only when it
+is true, or goes through ``db.transaction`` (G2,
+docs/plans/ATHENA_IN_USE_SPEC.md). A writer that commits whatever it is asked
+cannot be composed into a command: called inside another's transaction it
+commits that transaction's first half. A transaction opened by hand (``BEGIN
+IMMEDIATE`` ... ``commit()``) is the same writer with the same defect, and it
+also refuses to run inside a caller's transaction at all.
 
-1. a commit point: a zero-argument ``<anything>.commit()`` call, an
-   ``<anything>.executescript(...)`` call (in Python 3.12's default legacy
-   transaction mode it commits a pending transaction first), or an
-   ``<anything>.execute(...)`` whose first argument is the string literal
-   ``COMMIT`` or ``END`` (any case, optional ``TRANSACTION``); or
-2. a call that resolves to an Athena function that commits at that call (below).
+There are three kinds of finding.
+
+A. A commit inside a block. A statement lexically inside the body of a
+   ``with`` whose item is a call to ``athena.core.db.transaction`` (nested
+   ``def`` and ``lambda`` bodies excluded, since they do not run there) fails
+   when it is:
+
+   1. a commit point: a zero-argument ``<anything>.commit()`` call, an
+      ``<anything>.executescript(...)`` call (in Python 3.12's default legacy
+      transaction mode it commits a pending transaction first), or an
+      ``<anything>.execute(...)`` whose first argument is the string literal
+      ``COMMIT`` or ``END`` (any case, optional ``TRANSACTION``); or
+   2. a call that resolves to an Athena function that commits at that call
+      (below).
+
+B. A commit of its own. Outside ``core/db.py``, a commit point (as in A1) in
+   any function, method, lambda, class body or module body fails unless the
+   function's own ``commit`` parameter governs it (as defined below). A
+   module-level function's commit point inside its own block is reported once,
+   as A. A *call* that passes ``commit=True`` (or leaves a true default) to a
+   writer is not a B finding: the writer takes ``commit`` and the caller chose;
+   inside a block that call is an A finding.
+
+C. A transaction opened or ended by hand. Outside ``core/db.py``, an
+   ``<anything>.execute(...)`` or ``.executescript(...)`` whose first argument
+   is a string literal (or an f-string whose literal start) beginning with
+   ``BEGIN``, ``SAVEPOINT``, ``RELEASE``, ``ROLLBACK``, ``COMMIT`` or ``END``
+   fails, anywhere in the file. ``db.transaction`` is the one place that
+   writes those statements.
+
+One call is reported once: A first, then C, then B.
+
+The allow-list. ``ALLOWED_OWN_TRANSACTIONS`` names the functions that must
+commit or manage a transaction on their own, each with the reason. It
+suppresses that function's B and C findings, never an A finding (a call to it
+inside a block still fails). An entry whose function no longer exists, or no
+longer has a B or C finding to excuse, fails as stale, so the list can only
+shrink.
 
 How callees resolve. Only module-level functions under ``src/athena`` are
 known. A call resolves by static name, the way ``check_write_ownership.py``
@@ -54,11 +90,12 @@ not part of its summary, so one bug is reported once, where it is.
 
 Out of reach. The check does not compare connections: a committing call on a
 second connection inside the block is reported even though it commits a
-different transaction. It does not see transactions opened any other way
-(``conn.execute("BEGIN ...")``, ``with conn:``), ``with conn:`` used as a
-commit, ``rollback()`` (which also ends the block's transaction), computed
-SQL, or dynamic dispatch. The runtime guard in ``db.transaction`` covers what
-reaches it at run time; this pass covers what the tests do not execute.
+different transaction. It does not see ``with conn:`` (a transaction and a
+commit), ``rollback()`` (which also ends a block's transaction; writers still
+call it in their ``if commit`` error paths), SQL computed other than as a
+literal or an f-string's literal start, or dynamic dispatch. The runtime guard
+in ``db.transaction`` covers what reaches it at run time; this pass covers what
+the tests do not execute.
 
 Standard library only; it never imports Athena. Usage:
 
@@ -74,7 +111,7 @@ import importlib.util
 from pathlib import Path
 import re
 import sys
-from typing import Iterable, Iterator
+from typing import Iterable, Iterator, Mapping
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src" / "athena"
@@ -82,7 +119,31 @@ ROOT_PACKAGE = "athena"
 TRANSACTION = ("athena.core.db", "transaction")
 COMMIT_PARAMETER = "commit"
 
+#: The one module that may write transaction statements and commit on its own.
+OWNER_MODULE = TRANSACTION[0]
+
+#: Functions that must commit, or manage a transaction, on their own (B and C
+#: findings): the qualified name of the function and why. Keep it short: a
+#: writer belongs here only when ``db.transaction`` cannot express what it does.
+ALLOWED_OWN_TRANSACTIONS: dict[str, str] = {
+    "athena.core.activity.record": (
+        "the one writer of the hash-chained trail takes SQLite's writer "
+        "reservation (BEGIN IMMEDIATE) before it reads the access envelope and "
+        "the chain head, and a standalone commit=False call leaves that "
+        "transaction open for the command that owns it. db.transaction is a "
+        "block and cannot hand an open transaction back to its caller. Its "
+        "commit is governed by its commit parameter"
+    ),
+    "athena.core.portability._read_snapshot": (
+        "a read snapshot for export: BEGIN, reads, then ROLLBACK, always. It "
+        "writes nothing, and db.transaction would end it with a commit"
+    ),
+}
+
 _COMMIT_SQL_RE = re.compile(r"^\s*(?:COMMIT|END)(?:\s+TRANSACTION)?\s*;?\s*$", re.I)
+_TRANSACTION_SQL_RE = re.compile(
+    r"^\s*(?:BEGIN|SAVEPOINT|RELEASE|ROLLBACK|COMMIT|END)\b", re.I
+)
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 
@@ -251,6 +312,29 @@ def _is_commit_point(call: ast.Call) -> str | None:
     return None
 
 
+def _transaction_statement(call: ast.Call) -> str | None:
+    """``execute("BEGIN ...")`` and its kin: a transaction managed by hand."""
+    func = call.func
+    if not (
+        isinstance(func, ast.Attribute)
+        and func.attr in ("execute", "executescript")
+        and call.args
+    ):
+        return None
+    sql = call.args[0]
+    if isinstance(sql, ast.JoinedStr):
+        # An f-string: only its literal start is read.
+        first = sql.values[0] if sql.values else None
+        sql = first if isinstance(first, ast.Constant) else sql
+    if (
+        isinstance(sql, ast.Constant)
+        and isinstance(sql.value, str)
+        and _TRANSACTION_SQL_RE.match(sql.value)
+    ):
+        return f"{ast.unparse(func)}({ast.unparse(call.args[0])})"
+    return None
+
+
 def _is_commit_name(node: ast.expr) -> bool:
     return isinstance(node, ast.Name) and node.id == COMMIT_PARAMETER
 
@@ -282,21 +366,23 @@ def _leaves(statements: list[ast.stmt]) -> bool:
 
 
 class _Walker:
-    """Calls of one function body, each with its transaction and guard context."""
+    """Calls of one scope's body, each with its transaction and guard context.
+    Nested scopes (``def``, ``lambda``, ``class``) are not entered: each is a
+    scope of its own."""
 
-    def __init__(
-        self,
-        function: ast.FunctionDef | ast.AsyncFunctionDef,
-        imports: dict[str, tuple[str, str | None]],
-        module: str,
-    ) -> None:
+    def __init__(self, imports: dict[str, tuple[str, str | None]], module: str) -> None:
         self.imports = imports
         self.module = module
-        self.function = function
 
-    def calls(self) -> Iterator[tuple[ast.Call, bool, bool]]:
+    def calls(self, body: list[ast.stmt]) -> Iterator[tuple[ast.Call, bool, bool]]:
         """Yield (call, inside a transaction block, governed by ``commit``)."""
-        yield from self._block(self.function.body, False, False)
+        yield from self._block(body, False, False)
+
+    def expression_calls(
+        self, expression: ast.expr
+    ) -> Iterator[tuple[ast.Call, bool, bool]]:
+        """The calls of a lambda's body."""
+        yield from self._expression(expression, False, False)
 
     def _is_transaction(self, item: ast.withitem) -> bool:
         expr = item.context_expr
@@ -383,13 +469,24 @@ def _argument_defaults(node: ast.AST) -> list[ast.expr]:
     ]
 
 
-def _inventory(package_root: Path) -> dict[tuple[str, str], _Function]:
+@dataclass
+class _Module:
+    name: str
+    path: Path
+    tree: ast.Module
+    imports: dict[str, tuple[str, str | None]]
+
+
+def _inventory(
+    package_root: Path,
+) -> tuple[dict[tuple[str, str], _Function], list[_Module]]:
     if package_root.name != ROOT_PACKAGE or not package_root.is_dir():
         raise TransactionCheckError(
             f"package root must be an existing directory named {ROOT_PACKAGE!r}: "
             f"{package_root}"
         )
     functions: dict[tuple[str, str], _Function] = {}
+    modules: list[_Module] = []
     owner_found = False
     for path in sorted(package_root.rglob("*.py")):
         if "__pycache__" in path.parts:
@@ -402,6 +499,7 @@ def _inventory(package_root: Path) -> dict[tuple[str, str], _Function]:
                 f"cannot parse {path}:{exc.lineno}: {exc.msg}"
             ) from exc
         imports = _import_table(tree, module=module, path=path)
+        modules.append(_Module(module, path, tree, imports))
         for node in tree.body:
             if not isinstance(node, _FUNCTIONS):
                 continue
@@ -414,13 +512,48 @@ def _inventory(package_root: Path) -> dict[tuple[str, str], _Function]:
                 path,
                 imports,
                 _signature(node),
-                list(_Walker(node, imports, module).calls()),
+                list(_Walker(imports, module).calls(node.body)),
             )
     if not owner_found:
         raise TransactionCheckError(
             "athena.core.db.transaction is missing: there is no block to check"
         )
-    return functions
+    return functions, modules
+
+
+@dataclass(frozen=True)
+class _Scope:
+    """One body that runs as a unit: a function at any depth, a method, a
+    lambda, a class body or a module body."""
+
+    name: str  # Qualified: athena.pkg.module.outer.inner, or <module>.
+    signature: _Signature | None
+    calls: tuple[tuple[ast.Call, bool, bool], ...]
+
+
+def _scopes(module: _Module) -> Iterator[_Scope]:
+    walker = _Walker(module.imports, module.name)
+    yield _Scope(f"{module.name}.<module>", None, tuple(walker.calls(module.tree.body)))
+
+    def nested(node: ast.AST, prefix: str) -> Iterator[_Scope]:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, _FUNCTIONS):
+                name = f"{prefix}.{child.name}"
+                calls = tuple(walker.calls(child.body))
+                yield _Scope(name, _signature(child), calls)
+                yield from nested(child, name)
+            elif isinstance(child, ast.ClassDef):
+                name = f"{prefix}.{child.name}"
+                yield _Scope(name, None, tuple(walker.calls(child.body)))
+                yield from nested(child, name)
+            elif isinstance(child, ast.Lambda):
+                name = f"{prefix}.<lambda>"
+                yield _Scope(name, None, tuple(walker.expression_calls(child.body)))
+                yield from nested(child, name)
+            else:
+                yield from nested(child, prefix)
+
+    yield from nested(module.tree, module.name)
 
 
 _UNCONDITIONAL = "unconditional"
@@ -493,20 +626,89 @@ def _finding(call: ast.Call, caller: _Function, functions) -> str | None:
     return f"{name} commits: its commit argument is not False; pass commit=False"
 
 
-def find_violations(package_root: Path = PACKAGE_ROOT) -> list[Violation]:
-    functions = _inventory(package_root.absolute())
-    _summarize(functions)
-    violations = [
-        Violation(
-            function.path,
-            call.lineno,
-            f"{function.module}.{function.node.name}",
-            detail,
+def _own_findings(scope: _Scope) -> Iterator[tuple[ast.Call, str]]:
+    """B and C findings of one scope, C before B. A commit point that is also an
+    A finding is dropped by the caller, which reports each call once."""
+    for call, _inside, governed in scope.calls:
+        statement = _transaction_statement(call)
+        if statement is not None:
+            yield (
+                call,
+                (
+                    f"{statement} manages a transaction by hand; use "
+                    "db.transaction(conn[, immediate=True])"
+                ),
+            )
+            continue
+        point = _is_commit_point(call)
+        if point is None or (governed and scope.signature is not None):
+            continue
+        yield (
+            call,
+            (
+                f"{point} commits on its own; wrap the write in db.transaction, or "
+                "take commit and commit only when it is true"
+            ),
         )
-        for function in functions.values()
-        for call, inside, _governed in function.calls
-        if inside and (detail := _finding(call, function, functions)) is not None
-    ]
+
+
+def find_violations(
+    package_root: Path = PACKAGE_ROOT,
+    *,
+    allowed: Mapping[str, str] | None = None,
+) -> list[Violation]:
+    """Every A, B and C finding, and every stale ``allowed`` entry.
+
+    ``allowed`` defaults to ``ALLOWED_OWN_TRANSACTIONS`` for the repository's
+    own package and to nothing for any other tree: the entries name this
+    package's functions."""
+    if allowed is None:
+        own = package_root.resolve() == PACKAGE_ROOT.resolve()
+        allowed = ALLOWED_OWN_TRANSACTIONS if own else {}
+    functions, modules = _inventory(package_root.absolute())
+    _summarize(functions)
+    reported: set[tuple[Path, int, int]] = set()
+    violations: list[Violation] = []
+    for function in functions.values():
+        for call, inside, _governed in function.calls:
+            if inside and (detail := _finding(call, function, functions)) is not None:
+                reported.add((function.path, call.lineno, call.col_offset))
+                violations.append(
+                    Violation(
+                        function.path,
+                        call.lineno,
+                        f"{function.module}.{function.node.name}",
+                        detail,
+                    )
+                )
+    names: dict[str, Path] = {}
+    excused: set[str] = set()
+    for module in modules:
+        for scope in _scopes(module):
+            names[scope.name] = module.path
+            if module.name == OWNER_MODULE:
+                continue
+            for call, detail in _own_findings(scope):
+                key = (module.path, call.lineno, call.col_offset)
+                if key in reported:
+                    continue
+                reported.add(key)
+                if scope.name in allowed:
+                    excused.add(scope.name)
+                    continue
+                violations.append(
+                    Violation(module.path, call.lineno, scope.name, detail)
+                )
+    for name in sorted(set(allowed) - excused):
+        if name in names:
+            detail = (
+                "stale allow-list entry: it no longer commits or manages a "
+                "transaction on its own; delete the entry"
+            )
+            violations.append(Violation(names[name], 0, name, detail))
+        else:
+            detail = "stale allow-list entry: no such function; delete the entry"
+            violations.append(Violation(Path(__file__).resolve(), 0, name, detail))
     return sorted(violations, key=lambda v: (str(v.path), v.line, v.detail))
 
 
@@ -522,13 +724,16 @@ def _display(path: Path, package_root: Path) -> str:
 
 def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="fail on a committing call inside a db.transaction block"
+        description="fail on a commit that db.transaction does not own"
     )
     parser.add_argument(
         "--package-root",
         type=Path,
         default=PACKAGE_ROOT,
-        help="Athena package root (default: repository src/athena)",
+        help=(
+            "Athena package root (default: repository src/athena); the allow-list "
+            "names that package's functions and applies only to it"
+        ),
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
     package_root = args.package_root.absolute()
@@ -553,7 +758,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         return 1
     print(
         "Athena transaction commits passed: nothing inside a db.transaction block "
-        "commits"
+        "commits, and outside core/db.py nothing commits on its own or manages a "
+        f"transaction by hand but the {len(ALLOWED_OWN_TRANSACTIONS)} allowed"
     )
     return 0
 
