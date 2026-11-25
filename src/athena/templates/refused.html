@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{# What a refused request shows when it has no page of its own to come back to
+   (COCKPIT-13, U11): the refusal's own words, inside the shell, with the way
+   back. web/form_errors.py renders it; htmx requests get the fragment alone.
+   data-refused tells static/drafts.js that what was posted was NOT accepted,
+   so a comment draft it keeps survives the refusal. #}
+
+{# The rail and theme toggles come back to the way back, not to the refused
+   address (a POST route answers a GET with 405), and never to anything
+   read from the object, so hidden and missing stay alike. #}
+{% set return_path = back %}
+
+{% block title %}{{ heading }} — Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="{{ back }}" class="muted">← Back</a>
+        <h1>{{ heading }}</h1>
+    </div>
+</div>
+
+<div class="panel" data-refused="{{ status_code }}" role="alert">
+    <div class="panel-body">
+        {{ fragment }}
+        {% if unposted %}
+        <div class="form-group">
+            <label for="unposted-text">What you wrote was not posted. It is kept here so you can copy it.</label>
+            <textarea id="unposted-text" rows="6" readonly>{{ unposted }}</textarea>
+        </div>
+        {% endif %}
+        <div class="form-actions">
+            {% if status_code == 401 %}<a href="/login" class="button">Sign in</a>{% endif %}
+            <a href="{{ back }}" class="button secondary">Back to <span class="mono">{{ back }}</span></a>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 
+{# The page's own address for the rail and theme toggles to come back to:
+   a refused form re-renders this page at the address it posted to, which
+   answers a GET with 405 (U11). #}
+{% set return_path = "/admin/fleet" %}
+
 {% block title %}Fleet roster - Admin - Athena{% endblock %}
 
 {% block content %}
@@ -18,7 +23,9 @@
     </div>
 </div>
 
-{% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% if error %}<div data-refused><div class="error">{{ error }}</div></div>{% endif %}
+{# A refused declare or edit comes back with what was typed in its form (U11). #}
+{% set typed = typed_seat or {} %}
 {% if notice %}<div class="success">{{ notice }}</div>{% endif %}
 
 <section class="panel" aria-labelledby="occupancy-heading">
@@ -215,41 +222,43 @@
                     {% endif %}
                 </td>
                 <td>
-                    <details>
+                    {% set refused_edit = typed.form == "edit" and typed.slug == seat.slug %}
+                    {% set shown = typed if refused_edit else seat %}
+                    <details{% if refused_edit %} open{% endif %}>
                         <summary>Edit</summary>
                         <form method="post" action="/admin/fleet/seats/{{ seat.slug }}" class="issue-form">
                             {% include "partials/csrf.html" %}
                             <div class="form-group">
                                 <label for="seat-{{ seat.slug }}-name">Name</label>
-                                <input id="seat-{{ seat.slug }}-name" type="text" name="name" value="{{ seat.name }}" required maxlength="100" autocomplete="off">
+                                <input id="seat-{{ seat.slug }}-name" type="text" name="name" value="{{ shown.name }}" required maxlength="100" autocomplete="off">
                             </div>
                             <div class="form-group">
                                 <label for="seat-{{ seat.slug }}-email">Athena email <span class="muted">(empty: no handle)</span></label>
-                                <input id="seat-{{ seat.slug }}-email" type="email" name="email" value="{{ seat.email or '' }}" maxlength="254" autocomplete="off">
+                                <input id="seat-{{ seat.slug }}-email" type="email" name="email" value="{{ shown.email or '' }}" maxlength="254" autocomplete="off">
                             </div>
                             <div class="form-group">
                                 <label for="seat-{{ seat.slug }}-kind">Kind</label>
                                 <select id="seat-{{ seat.slug }}-kind" name="kind">
                                     {% for kind in seat_kinds %}
-                                    <option value="{{ kind }}"{% if kind == seat.kind %} selected{% endif %}>{{ kind }}</option>
+                                    <option value="{{ kind }}"{% if kind == shown.kind %} selected{% endif %}>{{ kind }}</option>
                                     {% endfor %}
                                 </select>
                             </div>
                             <div class="form-group">
                                 <label for="seat-{{ seat.slug }}-unit">systemd unit <span class="muted">(empty: none)</span></label>
-                                <input id="seat-{{ seat.slug }}-unit" type="text" name="unit" value="{{ seat.unit or '' }}" maxlength="200" autocomplete="off">
+                                <input id="seat-{{ seat.slug }}-unit" type="text" name="unit" value="{{ shown.unit or '' }}" maxlength="200" autocomplete="off">
                             </div>
                             <div class="form-group">
                                 <label for="seat-{{ seat.slug }}-scope">Unit scope</label>
                                 <select id="seat-{{ seat.slug }}-scope" name="unit_scope">
                                     {% for scope in unit_scopes %}
-                                    <option value="{{ scope }}"{% if scope == (seat.unit_scope or 'user') %} selected{% endif %}>{{ scope }}</option>
+                                    <option value="{{ scope }}"{% if scope == (shown.unit_scope or 'user') %} selected{% endif %}>{{ scope }}</option>
                                     {% endfor %}
                                 </select>
                             </div>
                             <div class="form-group">
                                 <label for="seat-{{ seat.slug }}-pubkey">Buzz public key <span class="muted">(empty: none)</span></label>
-                                <input id="seat-{{ seat.slug }}-pubkey" type="text" name="buzz_pubkey" value="{{ seat.buzz_pubkey or '' }}" maxlength="64" autocomplete="off">
+                                <input id="seat-{{ seat.slug }}-pubkey" type="text" name="buzz_pubkey" value="{{ shown.buzz_pubkey or '' }}" maxlength="64" autocomplete="off">
                             </div>
                             <div class="form-actions">
                                 <button type="submit" class="button secondary">Save</button>
@@ -327,43 +336,44 @@
         slug is its key and cannot be changed later; an email belongs to one
         seat.
     </p>
+    {% set declared = typed if typed.form == "declare" else {} %}
     <form method="post" action="/admin/fleet/seats" class="issue-form">
         {% include "partials/csrf.html" %}
         <div class="form-group">
             <label for="declare-slug">Slug</label>
-            <input id="declare-slug" type="text" name="slug" required maxlength="40" autocomplete="off">
+            <input id="declare-slug" type="text" name="slug" value="{{ declared.slug or '' }}" required maxlength="40" autocomplete="off">
         </div>
         <div class="form-group">
             <label for="declare-name">Name</label>
-            <input id="declare-name" type="text" name="name" required maxlength="100" autocomplete="off">
+            <input id="declare-name" type="text" name="name" value="{{ declared.name or '' }}" required maxlength="100" autocomplete="off">
         </div>
         <div class="form-group">
             <label for="declare-email">Athena email <span class="muted">(optional)</span></label>
-            <input id="declare-email" type="email" name="email" maxlength="254" autocomplete="off">
+            <input id="declare-email" type="email" name="email" value="{{ declared.email or '' }}" maxlength="254" autocomplete="off">
         </div>
         <div class="form-group">
             <label for="declare-kind">Kind</label>
             <select id="declare-kind" name="kind">
                 {% for kind in seat_kinds %}
-                <option value="{{ kind }}"{% if kind == "seat" %} selected{% endif %}>{{ kind }}</option>
+                <option value="{{ kind }}"{% if kind == (declared.kind or "seat") %} selected{% endif %}>{{ kind }}</option>
                 {% endfor %}
             </select>
         </div>
         <div class="form-group">
             <label for="declare-unit">systemd unit <span class="muted">(optional)</span></label>
-            <input id="declare-unit" type="text" name="unit" maxlength="200" autocomplete="off">
+            <input id="declare-unit" type="text" name="unit" value="{{ declared.unit or '' }}" maxlength="200" autocomplete="off">
         </div>
         <div class="form-group">
             <label for="declare-scope">Unit scope</label>
             <select id="declare-scope" name="unit_scope">
                 {% for scope in unit_scopes %}
-                <option value="{{ scope }}">{{ scope }}</option>
+                <option value="{{ scope }}"{% if scope == declared.unit_scope %} selected{% endif %}>{{ scope }}</option>
                 {% endfor %}
             </select>
         </div>
         <div class="form-group">
             <label for="declare-pubkey">Buzz public key <span class="muted">(optional)</span></label>
-            <input id="declare-pubkey" type="text" name="buzz_pubkey" maxlength="64" autocomplete="off">
+            <input id="declare-pubkey" type="text" name="buzz_pubkey" value="{{ declared.buzz_pubkey or '' }}" maxlength="64" autocomplete="off">
         </div>
         <div class="form-actions">
             <button type="submit" class="button">Declare</button>

@@ -26,21 +26,33 @@ from athena.mentor import (
 )
 
 from athena.web.browsing import readonly_response
+from athena.web.form_errors import BrowserRefusal
 
 router = APIRouter()
 
 
-def signin_required(verb: str) -> HTMLResponse:
-    """The 401 body shown when a logged-out browser tries to write."""
-    return HTMLResponse(
+def signin_required(
+    verb: str, *, unposted: str | None = None, back: str | None = None
+) -> HTMLResponse:
+    """The 401 body shown when a logged-out browser tries to write. ``unposted``
+    is text the refused form carried (a comment), shown so it is not lost."""
+    return BrowserRefusal(
         f'<div class="blocked">Please <a href="/login">sign in</a> to {verb}.</div>',
         status_code=401,
+        unposted=unposted,
+        back=back,
     )
 
 
-def write_required(user: dict | None, verb: str) -> HTMLResponse | None:
+def write_required(
+    user: dict | None,
+    verb: str,
+    *,
+    unposted: str | None = None,
+    back: str | None = None,
+) -> HTMLResponse | None:
     if user is None:
-        return signin_required(verb)
+        return signin_required(verb, unposted=unposted, back=back)
     if not identity.can_write(user):
         return readonly_response()
     return None
@@ -54,7 +66,7 @@ def page_visible_or_response(conn, page_id, user):
     funnels through here so visibility can't be forgotten on one."""
     page = pages.get_page(conn, page_id)
     if page is None or not access.can_see_space(conn, user, page["space_id"]):
-        return None, HTMLResponse(
+        return None, BrowserRefusal(
             '<div class="error">Page not found.</div>', status_code=404
         )
     return page, None

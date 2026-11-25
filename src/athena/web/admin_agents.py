@@ -52,6 +52,7 @@ from athena.mcp.config import (
 )
 from athena.web import live
 from athena.web.csrf import verify_csrf
+from athena.web.form_errors import BrowserRefusal
 from athena.web.router import get_templates
 from athena.workflows import fleet_assign_commands
 
@@ -454,11 +455,17 @@ def _seat_refused(
     request: Request,
     conn: sqlite3.Connection,
     exc: fleet_seat_commands.FleetSeatCommandError,
+    *,
+    typed: dict[str, str] | None = None,
 ) -> HTMLResponse:
+    """The fleet page with the refusal at the top and, for a declare or an edit,
+    the form that posted it holding what was typed (U11)."""
+    context = _fleet_page_context(conn, error=exc.detail)
+    context["typed_seat"] = typed
     return get_templates().TemplateResponse(
         request=request,
         name="admin/fleet.html",
-        context=_fleet_page_context(conn, error=exc.detail),
+        context=context,
         status_code=_SEAT_STATUS_BY_KIND[exc.kind],
     )
 
@@ -486,15 +493,13 @@ def declare_fleet_seat(
     if err is not None:
         return err
     assert user is not None, "admin_required accepted a missing user"
+    fields = _seat_form_fields(name, email, kind, unit, unit_scope, buzz_pubkey)
     try:
-        seat = fleet_seat_commands.declare_seat(
-            conn,
-            actor=user,
-            slug=slug,
-            **_seat_form_fields(name, email, kind, unit, unit_scope, buzz_pubkey),
-        )
+        seat = fleet_seat_commands.declare_seat(conn, actor=user, slug=slug, **fields)
     except fleet_seat_commands.FleetSeatCommandError as exc:
-        return _seat_refused(request, conn, exc)
+        return _seat_refused(
+            request, conn, exc, typed={"form": "declare", "slug": slug, **fields}
+        )
     return RedirectResponse(
         f"/admin/fleet?declared={quote(seat['slug'], safe='')}", status_code=303
     )
@@ -523,15 +528,15 @@ def edit_fleet_seat(
     if err is not None:
         return err
     assert user is not None, "admin_required accepted a missing user"
+    fields = _seat_form_fields(name, email, kind, unit, unit_scope, buzz_pubkey)
     try:
         seat = fleet_seat_commands.update_seat(
-            conn,
-            actor=user,
-            slug=slug,
-            changes=_seat_form_fields(name, email, kind, unit, unit_scope, buzz_pubkey),
+            conn, actor=user, slug=slug, changes=fields
         )
     except fleet_seat_commands.FleetSeatCommandError as exc:
-        return _seat_refused(request, conn, exc)
+        return _seat_refused(
+            request, conn, exc, typed={"form": "edit", "slug": slug, **fields}
+        )
     return RedirectResponse(
         f"/admin/fleet?edited={quote(seat['slug'], safe='')}", status_code=303
     )
@@ -976,8 +981,11 @@ def mint_agent_token(
         return err
     assert user is not None, "admin_required accepted a missing user"
 
-    def page(status_code: int, **extra) -> HTMLResponse:
+    def page(
+        status_code: int, *, typed_mint: dict | None = None, **extra
+    ) -> HTMLResponse:
         context = _agents_context(conn, user, **extra)
+        context["typed_mint"] = typed_mint
         listed = {row["user"]["id"] for row in context["agents"]}
         context["acted_on_agent_id"] = user_id if user_id in listed else None
         return templates.TemplateResponse(
@@ -999,7 +1007,21 @@ def mint_agent_token(
             profile=profile.strip() or None,
         )
     except agent_commands.AgentCommandError as exc:
-        return page(404 if exc.kind == "not_found" else 400, error=str(exc))
+        # The agent's mint form comes back holding what was typed (U11).
+        typed_mint = {
+            "agent_id": user_id,
+            "token_name": token_name,
+            "profile": profile,
+            "scope_read": bool(scope_read),
+            "scope_issue_write": bool(scope_issue_write),
+            "scope_docs_write": bool(scope_docs_write),
+            "scope_admin": bool(scope_admin),
+        }
+        return page(
+            404 if exc.kind == "not_found" else 400,
+            error=str(exc),
+            typed_mint=typed_mint,
+        )
     minted = {
         "user": result["user"],
         "token": result["token"],
@@ -1049,7 +1071,7 @@ def agent_runs_admin(
             query_pairs
         )
     except fleet_work.ActiveWorkQueryError as exc:
-        return HTMLResponse(
+        return BrowserRefusal(
             f"<h1>Invalid active-work request</h1><p>{escape(exc.detail)}</p>",
             status_code=400,
             headers=ACTIVE_WORK_PRIVATE_HEADERS,

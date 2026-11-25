@@ -19,6 +19,7 @@ from athena.aegis import issue_search, issues, projects, saved_filters
 from athena.core import access, labels, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
+from athena.web.form_errors import BrowserRefusal, is_htmx
 from athena.web.render import render_snippet
 from athena.web.browsing import attach_labels
 from athena.web.router import get_templates
@@ -75,10 +76,33 @@ def filters_list(request: Request, conn: sqlite3.Connection = Depends(get_conn))
     so building a saved filter from an ad-hoc search is one click."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to save filters.</div>',
             status_code=401,
         )
+    # Pre-fill values for the create form, taken from the query string (all blank by
+    # default). project/label/assignee dropdowns echo the chosen option as selected.
+    prefill = {
+        field: (request.query_params.get(field) or "").strip() for field in _FIELDS
+    }
+    return _filters_page(request, conn, user, prefill=prefill)
+
+
+#: The create form's fields, in the order the form shows them.
+_FIELDS = ("name", "status", "priority", "assignee_id", "label", "project", "search")
+
+
+def _filters_page(
+    request: Request,
+    conn: sqlite3.Connection,
+    user: dict,
+    *,
+    prefill: dict,
+    error: str | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    """The filters page. Also what a refused save renders (U11): the same page
+    with ``error`` at the top and the create form holding what was typed."""
     my_filters = saved_filters.list_filters(conn, user["id"])
     for flt in my_filters:
         criteria = saved_filters.normalized_valid_criteria(flt["criteria"])
@@ -87,17 +111,6 @@ def filters_list(request: Request, conn: sqlite3.Connection = Depends(get_conn))
             if criteria is not None
             else "invalid filter"
         )
-    # Pre-fill values for the create form, taken from the query string (all blank by
-    # default). project/label/assignee dropdowns echo the chosen option as selected.
-    prefill = {
-        "name": (request.query_params.get("name") or "").strip(),
-        "status": (request.query_params.get("status") or "").strip(),
-        "priority": (request.query_params.get("priority") or "").strip(),
-        "assignee_id": (request.query_params.get("assignee_id") or "").strip(),
-        "label": (request.query_params.get("label") or "").strip(),
-        "project": (request.query_params.get("project") or "").strip(),
-        "search": (request.query_params.get("search") or "").strip(),
-    }
     return get_templates().TemplateResponse(
         request=request,
         name="aegis/filters.html",
@@ -110,7 +123,30 @@ def filters_list(request: Request, conn: sqlite3.Connection = Depends(get_conn))
                 conn, access.visible_project_filter(conn, user)
             ),
             "all_users": users.list_users(conn),
+            "error": error,
         },
+        status_code=status_code,
+    )
+
+
+def _filter_refusal(
+    request: Request,
+    conn: sqlite3.Connection,
+    user: dict,
+    message: str,
+    typed: dict,
+    *,
+    status_code: int = 400,
+) -> HTMLResponse:
+    """A refused save: the filters page with the error and the typed criteria.
+    htmx gets the fragment it always got, in the same words."""
+    if is_htmx(request):
+        return BrowserRefusal(
+            f'<div class="error">{html.escape(message)}</div>',
+            status_code=status_code,
+        )
+    return _filters_page(
+        request, conn, user, prefill=typed, error=message, status_code=status_code
     )
 
 
@@ -135,15 +171,22 @@ def create_filter(
     303 back to the filters list."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to save filters.</div>',
             status_code=401,
         )
     name = name.strip()
+    typed = {
+        "name": name,
+        "status": status.strip(),
+        "priority": priority.strip(),
+        "assignee_id": assignee_id.strip(),
+        "label": label.strip(),
+        "project": project.strip(),
+        "search": search.strip(),
+    }
     if not name:
-        return HTMLResponse(
-            '<div class="error">Filter name is required.</div>', status_code=400
-        )
+        return _filter_refusal(request, conn, user, "Filter name is required.", typed)
     try:
         criteria = saved_filters.normalize_criteria(
             {
@@ -156,21 +199,21 @@ def create_filter(
             }
         )
     except saved_filters.InvalidFilterCriteria as exc:
-        return HTMLResponse(
-            f'<div class="error">{html.escape(str(exc))}.</div>', status_code=400
-        )
+        return _filter_refusal(request, conn, user, f"{exc}.", typed)
     reason = saved_filters.validate_criteria(criteria)
     if reason is not None:
-        return HTMLResponse(
-            f'<div class="error">{html.escape(reason)}.</div>', status_code=400
-        )
+        return _filter_refusal(request, conn, user, f"{reason}.", typed)
     try:
         saved_filters.create_filter(
             conn, owner_id=user["id"], name=name, criteria=criteria
         )
     except sqlite3.IntegrityError:
-        return HTMLResponse(
-            '<div class="error">You already have a filter with that name.</div>',
+        return _filter_refusal(
+            request,
+            conn,
+            user,
+            "You already have a filter with that name.",
+            typed,
             status_code=409,
         )
     return RedirectResponse("/aegis/filters", status_code=303)
@@ -195,13 +238,15 @@ def filter_detail(
     browser and the API can't disagree on what a saved filter returns."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to run filters.</div>',
             status_code=401,
         )
     flt = saved_filters.get_filter(conn, filter_id)
     if flt is None or flt["owner_id"] != user["id"]:
-        return HTMLResponse('<div class="error">No such filter.</div>', status_code=404)
+        return BrowserRefusal(
+            '<div class="error">No such filter.</div>', status_code=404
+        )
     crit = saved_filters.normalized_valid_criteria(flt["criteria"])
     flt["summary"] = (
         _describe_criteria(conn, crit, user) if crit is not None else "invalid filter"
@@ -262,10 +307,12 @@ def delete_filter(
     SQL the REST adapter relies on, not a fetch-then-check outside a transaction."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
     if not saved_filters.delete_filter(conn, filter_id, owner_id=user["id"]):
-        return HTMLResponse('<div class="error">No such filter.</div>', status_code=404)
+        return BrowserRefusal(
+            '<div class="error">No such filter.</div>', status_code=404
+        )
     return RedirectResponse("/aegis/filters", status_code=303)

@@ -38,6 +38,7 @@ from athena.core import (
     undo,
     users,
 )
+from athena.web.form_errors import BrowserRefusal, is_htmx
 from athena.web.render import render_comment, render_issue_body
 from athena.web.router import get_templates
 
@@ -56,7 +57,7 @@ def issue_command_response(
     css_class = (
         "blocked" if exc.kind in {"unauthorized", "forbidden", "conflict"} else "error"
     )
-    return HTMLResponse(
+    return BrowserRefusal(
         f'<div class="{css_class}">{html.escape(exc.detail.capitalize())}.</div>',
         status_code=status_code,
     )
@@ -85,10 +86,44 @@ def issue_visible_or_404(conn, issue_id, user):
     if issue is None or not access.can_see_project_or_backlog(
         conn, user, issue["project_id"]
     ):
-        return None, HTMLResponse(
+        return None, BrowserRefusal(
             '<div class="error">Issue not found.</div>', status_code=404
         )
     return issue, None
+
+
+def issue_form_refusal(
+    request: Request,
+    conn: sqlite3.Connection,
+    issue_id: int,
+    message: str,
+    *,
+    status_code: int = 400,
+    typed: dict | None = None,
+) -> HTMLResponse:
+    """A form on the issue page was refused: the page again, with ``message``
+    at the top and what was typed back in its fields (U11).
+
+    Only for a viewer who may see the issue. Anyone else, and an htmx request
+    (which swaps a fragment), gets the same words as the bare fragment always
+    said, through ``BrowserRefusal`` — so a hidden issue and a missing one still
+    answer alike, and the status code is the one the route always answered."""
+    fragment = f'<div class="error">{html.escape(message)}</div>'
+    user = getattr(request.state, "user", None)
+    issue = issues.get_issue(conn, issue_id)
+    if (
+        is_htmx(request)
+        or issue is None
+        or not access.can_see_project_or_backlog(conn, user, issue["project_id"])
+    ):
+        return BrowserRefusal(fragment, status_code=status_code)
+    return render_issue_detail(
+        request,
+        conn,
+        issue,
+        extra={"error": message, "typed": typed or {}},
+        status_code=status_code,
+    )
 
 
 #: The most of a ``notice``/``error`` query value the issue page shows. The
@@ -229,6 +264,9 @@ def render_issue_detail(
         # plain text from the URL, capped and rendered through autoescape.
         "notice": _reflected(request, "notice"),
         "error": _reflected(request, "error"),
+        # What a refused form on this page had in it (issue_form_refusal), put
+        # back in that form's fields. Empty on an ordinary view.
+        "typed": {},
     }
     if extra:
         context.update(extra)

@@ -11,13 +11,14 @@ from fastapi.responses import HTMLResponse
 
 from athena.aegis import issues, leases, statuses
 from athena.core import labels
+from athena.web.form_errors import BrowserRefusal
 
 # Attachment-command refusal codes the browser adapters answer with.
 ATTACHMENT_STATUS_BY_KIND = {"invalid": 422, "not_found": 404, "forbidden": 403}
 
 
 def readonly_response() -> HTMLResponse:
-    return HTMLResponse(
+    return BrowserRefusal(
         '<div class="blocked">Viewer role is read-only.</div>',
         status_code=403,
     )

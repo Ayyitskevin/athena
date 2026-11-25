@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse
 
 from athena.aegis import work_context
 from athena.core.deps import get_conn
+from athena.web.form_errors import BrowserRefusal
 from athena.web.router import get_templates
 
 router = APIRouter()
@@ -35,7 +36,7 @@ def issue_work_context(
     viewer = getattr(request.state, "user", None)
     projection = work_context.build_work_context(conn, ref, actor=viewer)
     if projection is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             "<h1>Issue not found</h1>",
             status_code=404,
             headers=_PRIVATE_HEADERS,

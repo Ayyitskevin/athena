@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 
+{# The page's own address for the rail and theme toggles to come back to:
+   a refused form re-renders this page at the address it posted to, which
+   answers a GET with 405 (U11). #}
+{% set return_path = "/mentor/pages/" ~ page.id %}
+
 {% block title %}{{ page.title }} — Mentor{% endblock %}
 
 {% block content %}
@@ -53,8 +58,9 @@
     {% endif %}
 
     <div class="doc-main">
-        {# A refused action on this page says why here, in the page (U5). #}
-        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+        {# A refused action on this page says why here, in the page (U5, U11).
+           data-refused tells static/drafts.js the post was not accepted. #}
+        {% if error %}<div data-refused><div class="error">{{ error }}</div></div>{% endif %}
         {% if page.body %}
         <div class="prose">{{ body_html }}</div>
         {% else %}
@@ -144,7 +150,9 @@
                 <form method="post" action="/mentor/pages/{{ page.id }}/comments" class="comment-form">
                     {% include "partials/csrf.html" %}
                     <label for="comment-body">Add a comment</label>
-                    <textarea id="comment-body" name="body" rows="3" required
+                    {# data-draft: static/drafts.js keeps what is typed here until
+                       the comment is accepted, across a sign-in (U11). #}
+                    <textarea id="comment-body" name="body" rows="3" required data-draft
                               placeholder="Leave a comment…"></textarea>
                     <button type="submit" class="button small">Comment</button>
                 </form>

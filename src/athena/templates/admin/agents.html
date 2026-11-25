@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 
+{# The page's own address for the rail and theme toggles to come back to:
+   a refused form re-renders this page at the address it posted to, which
+   answers a GET with 405 (U11). #}
+{% set return_path = "/admin/agents" %}
+
 {% block title %}Agents - Admin - Athena{% endblock %}
 
 {% block content %}
@@ -19,7 +24,7 @@
 {# An outcome is said where the action was made (U10): inside the agent's
    section when it was made on one this page lists, and here otherwise. #}
 {% if not acted_on_agent_id %}
-{% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% if error %}<div data-refused><div class="error">{{ error }}</div></div>{% endif %}
 {% if notice %}<div class="success">{{ notice }}</div>{% endif %}
 {% endif %}
 
@@ -522,28 +527,30 @@
                 {% else %}
                 <p class="muted">No tokens.</p>
                 {% endif %}
-                {# An agent with no token cannot ask for one: an admin mints it (U5). #}
-                <details>
+                {# An agent with no token cannot ask for one: an admin mints it (U5).
+                   A refused mint comes back open, holding what was typed (U11). #}
+                {% set mint = typed_mint if typed_mint and typed_mint.agent_id == agent.user.id else {} %}
+                <details{% if mint %} open{% endif %}>
                     <summary>Mint a token</summary>
                     <form method="post" action="/admin/agents/{{ agent.user.id }}/tokens" class="issue-form">
                         {% include "partials/csrf.html" %}
                         <div class="form-group">
                             <label for="mint-name-{{ agent.user.id }}">Token label <span class="muted">(optional)</span></label>
-                            <input id="mint-name-{{ agent.user.id }}" type="text" name="token_name" maxlength="200" placeholder="defaults to the agent name" autocomplete="off">
+                            <input id="mint-name-{{ agent.user.id }}" type="text" name="token_name" value="{{ mint.token_name or '' }}" maxlength="200" placeholder="defaults to the agent name" autocomplete="off">
                         </div>
                         <div class="form-group">
                             <label>What it may do</label>
-                            <label><input type="checkbox" name="scope_read" value="1"> Read the workspace</label>
-                            <label><input type="checkbox" name="scope_issue_write" value="1"> Write issues (Aegis)</label>
-                            <label><input type="checkbox" name="scope_docs_write" value="1"> Write docs (Mentor)</label>
-                            <label><input type="checkbox" name="scope_admin" value="1"> Admin</label>
+                            <label><input type="checkbox" name="scope_read" value="1"{% if mint.scope_read %} checked{% endif %}> Read the workspace</label>
+                            <label><input type="checkbox" name="scope_issue_write" value="1"{% if mint.scope_issue_write %} checked{% endif %}> Write issues (Aegis)</label>
+                            <label><input type="checkbox" name="scope_docs_write" value="1"{% if mint.scope_docs_write %} checked{% endif %}> Write docs (Mentor)</label>
+                            <label><input type="checkbox" name="scope_admin" value="1"{% if mint.scope_admin %} checked{% endif %}> Admin</label>
                         </div>
                         <div class="form-group">
                             <label for="mint-profile-{{ agent.user.id }}">MCP profile</label>
                             <select id="mint-profile-{{ agent.user.id }}" name="profile">
-                                <option value="" selected>Default for these scopes</option>
+                                <option value=""{% if not mint.profile %} selected{% endif %}>Default for these scopes</option>
                                 {% for p in printable_profiles %}
-                                <option value="{{ p }}">{{ p }}</option>
+                                <option value="{{ p }}"{% if mint.profile == p %} selected{% endif %}>{{ p }}</option>
                                 {% endfor %}
                             </select>
                         </div>

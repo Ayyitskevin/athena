@@ -16,6 +16,7 @@ from athena.mentor import (
     page_commands,
 )
 from athena.web.csrf import verify_csrf
+from athena.web.form_errors import BrowserRefusal
 from athena.web.router import get_templates
 
 from athena.web.mentor import (
@@ -92,12 +93,14 @@ def link_page_mention(
         return err
     assert page is not None
     if target_kind not in ("issue", "page"):
-        return HTMLResponse('<div class="error">Unknown target.</div>', status_code=422)
+        return BrowserRefusal(
+            '<div class="error">Unknown target.</div>', status_code=422
+        )
     # Hidden reads as missing: the target resolves through the viewer's
     # visible-read rule, so a private one gets the same 404 as a missing id.
     needle = mentions.mention_text(conn, target_kind, target_id, actor=user)
     if not needle:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">That link target no longer exists.</div>',
             status_code=404,
         )
@@ -110,14 +113,16 @@ def link_page_mention(
         # The body changed under the operator; the mention they clicked is gone.
         # Refusing is the honest answer — editing anyway would rewrite text they
         # never saw.
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">That mention is no longer in this page.</div>',
             status_code=409,
         )
     try:
         page_commands.edit_page(conn, actor=user, page_id=page_id, body=body)
     except page_commands.PageCommandError:
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+        return BrowserRefusal(
+            '<div class="error">Page not found.</div>', status_code=404
+        )
     back = (
         f"/mentor/pages/{target_id}/graph"
         if target_kind == "page"

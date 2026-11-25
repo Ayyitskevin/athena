@@ -26,6 +26,7 @@ from athena.mentor import (
 from athena.web import html_export
 from athena.web.csrf import verify_csrf
 from athena.web.browsing import readonly_response
+from athena.web.form_errors import BrowserRefusal, is_htmx
 from athena.web.router import get_templates
 
 from athena.web.mentor import (
@@ -83,15 +84,15 @@ def create_space(
     key = key.strip().upper()
     name = name.strip()
     if not key:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Space key is required.</div>', status_code=400
         )
     if not name:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Space name is required.</div>', status_code=400
         )
     if spaces.get_space_by_key(conn, key) is not None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">A space with that key already exists.</div>',
             status_code=409,
         )
@@ -120,7 +121,7 @@ def delete_space(
 
     space = spaces.get_space(conn, space_id)
     if space is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Space not found.</div>', status_code=404
         )
     # Shared visibility-first + creator-only rule (access.container_write_reason) — a
@@ -129,17 +130,21 @@ def delete_space(
         conn, user, kind="space", container_id=space_id, created_by=space["created_by"]
     )
     if reason == "not_visible":
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Space not found.</div>', status_code=404
         )
     if reason == "not_owner":
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Only the space creator may delete it.</div>',
             status_code=403,
         )
     if pages.count_pages_in_space(conn, space_id) > 0:
-        return HTMLResponse(
-            '<div class="error">Delete or move this space\'s pages first.</div>',
+        return _space_form_refusal(
+            request,
+            conn,
+            user,
+            space_id,
+            "Delete or move this space's pages first.",
             status_code=409,
         )
     # The command owns the atomic delete AND its 'space_deleted' event.
@@ -167,7 +172,7 @@ def edit_space_form(
     # "not found", no leak. Same gate as the POST twin below; without it the GET
     # form leaked a hidden space's key/name/description to any signed-in member.
     if space is None or not access.can_see_space(conn, user, space_id):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Space not found.</div>', status_code=404
         )
     return templates.TemplateResponse(
@@ -197,24 +202,24 @@ def edit_space(
     before = spaces.get_space(conn, space_id)
     # Can't edit a space you can't see — a private space reads as "not found", no leak.
     if before is None or not access.can_see_space(conn, user, space_id):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Space not found.</div>', status_code=404
         )
     key = key.strip().upper()
     name = name.strip()
+    typed = {"key": key, "name": name, "description": description}
     if not key:
-        return HTMLResponse(
-            '<div class="error">Space key is required.</div>', status_code=400
+        return _space_edit_refusal(
+            request, before, "Space key is required.", 400, typed
         )
     if not name:
-        return HTMLResponse(
-            '<div class="error">Space name is required.</div>', status_code=400
+        return _space_edit_refusal(
+            request, before, "Space name is required.", 400, typed
         )
     clash = spaces.get_space_by_key(conn, key)
     if clash is not None and clash["id"] != space_id:
-        return HTMLResponse(
-            '<div class="error">A space with that key already exists.</div>',
-            status_code=409,
+        return _space_edit_refusal(
+            request, before, "A space with that key already exists.", 409, typed
         )
 
     # The command owns the atomic update AND its 'space_edited' event (a no-op change
@@ -229,10 +234,28 @@ def edit_space(
             description=description.strip(),
         )
     except space_commands.SpaceCommandError:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Space not found.</div>', status_code=404
         )
     return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
+
+
+def _space_edit_refusal(
+    request: Request, space: dict, message: str, status_code: int, typed: dict
+) -> HTMLResponse:
+    """A refused space edit: the edit form again, with the error and what was
+    typed (U11). htmx gets the fragment it always got."""
+    if is_htmx(request):
+        return BrowserRefusal(
+            f'<div class="error">{html.escape(message, quote=False)}</div>',
+            status_code=status_code,
+        )
+    return get_templates().TemplateResponse(
+        request=request,
+        name="mentor/space_edit.html",
+        context={"space": space, "error": message, "typed": typed},
+        status_code=status_code,
+    )
 
 
 def _authorize_space_manage(conn, space_id: int, user: dict):
@@ -242,13 +265,13 @@ def _authorize_space_manage(conn, space_id: int, user: dict):
     not manage is 403. The 401 (logged-out) check stays at each call site."""
     space = spaces.get_space(conn, space_id)
     if space is None or not access.can_see_space(conn, user, space_id):
-        return None, HTMLResponse(
+        return None, BrowserRefusal(
             '<div class="error">Space not found.</div>', status_code=404
         )
     if not identity.can_write(user):
         return None, readonly_response()
     if space["created_by"] != user["id"] and not identity.is_admin(user):
-        return None, HTMLResponse(
+        return None, BrowserRefusal(
             '<div class="blocked">Only the space creator or an admin may manage access.</div>',
             status_code=403,
         )
@@ -297,7 +320,7 @@ def space_set_visibility(
         return err
     visibility = visibility.strip().lower()
     if visibility not in ("public", "private"):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Visibility must be public or private.</div>',
             status_code=400,
         )
@@ -327,7 +350,7 @@ def space_add_member(
         return err
     member = users.get_user(conn, int(user_id)) if user_id.strip().isdigit() else None
     if member is None:
-        return HTMLResponse('<div class="error">No such user.</div>', status_code=400)
+        return BrowserRefusal('<div class="error">No such user.</div>', status_code=400)
     # The command owns the atomic grant AND its 'space_member_added' event (idempotent).
     space_commands.add_space_member(
         conn,
@@ -397,6 +420,24 @@ def space_detail(
             status_code=404,
         )
 
+    return _space_page_response(request, conn, user, space)
+
+
+def _space_page_response(
+    request: Request,
+    conn: sqlite3.Connection,
+    user: dict | None,
+    space: dict,
+    *,
+    error: str | None = None,
+    typed: dict | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    """A space as its viewer may see it. Also what a refused form on the space
+    renders (U11): the same page, ``error`` at the top, ``typed`` back in the
+    form that posted it. Only for a space the viewer may see."""
+    templates = get_templates()
+    space_id = space["id"]
     # The "Show archived" toggle submits a truthy value to include soft-deleted pages
     # in the tree (so they can be found and restored); by default they're hidden.
     archived_raw = (request.query_params.get("archived") or "").strip()
@@ -431,7 +472,38 @@ def space_detail(
             "activity": activity.list_activity(
                 conn, target_kind="space", target_id=space_id
             ),
+            "error": error,
+            "typed": typed or {},
         },
+        status_code=status_code,
+    )
+
+
+def _space_form_refusal(
+    request: Request,
+    conn: sqlite3.Connection,
+    user: dict,
+    space_id: int,
+    message: str,
+    *,
+    status_code: int = 400,
+    typed: dict | None = None,
+) -> HTMLResponse:
+    """A form on the space page was refused: the space again, with the error
+    and what was typed (U11). htmx, and a space the viewer may not see, get the
+    fragment in the words it always had, at the same status."""
+    space = spaces.get_space(conn, space_id)
+    if (
+        is_htmx(request)
+        or space is None
+        or not access.can_see_space(conn, user, space_id)
+    ):
+        return BrowserRefusal(
+            f'<div class="error">{html.escape(message, quote=False)}</div>',
+            status_code=status_code,
+        )
+    return _space_page_response(
+        request, conn, user, space, error=message, typed=typed, status_code=status_code
     )
 
 
@@ -453,7 +525,7 @@ def open_daily_note(
     if spaces.get_space(conn, space_id) is None or not access.can_see_space(
         conn, user, space_id
     ):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Space not found.</div>', status_code=404
         )
     try:
@@ -461,7 +533,7 @@ def open_daily_note(
             conn, actor=user, space_id=space_id
         )
     except page_commands.PageCommandError:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Space not found.</div>', status_code=404
         )
     return RedirectResponse(f"/mentor/pages/{page['id']}", status_code=303)
@@ -487,13 +559,14 @@ def create_page_from_template(
     if spaces.get_space(conn, space_id) is None or not access.can_see_space(
         conn, user, space_id
     ):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Space not found.</div>', status_code=404
         )
     title = title.strip()
+    typed = {"template_title": title, "template_id": str(template_id)}
     if not title:
-        return HTMLResponse(
-            '<div class="error">Page title is required.</div>', status_code=400
+        return _space_form_refusal(
+            request, conn, user, space_id, "Page title is required.", typed=typed
         )
     try:
         page = page_commands.create_page_from_template(
@@ -504,9 +577,13 @@ def create_page_from_template(
             title=title,
         )
     except page_commands.PageCommandError as exc:
-        return HTMLResponse(
-            f'<div class="error">{html.escape(exc.detail)}</div>',
-            status_code=404 if exc.kind == "not_found" else 422,
+        if exc.kind == "not_found":
+            return BrowserRefusal(
+                f'<div class="error">{html.escape(exc.detail)}</div>',
+                status_code=404,
+            )
+        return _space_form_refusal(
+            request, conn, user, space_id, exc.detail, status_code=422, typed=typed
         )
     return RedirectResponse(f"/mentor/pages/{page['id']}", status_code=303)
 
@@ -534,14 +611,15 @@ def create_page(
     if spaces.get_space(conn, space_id) is None or not access.can_see_space(
         conn, user, space_id
     ):
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Space not found.</div>', status_code=404
         )
 
     title = title.strip()
+    typed = {"title": title, "body": body, "parent_id": parent_id.strip()}
     if not title:
-        return HTMLResponse(
-            '<div class="error">Page title is required.</div>', status_code=400
+        return _space_form_refusal(
+            request, conn, user, space_id, "Page title is required.", typed=typed
         )
 
     parent_id = parent_id.strip()
@@ -549,14 +627,18 @@ def create_page(
         parent: int | None = None
     else:
         if not parent_id.isdigit():
-            return HTMLResponse(
-                '<div class="error">Invalid parent page.</div>', status_code=400
+            return _space_form_refusal(
+                request, conn, user, space_id, "Invalid parent page.", typed=typed
             )
         parent_page = pages.get_page(conn, int(parent_id))
         if parent_page is None or parent_page["space_id"] != space_id:
-            return HTMLResponse(
-                '<div class="error">Parent must be a page in this space.</div>',
-                status_code=400,
+            return _space_form_refusal(
+                request,
+                conn,
+                user,
+                space_id,
+                "Parent must be a page in this space.",
+                typed=typed,
             )
         parent = int(parent_id)
 
@@ -572,7 +654,7 @@ def create_page(
             parent_id=parent,
         )
     except page_commands.PageCommandError:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Space not found.</div>', status_code=404
         )
     return RedirectResponse(f"/mentor/pages/{page['id']}", status_code=303)
@@ -593,7 +675,9 @@ def export_space_html(
     user = getattr(request.state, "user", None)
     document = html_export.build_space_html(conn, space_id, actor=user)
     if document is None:
-        return HTMLResponse('<div class="error">No such space.</div>', status_code=404)
+        return BrowserRefusal(
+            '<div class="error">No such space.</div>', status_code=404
+        )
     space = spaces.get_space(conn, space_id)
     assert space is not None  # build_space_html already refused a missing space
     name = f"athena-{space['key'].lower()}.html"
@@ -621,7 +705,7 @@ def _space_visible_or_response(conn, space_id: int, user):
     about, which is the one thing a not-found is supposed to stay quiet about."""
     space = spaces.get_space(conn, space_id)
     if space is None or not access.can_see_space(conn, user, space_id):
-        return None, HTMLResponse(
+        return None, BrowserRefusal(
             '<div class="error">Space not found.</div>', status_code=404
         )
     return space, None
@@ -633,7 +717,7 @@ def watch_space(request: Request, space_id: int, conn=Depends(get_conn)):
     signed-in user — a personal subscription, like watching a page)."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to watch.</div>',
             status_code=401,
         )
@@ -656,7 +740,7 @@ def unwatch_space(request: Request, space_id: int, conn=Depends(get_conn)):
     """Stop watching a space."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )

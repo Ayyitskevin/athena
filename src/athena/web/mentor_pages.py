@@ -31,6 +31,7 @@ from athena.mentor import (
 )
 from markupsafe import escape
 from athena.web.csrf import verify_csrf
+from athena.web.form_errors import BrowserRefusal, is_htmx
 from athena.web.render import MAX_PREVIEW_CHARS, render_comment, render_page_body
 from athena.web.browsing import ATTACHMENT_STATUS_BY_KIND
 from athena.web.router import get_templates
@@ -58,7 +59,9 @@ def page_detail(
     # A page in a private space the viewer can't see is a 404, gated by its space, so
     # privacy never leaks through the existence of a page id.
     if page is None or not access.can_see_space(conn, user, page["space_id"]):
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+        return BrowserRefusal(
+            '<div class="error">Page not found.</div>', status_code=404
+        )
     return _page_response(request, conn, user, page)
 
 
@@ -191,7 +194,9 @@ def edit_page_form(
     # Can't edit (or even see the form for) a page in a space you can't read — 404,
     # same as a missing page, so the form never leaks a hidden page's content.
     if page is None or not access.can_see_space(conn, user, page["space_id"]):
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+        return BrowserRefusal(
+            '<div class="error">Page not found.</div>', status_code=404
+        )
     return templates.TemplateResponse(
         request=request,
         name="mentor/page_edit.html",
@@ -203,6 +208,27 @@ def edit_page_form(
             restored=request.query_params.get("restore") == "1",
             notice=(request.query_params.get("notice") or "").strip(),
         ),
+    )
+
+
+def _page_form_refusal(
+    request: Request,
+    conn: sqlite3.Connection,
+    user: dict,
+    page: dict,
+    message: str,
+    *,
+    status_code: int = 400,
+) -> HTMLResponse:
+    """A form on a page the viewer may see was refused: the page again, with
+    ``message`` at the top of its main column (U11). An htmx request still gets
+    the fragment it always got, in the same words, at the same status."""
+    if is_htmx(request):
+        return BrowserRefusal(
+            f'<div class="error">{html.escape(message)}</div>', status_code=status_code
+        )
+    return _page_response(
+        request, conn, user, page, error=message, status_code=status_code
     )
 
 
@@ -236,7 +262,9 @@ def _conflict_response(
     page = pages.get_page(conn, page_id)
     if page is None:
         # It was deleted, not edited, between the precondition and this read.
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+        return BrowserRefusal(
+            '<div class="error">Page not found.</div>', status_code=404
+        )
     # Keep their work under the baseline they were editing FROM — the tag the form
     # submitted — never the page's new one. Stamping today's tag would mark stale
     # work fresh and silence the stale-draft warning the next time they open the
@@ -273,6 +301,8 @@ def _edit_form_context(
     restored: bool = False,
     notice: str = "",
     conflict: dict | None = None,
+    error: str | None = None,
+    typed: dict | None = None,
 ) -> dict:
     """The edit form's context, built in one place.
 
@@ -316,6 +346,9 @@ def _edit_form_context(
         # The text the author just tried to save, when someone else got there
         # first. Shown beside theirs; never merged into it.
         "conflict": conflict,
+        # A refused save (U11): why, and the fields as the author typed them.
+        "error": error,
+        "typed": typed,
     }
 
 
@@ -339,7 +372,7 @@ def preview_page_body(
     if user is None:
         return signin_required("preview")
     if len(body) > MAX_PREVIEW_CHARS:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Too long to preview.</div>', status_code=413
         )
     page = None
@@ -400,7 +433,7 @@ def autosave_page_draft(
         # Fixed literals from the module's own bounds, not the exception's text
         # — mirrored from the issue autosave, where CodeQL's
         # stack-trace-exposure rule flagged the exception-derived variant.
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Draft not held — too large. Titles cap at '
             f"{page_drafts.MAX_TITLE_CHARS} characters and bodies at "
             f"{page_drafts.MAX_BODY_CHARS:,}.</div>",
@@ -455,13 +488,29 @@ def edit_page(
         return err
     assert user is not None, "write_required accepted a missing user"
 
-    _, err = page_visible_or_response(conn, page_id, user)
+    page, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
+    assert page is not None
     title = title.strip()
     if not title:
-        return HTMLResponse(
-            '<div class="error">Title is required.</div>', status_code=400
+        if is_htmx(request):
+            return BrowserRefusal(
+                '<div class="error">Title is required.</div>', status_code=400
+            )
+        # The editor again, with the author's text still in it (U11).
+        return get_templates().TemplateResponse(
+            request=request,
+            name="mentor/page_edit.html",
+            context=_edit_form_context(
+                conn,
+                request,
+                page,
+                user,
+                error="Title is required.",
+                typed={"title": title, "body": body},
+            ),
+            status_code=400,
         )
 
     # The command owns the atomic snapshot+overwrite, its 'page_edited' event, and
@@ -504,7 +553,7 @@ def edit_page(
                 body=body.strip(),
             )
         else:
-            return HTMLResponse(
+            return BrowserRefusal(
                 '<div class="error">Page not found.</div>', status_code=404
             )
     # The text IS the page now, so the author's draft of it is a stale copy of
@@ -541,9 +590,7 @@ def move_page(
         new_parent: int | None = None
     else:
         if not parent_id.isdigit():
-            return HTMLResponse(
-                '<div class="error">Invalid parent page.</div>', status_code=400
-            )
+            return _page_form_refusal(request, conn, user, page, "Invalid parent page.")
         new_parent = int(parent_id)
 
     # The command owns the atomic re-parent AND its 'page_moved' event. An illegal move
@@ -554,12 +601,10 @@ def move_page(
         )
     except page_commands.PageCommandError as exc:
         if exc.kind == "not_found":
-            return HTMLResponse(
+            return BrowserRefusal(
                 '<div class="error">Page not found.</div>', status_code=404
             )
-        return HTMLResponse(
-            f'<div class="error">{html.escape(exc.detail)}</div>', status_code=400
-        )
+        return _page_form_refusal(request, conn, user, page, exc.detail)
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
@@ -584,12 +629,25 @@ def delete_page(
     try:
         page = page_commands.delete_page(conn, actor=user, page_id=page_id)
     except page_commands.PageCommandError as exc:
-        if exc.kind == "conflict":
-            return HTMLResponse(
-                '<div class="error">Move or delete its child pages first.</div>',
+        current = pages.get_page(conn, page_id)
+        if (
+            exc.kind == "conflict"
+            and current is not None
+            and access.can_see_space(conn, user, current["space_id"])
+        ):
+            # The command checks visibility before the children rule; the page
+            # is rebuilt only for a viewer who may see it all the same.
+            return _page_form_refusal(
+                request,
+                conn,
+                user,
+                current,
+                "Move or delete its child pages first.",
                 status_code=409,
             )
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+        return BrowserRefusal(
+            '<div class="error">Page not found.</div>', status_code=404
+        )
     return RedirectResponse(f"/mentor/spaces/{page['space_id']}", status_code=303)
 
 
@@ -615,7 +673,9 @@ def archive_page(
             conn, actor=user, page_id=page_id, archived=True
         )
     except page_commands.PageCommandError:
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+        return BrowserRefusal(
+            '<div class="error">Page not found.</div>', status_code=404
+        )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
@@ -640,7 +700,9 @@ def unarchive_page(
             conn, actor=user, page_id=page_id, archived=False
         )
     except page_commands.PageCommandError:
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+        return BrowserRefusal(
+            '<div class="error">Page not found.</div>', status_code=404
+        )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
@@ -658,15 +720,16 @@ def add_page_attachment(
     if err is not None:
         return err
     assert user is not None, "write_required accepted a missing user"
-    _, err = page_visible_or_response(conn, page_id, user)
+    page, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
+    assert page is not None
     data = file.file.read()
     if not data:
-        return HTMLResponse('<div class="error">File is empty.</div>', status_code=400)
+        return _page_form_refusal(request, conn, user, page, "File is empty.")
     if len(data) > config.ATTACH_MAX_BYTES:
-        return HTMLResponse(
-            '<div class="error">File is too large.</div>', status_code=413
+        return _page_form_refusal(
+            request, conn, user, page, "File is too large.", status_code=413
         )
     try:
         attachment_commands.create_attachment(
@@ -680,7 +743,7 @@ def add_page_attachment(
             attach_dir=config.ATTACH_DIR,
         )
     except attachment_commands.AttachmentCommandError as exc:
-        return HTMLResponse(
+        return BrowserRefusal(
             f'<div class="error">{html.escape(str(exc).capitalize())}.</div>',
             status_code=ATTACHMENT_STATUS_BY_KIND[exc.kind],
         )
@@ -708,11 +771,11 @@ def remove_page_attachment(
         return err
     att = attachments.get(conn, attachment_id)
     if att is None or att["target_kind"] != "page" or att["target_id"] != page_id:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Attachment not found.</div>', status_code=404
         )
     if att["uploaded_by"] != user["id"]:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Only the uploader may remove this file.</div>',
             status_code=403,
         )
@@ -724,7 +787,7 @@ def remove_page_attachment(
             attach_dir=config.ATTACH_DIR,
         )
     except attachment_commands.AttachmentCommandError as exc:
-        return HTMLResponse(
+        return BrowserRefusal(
             f'<div class="error">{html.escape(str(exc).capitalize())}.</div>',
             status_code=ATTACHMENT_STATUS_BY_KIND[exc.kind],
         )
@@ -736,7 +799,7 @@ def watch_page(request: Request, page_id: int, conn=Depends(get_conn)):
     """Start watching a page (any signed-in user — a personal subscription)."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to watch.</div>',
             status_code=401,
         )
@@ -754,7 +817,7 @@ def unwatch_page(request: Request, page_id: int, conn=Depends(get_conn)):
     """Stop watching a page."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
@@ -796,7 +859,7 @@ def restore_version(
             conn, actor=user, page_id=page_id, version=version
         )
     except page_commands.PageCommandError:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">No such page or version.</div>', status_code=404
         )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
@@ -813,18 +876,21 @@ def add_page_comment(
     author is the session, never a form field), then 303 back so the new comment
     shows. Mirrors the Aegis issue-comment web route."""
     user = getattr(request.state, "user", None)
-    err = write_required(user, "comment")
+    # A session that expired under a comment: the sign-in answer shows the text
+    # so it is not lost, and static/drafts.js keeps it for the box (U11).
+    err = write_required(
+        user, "comment", unposted=body, back=f"/mentor/pages/{page_id}"
+    )
     if err is not None:
         return err
     assert user is not None, "write_required accepted a missing user"
-    _, err = page_visible_or_response(conn, page_id, user)
+    page, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
+    assert page is not None
     body = body.strip()
     if not body:
-        return HTMLResponse(
-            '<div class="error">Comment cannot be empty.</div>', status_code=400
-        )
+        return _page_form_refusal(request, conn, user, page, "Comment cannot be empty.")
     # The command owns the insert AND its atomic 'page_commented' event (auto-watch +
     # mentions), plus the visibility gate re-checked inside its transaction.
     try:
@@ -832,7 +898,9 @@ def add_page_comment(
             conn, actor=user, page_id=page_id, body=body
         )
     except page_comment_commands.PageCommentCommandError:
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+        return BrowserRefusal(
+            '<div class="error">Page not found.</div>', status_code=404
+        )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
@@ -846,13 +914,13 @@ def _own_page_comment_or_response(
     author-only."""
     existing = page_comments.get_comment(conn, comment_id)
     if existing is None or existing["page_id"] != page_id:
-        return None, HTMLResponse(
+        return None, BrowserRefusal(
             '<div class="error">Comment not found.</div>', status_code=404
         )
     if existing["author_id"] != user["id"] and not (
         allow_admin and identity.is_admin(user)
     ):
-        return None, HTMLResponse(
+        return None, BrowserRefusal(
             '<div class="error">You can only change your own comments.</div>',
             status_code=403,
         )
@@ -877,17 +945,16 @@ def edit_page_comment(
     if err is not None:
         return err
     assert user is not None, "write_required accepted a missing user"
-    _, err = page_visible_or_response(conn, page_id, user)
+    page, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
+    assert page is not None
     _, err = _own_page_comment_or_response(conn, page_id, comment_id, user)
     if err is not None:
         return err
     body = body.strip()
     if not body:
-        return HTMLResponse(
-            '<div class="error">Comment cannot be empty.</div>', status_code=400
-        )
+        return _page_form_refusal(request, conn, user, page, "Comment cannot be empty.")
     # The command owns the edit AND its atomic 'page_comment_edited' event — this web
     # path previously rewrote the body with NO audit trail at all.
     try:
@@ -897,7 +964,7 @@ def edit_page_comment(
     except page_comment_commands.PageCommentCommandError:
         # vanished between the author check and the write (a race) — 404, not a
         # silent "success" redirect.
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Comment not found.</div>', status_code=404
         )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
@@ -937,7 +1004,7 @@ def delete_page_comment(
     except page_comment_commands.PageCommentCommandError:
         removed = False
     if not removed:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Comment not found.</div>', status_code=404
         )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
@@ -1004,14 +1071,13 @@ def add_page_label(
     if err is not None:
         return err
     assert user is not None, "write_required accepted a missing user"
-    _, err = page_visible_or_response(conn, page_id, user)
+    page, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
+    assert page is not None
     name = name.strip()
     if not name:
-        return HTMLResponse(
-            '<div class="error">Label name is required.</div>', status_code=400
-        )
+        return _page_form_refusal(request, conn, user, page, "Label name is required.")
     # The command owns the find-or-create, the atomic attach, and the
     # 'page_labeled' event in one transaction — the page twin of the issue-side
     # attach_label_by_name, so the transport performs no vocabulary write. A page

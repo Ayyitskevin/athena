@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 
+{# The page's own address for the rail and theme toggles to come back to:
+   a refused form re-renders this page at the address it posted to, which
+   answers a GET with 405 (U11). #}
+{% set return_path = "/aegis/filters" %}
+
 {% block title %}Saved filters — Aegis{% endblock %}
 
 {% block content %}
@@ -12,6 +17,9 @@
         <a href="/aegis/issues" class="button secondary">Back to issues</a>
     </div>
 </div>
+
+{# A refused save says why here; the form below keeps what was typed (U11). #}
+{% if error %}<div data-refused><div class="error">{{ error }}</div></div>{% endif %}
 
 {% if filters %}
 <table class="issues-table">

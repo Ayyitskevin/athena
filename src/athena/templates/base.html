@@ -22,6 +22,10 @@
     <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false}'>
     <script src="/static/htmx.min.js?v={{ static_version }}"></script>
     <script src="/static/confirm.js?v={{ static_version }}"></script>
+    {# Keeps a comment box's text in this tab until the comment is accepted, so
+       a sign-in in between does not lose it (U11). After confirm.js, so a
+       submit cancelled there is seen as cancelled. #}
+    <script src="/static/drafts.js?v={{ static_version }}" defer></script>
 </head>
 <body>
 <div class="app"{% if request.cookies.get("athena_rail") == "collapsed" %} data-rail="collapsed"{% endif %}>
@@ -30,7 +34,7 @@
         {% if request.state.user %}
         <form method="post" action="/settings/rail" class="inline-form">
             {% include "partials/csrf.html" %}
-            <input type="hidden" name="next" value="{{ request.url.path }}">
+            <input type="hidden" name="next" value="{{ return_path | default(request.url.path, true) }}">
             <input type="hidden" name="state" value="{{ 'open' if request.cookies.get('athena_rail') == 'collapsed' else 'collapsed' }}">
             <button type="submit" class="button ghost small" aria-label="{{ 'Show' if request.cookies.get('athena_rail') == 'collapsed' else 'Hide' }} navigation rail">&#8801;</button>
         </form>
@@ -156,7 +160,7 @@
                 {% set current_theme = request.cookies.get("athena_theme") if request.cookies.get("athena_theme") in ("dark", "light") else "system" %}
                 <form method="post" action="/settings/theme" class="inline-form menu-form">
                     {% include "partials/csrf.html" %}
-                    <input type="hidden" name="next" value="{{ request.url.path }}">
+                    <input type="hidden" name="next" value="{{ return_path | default(request.url.path, true) }}">
                     <input type="hidden" name="theme" value="{{ {'system': 'dark', 'dark': 'light', 'light': 'system'}[current_theme] }}">
                     <button type="submit" class="button ghost small">Theme: {{ current_theme }} &#8594; {{ {'system': 'dark', 'dark': 'light', 'light': 'system'}[current_theme] }}</button>
                 </form>

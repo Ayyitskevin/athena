@@ -19,6 +19,7 @@ from athena.core import (
 )
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
+from athena.web.form_errors import BrowserRefusal
 from athena.web.router import get_templates
 
 from athena.web.admin import (
@@ -253,7 +254,7 @@ def toggle_rule(
             conn, actor_id=actor["id"], rule_id=rule_id, enabled=enabled == "1"
         )
     except automation_commands.AutomationCommandError:
-        return HTMLResponse('<div class="error">No such rule.</div>', status_code=404)
+        return BrowserRefusal('<div class="error">No such rule.</div>', status_code=404)
     return RedirectResponse("/admin/automation", status_code=303)
 
 
@@ -273,5 +274,5 @@ def delete_rule(
         return err
     assert actor is not None, "admin_required accepted a missing user"
     if not automation_commands.delete_rule(conn, actor_id=actor["id"], rule_id=rule_id):
-        return HTMLResponse('<div class="error">No such rule.</div>', status_code=404)
+        return BrowserRefusal('<div class="error">No such rule.</div>', status_code=404)
     return RedirectResponse("/admin/automation", status_code=303)

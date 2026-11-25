@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 
+{# The page's own address for the rail and theme toggles to come back to:
+   a refused form re-renders this page at the address it posted to, which
+   answers a GET with 405 (U11). #}
+{% set return_path = "/aegis/issues/" ~ issue.id %}
+
 {# Give the command palette its issue context: claim/yield/complete/inspect
    actions are projected for THIS issue. The key form (ATH-12) is the canonical
    ref; a backlog issue falls back to its numeric id — both resolve exactly. #}
@@ -26,7 +31,9 @@
     </div>
 </div>
 
-{% if error %}<div class="alert" data-tone="danger" role="alert">{{ error }}</div>{% endif %}
+{# data-refused: what was posted was not accepted, so static/drafts.js keeps a
+   comment draft it holds (U11). #}
+{% if error %}<div class="alert" data-tone="danger" role="alert" data-refused>{{ error }}</div>{% endif %}
 {% if notice %}<div class="alert" data-tone="success" role="status">{{ notice }}</div>{% endif %}
 
 {% if blocked_policy_warning or blocked_warning %}
@@ -339,12 +346,13 @@
             {% if can_modify %}
             <form method="post" action="/aegis/issues/{{ issue.id }}/links" class="rel-add">
                 {% include "partials/csrf.html" %}
+                {# A refused link comes back with what was typed (U11). #}
                 <select name="relation" aria-label="Relationship type">
-                    <option value="blocks">Blocks</option>
-                    <option value="blocked_by">Is blocked by</option>
-                    <option value="relates">Relates to</option>
+                    {% for value, label in [("blocks", "Blocks"), ("blocked_by", "Is blocked by"), ("relates", "Relates to")] %}
+                    <option value="{{ value }}"{% if typed.relation == value %} selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
                 </select>
-                <input type="text" name="target_ref" placeholder="Issue id or key (e.g. ATH-15)" required>
+                <input type="text" name="target_ref" value="{{ typed.target_ref or '' }}" placeholder="Issue id or key (e.g. ATH-15)" required>
                 <button type="submit" class="button small">Link</button>
             </form>
             {% endif %}
@@ -490,7 +498,10 @@
             <form method="post" action="/aegis/issues/{{ issue.id }}/comments" class="comment-form">
                 {% include "partials/csrf.html" %}
                 <label for="comment-body">Add a comment</label>
-                <textarea id="comment-body" name="body" rows="3" required
+                {# data-draft: static/drafts.js keeps what is typed here in this
+                   browser until the comment is accepted, so a sign-in in between
+                   does not lose it (U11). #}
+                <textarea id="comment-body" name="body" rows="3" required data-draft
                           placeholder="Leave a comment…"></textarea>
                 <button type="submit" class="button small">Comment</button>
             </form>
@@ -565,7 +576,7 @@
                 {% include "partials/csrf.html" %}
                 <label for="parent-ref">Parent</label>
                 <input type="text" id="parent-ref" name="parent_ref"
-                       value="{{ parent.key or ('#' ~ parent.id) if parent else '' }}"
+                       value="{{ typed.parent_ref if 'parent_ref' in typed else (parent.key or ('#' ~ parent.id) if parent else '') }}"
                        placeholder="Issue id or key, or blank to clear">
                 <button type="submit" class="button small">Set Parent</button>
             </form>

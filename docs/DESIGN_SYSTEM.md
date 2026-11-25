@@ -140,7 +140,35 @@ that shows an agent, show these — the data already exists:
   on data is a `<style>` element carrying the response's nonce. htmx is
   configured in `base.html` to add no style of its own and evaluate nothing.
   `tests/test_no_inline_script_or_handler.py` reads every template and renders
-  every page.
+  every page. One more attribute is handled by `static/drafts.js`:
+  `data-draft` on a comment box keeps what is typed in the tab's
+  `sessionStorage` until the comment is accepted (see "A refusal is a page").
+- **A refusal is a page, never a bare line** (U11, COCKPIT-13). A browser
+  route never answers a refusal with a bare `HTMLResponse('<div
+  class="error">…</div>', 4xx)`: `tests/test_form_errors_in_page.py` scans
+  `web/` for one. Two answers instead:
+  - *The page that posted it.* A validation refusal of a form on a page with a
+    context builder (the issue page and its edit form, the Mentor page and its
+    editor, the space page and its edit form, the filters page, the admin
+    pages) re-renders that page at the same status, with the error at the top
+    (`.error`, or `.alert[data-tone="danger"]` on the issue page) and what was
+    typed back in the fields (a `typed` dict in the context).
+  - *The shared refusal page.* Everything else (sign-in required, read-only,
+    admin only, not found, a route with no page of its own) is a
+    `BrowserRefusal` (`web/form_errors.py`): built like the `HTMLResponse` it
+    replaces, it sends htmx the same fragment it always got and everyone else
+    `templates/refused.html` — the fragment inside a `.panel` in the shell, a
+    heading by status, and a link back (a same-origin Referer, else the
+    section's index; never anything read from the object, so hidden and
+    missing still answer alike). A comment refused for want of a session also
+    shows the text that was not posted.
+
+  The shared refusal page carries `data-refused`, and so does the error slot
+  of every page with a comment box (the issue page, the Mentor page). The
+  slots of the editors, the space and filters pages and the fleet roster
+  carry it too. `static/drafts.js` reads it to know a post was not accepted,
+  so a comment draft survives the refusal, the sign-in and the return to the
+  issue or page, and is forgotten only when the comment lands.
 - An unanswered run control reads as **expired, never as obeyed**. Athena cannot
   signal a process.
 - Budgets meter **actions, not tokens or dollars**. Athena never observes model spend.

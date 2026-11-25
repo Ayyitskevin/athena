@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse
 
 from athena.aegis import fleet_metrics
 from athena.core.deps import get_conn
+from athena.web.form_errors import BrowserRefusal
 from athena.web.router import get_templates
 
 
@@ -56,7 +57,7 @@ def fleet_metrics_page(
             if status_code == 404
             else "Invalid metrics request"
         )
-        return HTMLResponse(
+        return BrowserRefusal(
             f"<h1>{heading}</h1><p>{escape(exc.detail)}</p>",
             status_code=status_code,
             headers=_PRIVATE_HEADERS,

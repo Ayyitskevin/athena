@@ -44,6 +44,7 @@ from athena.web.browsing import (
     statuses_in_use,
 )
 from athena.web.csrf import verify_csrf
+from athena.web.form_errors import BrowserRefusal, is_htmx
 from athena.web.issue_html import (
     authorize_issue_write,
     issue_command_response,
@@ -115,7 +116,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # silently widened to "all" — the web mirror of the API's 422.
     parsed = issues.parse_project_filter(project_raw)
     if parsed is None:
-        return HTMLResponse("<h1>Invalid project filter</h1>", status_code=400)
+        return BrowserRefusal("<h1>Invalid project filter</h1>", status_code=400)
     project_id, backlog = parsed
     # Sprint is a plain issue column; a numeric value restricts to that sprint, and
     # anything else (incl. blank) means "don't filter by sprint" — the same lenient
@@ -327,7 +328,7 @@ def create_issue(
 
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to create issues.</div>',
             status_code=401,
         )
@@ -341,7 +342,7 @@ def create_issue(
         project: int | None = None
     else:
         if not project_id.isdigit():
-            return HTMLResponse(
+            return BrowserRefusal(
                 '<div class="error">No such project.</div>', status_code=400
             )
         project = int(project_id)
@@ -372,7 +373,7 @@ def edit_issue_form(
     sign-in prompt rather than a form they can't submit."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
             status_code=401,
         )
@@ -400,6 +401,8 @@ def _issue_edit_context(
     restored: bool = False,
     notice: str = "",
     conflict: dict | None = None,
+    error: str | None = None,
+    typed: dict | None = None,
 ) -> dict:
     """The issue edit form's context, built in one place so opening the form and
     the losing side of a concurrent save cannot disagree about the baseline.
@@ -433,6 +436,9 @@ def _issue_edit_context(
         # The author's unsaved text, shown for comparison when this render is a
         # refusal — the page editor's shape, now that issues have a draft store.
         "conflict": conflict,
+        # A refused save (U11): why, and the fields as the author typed them.
+        "error": error,
+        "typed": typed,
     }
 
 
@@ -455,11 +461,11 @@ def edit_issue(
     half of the optimistic lock REST and MCP already had."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
             status_code=401,
         )
-    _, err = authorize_issue_write(conn, issue_id, user)
+    issue, err = authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
     # An empty if_match means a form rendered before this field existed (a tab
@@ -494,9 +500,13 @@ def edit_issue(
                     conn, actor=user, issue_id=issue_id, title=title, body=body
                 )
             except issue_commands.IssueCommandError as retry_exc:
-                return issue_command_response(retry_exc)
+                return _issue_edit_refusal(
+                    request, conn, issue, user, retry_exc, title=title, body=body
+                )
         else:
-            return issue_command_response(exc)
+            return _issue_edit_refusal(
+                request, conn, issue, user, exc, title=title, body=body
+            )
     # The text IS the issue now, so the author's draft of it is a stale copy of
     # something that finally has a real home on the trail. Dropping it is what
     # makes "you have unsaved work" mean it the next time it appears.
@@ -504,6 +514,35 @@ def edit_issue(
         conn, issue_id=issue_id, owner_id=user["id"], commit=True
     )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+def _issue_edit_refusal(
+    request: Request,
+    conn: sqlite3.Connection,
+    issue: dict,
+    user: dict,
+    exc: issue_commands.IssueCommandError,
+    *,
+    title: str,
+    body: str,
+) -> HTMLResponse:
+    """A save the command refused as invalid (an empty title) comes back as the
+    edit form, with the command's words and what the author typed (U11). Every
+    other refusal, and any htmx request, is the shared HTML refusal."""
+    if exc.kind != "invalid" or is_htmx(request):
+        return issue_command_response(exc)
+    return get_templates().TemplateResponse(
+        request=request,
+        name="aegis/issue_edit.html",
+        context=_issue_edit_context(
+            conn,
+            issue,
+            user,
+            error=f"{exc.detail.capitalize()}.",
+            typed={"title": title, "body": body},
+        ),
+        status_code=400,
+    )
 
 
 def _issue_conflict_response(
@@ -534,7 +573,7 @@ def _issue_conflict_response(
     current = issues.get_issue(conn, issue_id)
     if current is None:
         # It was deleted, not edited, between the precondition and this read.
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Issue not found.</div>', status_code=404
         )
     issue_drafts.save_draft(
@@ -580,7 +619,7 @@ def autosave_issue_draft(
     """
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
             status_code=401,
         )
@@ -608,7 +647,7 @@ def autosave_issue_draft(
         # the message is identical in substance, and nothing exception-derived
         # reaches the response (CodeQL's stack-trace-exposure rule, honored the
         # strict way rather than suppressed).
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Draft not held — too large. Titles cap at '
             f"{issue_drafts.MAX_TITLE_CHARS} characters and bodies at "
             f"{issue_drafts.MAX_BODY_CHARS:,}.</div>",
@@ -628,7 +667,7 @@ def discard_issue_draft(
     """Throw away this author's draft of this issue. Affects nobody else."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
             status_code=401,
         )
@@ -664,13 +703,13 @@ def preview_issue_body(
     """
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to'
             " preview.</div>",
             status_code=401,
         )
     if len(body) > MAX_PREVIEW_CHARS:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Too long to preview.</div>', status_code=413
         )
     if source_id is not None:
@@ -729,7 +768,7 @@ def link_issue_mention(
     a real reference — an ordinary issue edit, through the ordinary command."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Please <a href="/login">sign in</a> to link.</div>',
             status_code=401,
         )
@@ -740,12 +779,14 @@ def link_issue_mention(
         return err
     assert issue is not None
     if target_kind not in ("issue", "page"):
-        return HTMLResponse('<div class="error">Unknown target.</div>', status_code=422)
+        return BrowserRefusal(
+            '<div class="error">Unknown target.</div>', status_code=422
+        )
     # Hidden reads as missing: the target resolves through the viewer's
     # visible-read rule, so a private one gets the same 404 as a missing id.
     needle = mentions.mention_text(conn, target_kind, target_id, actor=user)
     if not needle:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">That link target no longer exists.</div>',
             status_code=404,
         )
@@ -757,7 +798,7 @@ def link_issue_mention(
     if body is None:
         # The mention the operator clicked is gone; refuse rather than rewrite
         # text they never saw.
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">That mention is no longer in this issue.</div>',
             status_code=409,
         )
@@ -842,12 +883,12 @@ def issue_history_view(
             conn, issue["id"], as_of_event_id=as_of, actor=user
         )
     except issue_history.IncompleteIssueHistory:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="blocked">Complete issue history is not available.</div>',
             status_code=403,
         )
     except issue_history.IssueHistoryTooLarge:
-        return HTMLResponse(
+        return BrowserRefusal(
             '<div class="error">Issue history exceeds the exact projection limit.</div>',
             status_code=409,
         )
@@ -858,7 +899,7 @@ def issue_history_view(
     # The operator run narrative: claim/handoff/control/check-in story, read-only.
     narrative = issue_narrative.build_issue_narrative(conn, issue["id"], actor=user)
     if narrative is None:  # issue was read above; keep the projection fail-closed
-        return HTMLResponse("Issue not found", status_code=404)
+        return BrowserRefusal("Issue not found", status_code=404)
     narrative_event_ids = {
         item["source"]["id"]
         for item in narrative["items"]
