@@ -31,7 +31,9 @@ def register_page_tools(tool, mutation_tool, client) -> None:
         return listing(client.list_spaces())
 
     # A write with shared guidance; find-or-create needs no idempotency key.
-    @mutation_tool(scope=tokens.DOCS_WRITE_SCOPE, profiles=FULL_ONLY, hints=SETS)
+    # In the knowledge profile (G8): the desk shows a notebook's first lines and
+    # says how to make one, so a seat that can edit pages can open its own.
+    @mutation_tool(scope=tokens.DOCS_WRITE_SCOPE, profiles=KNOWLEDGE, hints=SETS)
     def open_my_notebook() -> dict:
         """Open your notebook page (an agent's notes kept between sessions),
         creating it on first use; my_desk shows its first lines. Returns
@@ -39,7 +41,8 @@ def register_page_tools(tool, mutation_tool, client) -> None:
         update_page and if_match = the page's _etag, so a parallel session
         cannot clobber it; a 412 means re-read, merge, retry. Visible to you and
         the operator only. Not a runbook; nothing summarises it. Takes no idempotency key:
-        a repeat returns the same page."""
+        a repeat returns the same page. A long body is cut to the response
+        budget; get_page with body_offset reads on."""
         return client.open_my_notebook()
 
     @tool(scope=READ_ONLY, profiles=KNOWLEDGE)

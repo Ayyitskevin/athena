@@ -1128,6 +1128,9 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 .board-column-head .count { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-3); }
 
 .board-cards { display: flex; flex-direction: column; gap: 10px; min-height: 64px; }
+/* The rest of a long column, behind "Show N more" (U13). */
+.board-more > summary { cursor: pointer; padding: var(--sp-2) 0; font-size: var(--fs-sm); color: var(--text-2); }
+.board-more[open] > summary { margin-bottom: 10px; }
 
 .board-card {
   background: var(--surface);
@@ -1361,6 +1364,8 @@ pre.prose { white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-identity .email { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .agent-posture { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; flex: 0 0 auto; justify-content: flex-end; }
 .agent-posture .hb { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-3); width: 7ch; text-align: right; }
+/* The open row's body on the agents page (U10): the row is the panel. */
+.agent-row > .agent-body { padding: var(--sp-4) var(--sp-5) var(--sp-5); border-top: 1px solid var(--border); }
 .agent-detail { display: grid; grid-template-columns: repeat(auto-fit, minmax(238px, 1fr)); border-top: 1px solid var(--border); }
 .agent-detail > section { padding: var(--sp-4) var(--sp-5); border-left: 1px solid var(--border); }
 .agent-detail > section:first-child { border-left: 0; }

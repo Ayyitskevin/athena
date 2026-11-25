@@ -281,7 +281,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         The loop: `my_desk()` -> `claim_next_ready()` -> act ->
         `complete_claim(...)` -> drain `wait_for_events(after=<cursor>, wait=0)`
         -> `advance_desk_cursor(after_id=<last id you handled>)`. Creating
-        `identity.notebook` needs `full`; editing it, `seat+knowledge`.
+        and editing `identity.notebook` need `seat+knowledge`.
 
         RESERVES NOTHING: seeing work here does not claim it.
 

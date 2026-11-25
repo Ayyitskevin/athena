@@ -40,11 +40,14 @@ def _login(client):
     client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 
 
-def _location_parts(response):
+def _location_parts(response, agent_id=None):
+    """The redirect's query. An action made on an agent also names that agent
+    and returns to its section (U10): the id is the server's own number, so
+    it is the one fragment a redirect may carry."""
     assert response.status_code == 303, response.text
     parts = urlsplit(response.headers["location"])
     assert parts.path == "/admin/agents"
-    assert parts.fragment == ""
+    assert parts.fragment == ("" if agent_id is None else f"agent-{agent_id}")
     return parse_qsl(parts.query, keep_blank_values=True)
 
 
@@ -61,7 +64,7 @@ def test_error_text_with_query_and_fragment_characters_stays_one_value(
         _login(client)
 
         r = client.post("/admin/agents/2/pause", follow_redirects=False)
-        assert _location_parts(r) == [("error", HOSTILE)]
+        assert _location_parts(r, 2) == [("error", HOSTILE), ("agent", "2")]
 
         page = client.get(r.headers["location"])
         assert page.status_code == 200
@@ -97,7 +100,7 @@ def test_ordinary_error_text_still_round_trips_and_displays(tmp_path, monkeypatc
         _login(client)
 
         r = client.post("/admin/agents/2/pause", follow_redirects=False)
-        assert _location_parts(r) == [("error", ordinary)]
+        assert _location_parts(r, 2) == [("error", ordinary), ("agent", "2")]
 
         page = client.get(r.headers["location"])
         assert page.status_code == 200
@@ -105,16 +108,18 @@ def test_ordinary_error_text_still_round_trips_and_displays(tmp_path, monkeypatc
 
 
 def test_notice_text_with_punctuation_stays_one_value(tmp_path, monkeypatch):
-    # The worker-kill success notice contains ";" and ".". Neither may split the value.
-    monkeypatch.setattr(worker_commands, "request_kill", lambda *a, **k: None)
-    notice = "Worker asked to stop; it will be told on its next heartbeat."
+    # The worker-kill success notice contains ";" and "." and names the worker,
+    # whose label is the worker's own text. None of it may split the value.
+    asked = {"agent_id": 2, "node_label": "lab&top#1", "worker_key": "w-1"}
+    monkeypatch.setattr(worker_commands, "request_kill", lambda *a, **k: asked)
+    notice = "lab&top#1 asked to stop; it will be told on its next heartbeat."
     app = _app(tmp_path)
     with TestClient(app) as client:
         _bootstrap_admin(client)
         _login(client)
 
         r = client.post("/admin/workers/7/kill", follow_redirects=False)
-        assert _location_parts(r) == [("notice", notice)]
+        assert _location_parts(r, 2) == [("notice", notice), ("agent", "2")]
 
         page = client.get(r.headers["location"])
         assert page.status_code == 200

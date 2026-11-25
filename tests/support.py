@@ -35,12 +35,13 @@ import contextlib
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
+import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from athena.core import activity, db, refusal_codes
+from athena.core import activity, db, fleet_seat_commands, refusal_codes
 from athena.main import create_app
 
 if TYPE_CHECKING:  # the MCP helpers import these lazily: most tests never need them
@@ -152,6 +153,38 @@ def onboard_agent(
     response = client.post("/users/onboard_agent", json=body, headers=dict(headers))
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def declare_seat(
+    target: TestClient | sqlite3.Connection,
+    slug: str,
+    *,
+    email: str | None,
+    name: str | None = None,
+    kind: str = "seat",
+    buzz_pubkey: str | None = None,
+    actor: Mapping[str, Any] | None = None,
+    headers: Mapping[str, str] = ADMIN,
+) -> dict[str, Any]:
+    """Declare a fleet seat, as a test's setup. A new database starts with none
+    (D27), so a test that reads a seat declares it first.
+
+    Over a client it is ``POST /fleet/seats`` with ``headers`` (the admin's); over
+    a connection it is the command, as ``actor`` (an admin row).
+    """
+    fields = {
+        "slug": slug,
+        "name": name or slug.title(),
+        "email": email,
+        "kind": kind,
+        "buzz_pubkey": buzz_pubkey,
+    }
+    if isinstance(target, TestClient):
+        response = target.post("/fleet/seats", json=fields, headers=dict(headers))
+        assert response.status_code == 201, response.text
+        return response.json()
+    assert actor is not None, "declare_seat over a connection needs an admin actor"
+    return fleet_seat_commands.declare_seat(target, actor=actor, **fields)
 
 
 def mint_token(

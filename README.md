@@ -165,6 +165,7 @@ python3.12 -I -m venv .venv
 .venv/bin/python scripts/check_write_ownership.py
 .venv/bin/python scripts/check_transaction_commits.py
 .venv/bin/python scripts/check_imported_at_guards.py
+.venv/bin/python scripts/check_surface_parity.py
 scripts/coverage.sh
 ```
 

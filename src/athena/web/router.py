@@ -36,6 +36,7 @@ from athena.core import (
     work_query,
 )
 from athena.core.deps import get_conn
+from athena.web import inbox as inbox_view
 from athena.web import live
 from athena.web.csrf import verify_csrf
 from athena.web.render import (
@@ -391,8 +392,17 @@ def inbox(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             if it["target_kind"] == "issue"
             else f"/mentor/pages/{it['target_id']}"
         )
+    kind = inbox_view.kind_filter(request.query_params.get("kind"))
     return get_templates().TemplateResponse(
-        request=request, name="inbox.html", context={"items": items}
+        request=request,
+        name="inbox.html",
+        context={
+            "items": items,
+            "groups": inbox_view.grouped(conn, items, kind=kind),
+            "kinds": inbox_view.KINDS,
+            "kind": kind,
+            "kind_counts": inbox_view.kind_counts(items),
+        },
     )
 
 

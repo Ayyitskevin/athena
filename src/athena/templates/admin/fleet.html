@@ -110,6 +110,8 @@
             <button type="submit" class="button">Assign</button>
         </div>
     </form>
+    {% elif not roster.seats %}
+    <p class="empty-state">No seats are declared. Declare one below.</p>
     {% elif not assignable %}
     <p class="empty-state">No declared seats have an Athena agent account yet.</p>
     {% else %}
@@ -150,6 +152,7 @@
 <section class="panel" aria-labelledby="fleet-seats-heading">
     <div class="panel-head"><h2 id="fleet-seats-heading">Declared seats</h2></div>
     <div class="panel-body">
+    {% if roster.seats %}
     <table class="issues-table">
         <thead>
             <tr>
@@ -158,6 +161,7 @@
                 <th>Unit</th>
                 <th>Athena</th>
                 <th>Worker report</th>
+                <th>Declaration</th>
             </tr>
         </thead>
         <tbody>
@@ -165,6 +169,7 @@
             <tr>
                 <td>
                     <strong>{{ seat.name }}</strong>
+                    <div class="muted"><code>{{ seat.slug }}</code></div>
                     {% if seat.email %}<div class="muted"><code>{{ seat.email }}</code></div>{% endif %}
                     {% if seat.buzz_pubkey %}
                     <div class="muted"><code>{{ seat.buzz_pubkey[:8] }}…{{ seat.buzz_pubkey[-6:] }}</code></div>
@@ -187,7 +192,7 @@
                         <span class="muted">{{ seat.unit_probe.active_state }}/{{ seat.unit_probe.sub_state }}</span>
                     </div>
                     {% else %}
-                    <span class="muted">no unit (operator)</span>
+                    <span class="muted">no unit{% if seat.kind == "operator" %} (operator){% endif %}</span>
                     {% endif %}
                 </td>
                 <td>
@@ -209,24 +214,161 @@
                     <span class="muted">no worker heartbeat</span>
                     {% endif %}
                 </td>
+                <td>
+                    <details>
+                        <summary>Edit</summary>
+                        <form method="post" action="/admin/fleet/seats/{{ seat.slug }}" class="issue-form">
+                            {% include "partials/csrf.html" %}
+                            <div class="form-group">
+                                <label for="seat-{{ seat.slug }}-name">Name</label>
+                                <input id="seat-{{ seat.slug }}-name" type="text" name="name" value="{{ seat.name }}" required maxlength="100" autocomplete="off">
+                            </div>
+                            <div class="form-group">
+                                <label for="seat-{{ seat.slug }}-email">Athena email <span class="muted">(empty: no handle)</span></label>
+                                <input id="seat-{{ seat.slug }}-email" type="email" name="email" value="{{ seat.email or '' }}" maxlength="254" autocomplete="off">
+                            </div>
+                            <div class="form-group">
+                                <label for="seat-{{ seat.slug }}-kind">Kind</label>
+                                <select id="seat-{{ seat.slug }}-kind" name="kind">
+                                    {% for kind in seat_kinds %}
+                                    <option value="{{ kind }}"{% if kind == seat.kind %} selected{% endif %}>{{ kind }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="seat-{{ seat.slug }}-unit">systemd unit <span class="muted">(empty: none)</span></label>
+                                <input id="seat-{{ seat.slug }}-unit" type="text" name="unit" value="{{ seat.unit or '' }}" maxlength="200" autocomplete="off">
+                            </div>
+                            <div class="form-group">
+                                <label for="seat-{{ seat.slug }}-scope">Unit scope</label>
+                                <select id="seat-{{ seat.slug }}-scope" name="unit_scope">
+                                    {% for scope in unit_scopes %}
+                                    <option value="{{ scope }}"{% if scope == (seat.unit_scope or 'user') %} selected{% endif %}>{{ scope }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="seat-{{ seat.slug }}-pubkey">Buzz public key <span class="muted">(empty: none)</span></label>
+                                <input id="seat-{{ seat.slug }}-pubkey" type="text" name="buzz_pubkey" value="{{ seat.buzz_pubkey or '' }}" maxlength="64" autocomplete="off">
+                            </div>
+                            <div class="form-actions">
+                                <button type="submit" class="button secondary">Save</button>
+                            </div>
+                        </form>
+                    </details>
+                    <form method="post" action="/admin/fleet/seats/{{ seat.slug }}/remove" class="inline-form"
+                          data-confirm="Remove seat {{ seat.slug }}? Its account, if it has one, is kept and will have no seat; assignment to this seat stops.">
+                        {% include "partials/csrf.html" %}
+                        <button type="submit" class="button danger small">Remove</button>
+                    </form>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">
+        No seats are declared. A new instance starts with none, and with none
+        there is nothing for this host to drift from. Declare one below, or
+        from an agent's row.
+    </p>
+    {% endif %}
+    </div>
+</section>
+
+{% if roster.undeclared_athena_agents %}
+<section class="panel" aria-labelledby="undeclared-heading">
+    <div class="panel-head"><h2 id="undeclared-heading">Athena agents no seat declares</h2></div>
+    <div class="panel-body">
+    {% if roster.seats %}
+    <p class="subtitle">Onboarded here, missing from the declared seats. That is drift: declare a seat for it, or offboard it.</p>
+    {% else %}
+    <p class="subtitle">Onboarded here. No seat is declared yet; declare one to put an agent on the roster and make it assignable.</p>
+    {% endif %}
+    <table class="issues-table">
+        <thead>
+            <tr>
+                <th>Agent</th>
+                <th>Declare a seat</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for agent in roster.undeclared_athena_agents %}
+            <tr>
+                <td>
+                    {{ agent.name }} <code>{{ agent.email }}</code> (id {{ agent.id }})
+                    {% if agent.paused %}<span class="chip" data-tone="warning">paused</span>{% endif %}
+                </td>
+                <td>
+                    <form method="post" action="/admin/fleet/seats" class="inline-form">
+                        {% include "partials/csrf.html" %}
+                        <input type="hidden" name="name" value="{{ agent.name }}">
+                        <input type="hidden" name="email" value="{{ agent.email }}">
+                        <input type="hidden" name="kind" value="seat">
+                        <label for="seat-for-{{ agent.id }}">Slug</label>
+                        <input id="seat-for-{{ agent.id }}" type="text" name="slug" value="{{ suggested_slugs.get(agent.id, '') }}" required maxlength="40" autocomplete="off">
+                        <button type="submit" class="button secondary small">Declare a seat</button>
+                    </form>
+                </td>
             </tr>
         {% endfor %}
         </tbody>
     </table>
     </div>
 </section>
+{% endif %}
 
-{% if roster.undeclared_athena_agents %}
-<section class="panel" aria-labelledby="undeclared-heading">
-    <div class="panel-head"><h2 id="undeclared-heading">Athena agents not on the declared roster</h2></div>
+<section class="panel" aria-labelledby="declare-seat-heading">
+    <div class="panel-head"><h2 id="declare-seat-heading">Declare a seat</h2></div>
     <div class="panel-body">
-    <p class="subtitle">Onboarded here, missing from the declared seat list. That is drift.</p>
-    <ul>
-        {% for agent in roster.undeclared_athena_agents %}
-        <li>{{ agent.name }} <code>{{ agent.email }}</code> (id {{ agent.id }})</li>
-        {% endfor %}
-    </ul>
+    <p class="subtitle">
+        A seat is an agent this host runs: the slug Buzz, systemd and the desk
+        call it by, the Athena account it is, and the unit that runs it. The
+        slug is its key and cannot be changed later; an email belongs to one
+        seat.
+    </p>
+    <form method="post" action="/admin/fleet/seats" class="issue-form">
+        {% include "partials/csrf.html" %}
+        <div class="form-group">
+            <label for="declare-slug">Slug</label>
+            <input id="declare-slug" type="text" name="slug" required maxlength="40" autocomplete="off">
+        </div>
+        <div class="form-group">
+            <label for="declare-name">Name</label>
+            <input id="declare-name" type="text" name="name" required maxlength="100" autocomplete="off">
+        </div>
+        <div class="form-group">
+            <label for="declare-email">Athena email <span class="muted">(optional)</span></label>
+            <input id="declare-email" type="email" name="email" maxlength="254" autocomplete="off">
+        </div>
+        <div class="form-group">
+            <label for="declare-kind">Kind</label>
+            <select id="declare-kind" name="kind">
+                {% for kind in seat_kinds %}
+                <option value="{{ kind }}"{% if kind == "seat" %} selected{% endif %}>{{ kind }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="declare-unit">systemd unit <span class="muted">(optional)</span></label>
+            <input id="declare-unit" type="text" name="unit" maxlength="200" autocomplete="off">
+        </div>
+        <div class="form-group">
+            <label for="declare-scope">Unit scope</label>
+            <select id="declare-scope" name="unit_scope">
+                {% for scope in unit_scopes %}
+                <option value="{{ scope }}">{{ scope }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="declare-pubkey">Buzz public key <span class="muted">(optional)</span></label>
+            <input id="declare-pubkey" type="text" name="buzz_pubkey" maxlength="64" autocomplete="off">
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="button">Declare</button>
+        </div>
+    </form>
     </div>
 </section>
-{% endif %}
 {% endblock %}

@@ -59,7 +59,7 @@ SEAT = frozenset(
         "get_issue_comment",
     }
 )
-# The audit's eleven for knowledge work.
+# The audit's eleven for knowledge work, and the notebook tool (G8).
 KNOWLEDGE = frozenset(
     {
         "search",
@@ -73,6 +73,9 @@ KNOWLEDGE = frozenset(
         "attach_label",
         "list_labels",
         "link_issues",
+        # G8: the desk tells a seat how to open its notebook, so the profile
+        # that edits pages carries the tool that makes one.
+        "open_my_notebook",
     }
 )
 CONDUCTOR_ADDITIONS = frozenset(
@@ -122,7 +125,7 @@ def test_the_seat_profile_is_the_audits_core_set_plus_the_two_named_additions():
     assert _names(SEAT_SCOPES, mcp_server.PROFILES["seat"]) == SEAT
 
 
-def test_the_knowledge_profile_adds_exactly_the_audits_eleven():
+def test_the_knowledge_profile_adds_exactly_the_audits_eleven_and_the_notebook():
     assert mcp_server.PROFILES["seat+knowledge"] == SEAT | KNOWLEDGE
     registered = set(mcp_server.TOOL_SCOPES)
     assert KNOWLEDGE <= registered
@@ -149,11 +152,11 @@ def test_the_four_profiles_are_the_whole_vocabulary():
     [
         # H6 added get_issue_comment, a read in `seat`: every count rose by one.
         ("seat", SEAT_SCOPES, 28),
-        ("seat+knowledge", SEAT_SCOPES, 39),
+        ("seat+knowledge", SEAT_SCOPES, 40),
         ("seat", ADMIN, 28),
-        ("seat+knowledge", ADMIN, 39),
+        ("seat+knowledge", ADMIN, 40),
         ("seat", ISSUE_ONLY, 28),
-        # the eleven minus the three docs:write tools
+        # the twelve minus the four docs:write tools
         ("seat+knowledge", ISSUE_ONLY, 36),
         ("conductor", SEAT_SCOPES, 41),
         ("conductor", ISSUE_ONLY, 41),

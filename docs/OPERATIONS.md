@@ -1361,6 +1361,29 @@ are rejected.
 A newly created raw token is shown once. Athena stores only a hash, so a lost raw
 token must be revoked and replaced.
 
+### A token for an agent that has none
+
+A token is self-service, and an agent whose tokens were revoked, or that was
+restored after a removal, holds none to ask with. An admin mints one for it:
+
+- **Cockpit:** `/admin/agents`, the agent's section, **Mint a token**. The raw
+  token and a ready-to-paste MCP config are shown once, in that section.
+- **REST:** `POST /users/{user_id}/tokens` with `{"scopes": [...], "name":
+  "...", "profile": "..."}` (`name` and `profile` optional), as an admin. It
+  answers as `POST /users/onboard_agent` does: `user`, `token` (with the raw
+  `token.token`) and `mcp_config`. It takes no `Idempotency-Key`, because a
+  replayed answer would hand the secret out again.
+
+The trail records one `minted_token` event with the admin as its actor and the
+agent it was for; the secret is never written. This is for agent accounts only:
+a person mints their own tokens, and an admin holding a person's token would be
+acting as them. The agent's role is not changed, so a token for a read-only
+(viewer) agent can read and nothing else.
+
+A removed agent is restored on the same page, under **Removed agents** (REST:
+`POST /users/{user_id}/restore`). It comes back as a read-only viewer with no
+token: give it a role at `/admin/users`, then mint it a token.
+
 ## One writer, and what waits for it
 
 SQLite lets many readers and one writer work at once. A second writer waits
@@ -1664,6 +1687,49 @@ history. The explicit `latest_*` totals use full retained history, while
 history rows. A heartbeat-only identifier remains an operational sidecar; it does
 not become a replayable activity run unless activity events are later written with
 that run id.
+
+### Declared fleet seats
+
+The Fleet roster (`/admin/fleet`, JSON twin `/admin/fleet.json`) compares the
+seats you declared with what this host and Athena observe: each seat's systemd
+unit, its Athena account and its worker report. "Assign to a seat" on that page
+and on a project floor offers the declared seats that have an agent account, and
+`seat_slug` in the desk, office and work-context packets is the slug of the seat
+that declares the reader's email.
+
+Seats are data (decision D27), kept in the `fleet_seats` table. An instance that
+already had users when migration 0093 ran kept the eight seats the source once
+listed; a new instance starts with none, and with none the page shows no "Roster
+drift" alert: agents onboarded through the cockpit are listed as having no seat,
+each with a **Declare a seat** form on its row. Once any seat is declared, an
+agent account no seat declares is drift again, and its row keeps the same form.
+
+An admin declares, edits and removes seats from the page's forms or over REST.
+Each write is recorded on the trail (`declared_fleet_seat`, `edited_fleet_seat`,
+`removed_fleet_seat`) and accepts an `Idempotency-Key`:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8000/fleet/seats \
+  -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"slug": "sol", "name": "Sol", "email": "sol@agents.local", "kind": "seat",
+       "unit": "buzz-acp-sol.service", "unit_scope": "user"}'
+curl -fsS http://127.0.0.1:8000/fleet/seats -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN"
+curl -fsS -X PATCH http://127.0.0.1:8000/fleet/seats/sol \
+  -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"unit_scope": "system"}'
+curl -fsS -X DELETE http://127.0.0.1:8000/fleet/seats/sol \
+  -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN"
+```
+
+The slug is the seat's key (Buzz, systemd, the checkout branch, `seat_slug`): it
+is lower case, unique and never edited; remove the seat and declare another to
+rename one. An email belongs to at most one seat. A taken slug or email is
+refused `409 conflict`. `kind` is `operator`, `seat` or `local_ollama`;
+`unit_scope` names the systemd manager that owns the unit (`user` for cloud
+seats, `system` for the hardened local workers). Removing a seat keeps the
+account it named. The list pages in the usual way (`cursor` in, `next_cursor`
+and `has_more` out). Every seat route is admin only; there is no MCP tool for
+them.
 
 ## Durable API Retry Keys
 

@@ -1,6 +1,7 @@
 """The Office: one chair, not a queue."""
 
 from fastapi.testclient import TestClient
+from support import declare_seat
 
 from athena.aegis import issue_commands, issues, lease_commands, office
 from athena.core import db, users
@@ -27,6 +28,7 @@ def test_standing_office_points_at_next_delegation(tmp_path):
     grok = users.create_user(
         conn, email="grok@agents.local", name="Grok", is_agent=True, commit=True
     )
+    declare_seat(conn, "grok", email="grok@agents.local", actor=admin)
     issue = issues.create_issue(
         conn, title="sit", body="", created_by=admin["id"], commit=True
     )
@@ -57,6 +59,7 @@ def test_one_active_lease_is_the_chair(tmp_path):
     grok = users.create_user(
         conn, email="grok@agents.local", name="Grok", is_agent=True, commit=True
     )
+    declare_seat(conn, "grok", email="grok@agents.local", actor=admin)
     issue = issues.create_issue(
         conn, title="chair", body="", created_by=admin["id"], commit=True
     )
@@ -104,6 +107,7 @@ def test_office_http_and_desk_include_packet(tmp_path):
             },
             headers={"X-Athena-Actor": "1"},
         ).json()
+        declare_seat(client, "grok", email="grok@agents.local")
         headers = {"Authorization": f"Bearer {onboarded['token']['token']}"}
         cubicle = client.get("/office", headers=headers)
         assert cubicle.status_code == 200, cubicle.text

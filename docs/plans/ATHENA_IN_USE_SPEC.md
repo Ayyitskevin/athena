@@ -49,7 +49,13 @@ in PR #482: three lists page by cursor and the page list carries no bodies,
 the project brief and a search for a common word stop growing with history,
 a key left executing by a killed process can be listed and settled, boards
 and lists name the holder of the live claim, and no page carries a script or
-handler its own policy blocks.
+handler its own policy blocks. Seven more are built in PR #483, six of
+Wave 8 and one debt: the declared fleet seats are data an admin manages,
+an existing agent can be given a token and a removed one restored in the
+browser, a playbook starts from its page, the inbox groups its rows in
+words, the agents page is one section per agent, a long board column
+pages, a gate stage fails on a command only one transport reaches, and
+the knowledge profile opens its own notebook.
 Nothing has been re-graded since.
 
 **Decisions in force.**
@@ -120,8 +126,12 @@ for each. From
 Wave 8: the lease release on the issue page and its `lease_released` event,
 one "needs you" number, the heartbeat grace and the attention ranking, the
 approval row, the one report partial and undo on the issue page, pages
-with no inline script, handler or blocked style, and the claim holder on
-boards and in the issue list. "Wave 8 results" says the same for each. From Wave 5: the prior text of an edit, its
+with no inline script, handler or blocked style, the claim holder on
+boards and in the issue list, seats declared as data, a token for an
+existing agent, a restore and a playbook start in the browser, an inbox
+grouped by what its rows are about, an agents page with one section per
+agent, board columns that page, and the parity gate between the cockpit and
+the API. "Wave 8 results" says the same for each. From Wave 5: the prior text of an edit, its
 read and its undo, `If-Match` for a bearer edit of a title or body, and the
 idempotency fence scoped to the issue a key names, a key that survives a
 restart with replays marked for the agent, the leases of a stopped
@@ -135,9 +145,9 @@ an idempotency key's state, and learnings that reach an issue's parent and
 siblings. Wave 5 is built. "Wave 5 results" says the same for
 each.
 
-**Next step.** Nothing built is waiting. U4 is being built by a delegated
-builder. Then the rest of Wave 8 (U5, U8, U10 to U13, U15, C10), the idle
-sort that H5 left, and Wave 9. Each requirement that removes calls lowers the fleet trial's ceilings
+**Next step.** Nothing built is waiting. What is left of Wave 8 is U11,
+U12 and U15; then the idle sort that H5 left, the three missing twins the
+parity gate names, and Wave 9 (G8 is built). Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
 
 **How work is done here.** One requirement, one commit, with the test that
@@ -1219,6 +1229,114 @@ Found and not fixed:
   framework's pages load from a CDN and start from an inline script. The
   behaviours in `confirm.js` are checked in a browser by hand; the suite has
   no script runner.
+
+### Wave 8 results (third lanes) and G8
+
+This is U4, U5, U8, U10, U13 and C10 from Wave 8 and the debt G8 (PR #483),
+one commit each. U4 and C10 were built by a delegated builder from the
+lead's brief and read, re-run and integrated by the lead; the rest were
+built by the lead. Every cockpit change was driven in Chromium against a
+seeded instance.
+
+| Measure | Before | After |
+|---|---|---|
+| The Fleet page on a new instance | A "Roster drift" alert about eight seats the instance never had | No alert; "No seats are declared", and a form to declare one (U4) |
+| An agent onboarded in the cockpit | Listed as drift, with nothing to do about it | Listed with a "Declare a seat" form on its row, its slug suggested (U4) |
+| The declared seats | Eight entries in `core/fleet_roster.py` | Rows in `fleet_seats` (migration 0093); an admin declares, edits and removes them in the cockpit and over `/fleet/seats`, each write on the trail (U4) |
+| A new token for an agent whose tokens were revoked | Not possible on any surface; onboard a second account | `POST /users/{user_id}/tokens`, and "Mint a token" in the agent's section; the trail names the admin as minter (U5) |
+| Restoring a removed agent | The cockpit said "Restore via POST /users/{id}/restore" | A "Removed agents" panel on the same page, with Restore (U5) |
+| Starting a playbook | REST and the tool only | "Start this playbook" on the page, saying how many steps it will make (U5) |
+| Starting a playbook into a project that does not exist | 500 `internal_error`, on REST and the tool | 422 `validation_error` "no such project"; nothing created (found building U5) |
+| An inbox row | `Sol claim_completed issue #12`: a raw verb and a target number | Under a panel headed by the issue's key and title: "Sol completed a claim on this issue" (U8) |
+| Rows about one issue | Scattered in arrival order | One group, newest first, with a count of its unread rows; five kinds to filter by (U8) |
+| The agents page with two agents, at 1,280 px | 2,896 px: every agent's whole detail open | 1,955 px: one shut disclosure per agent, with its own address (U10) |
+| The outcome of an action on an agent | At the top of the page, naming no agent: "Paused: every authenticated action ..." | In that agent's section, which opens: "Paused Terra Reviewer: every authenticated action ..." (U10) |
+| A column of 25 cards | 25 cards tall | 20 cards and "Show 5 more"; the count still says 25 (U13) |
+| A command function only one transport reaches | Nothing said which were meant | The gate fails on one that `scripts/surface_parity.toml` does not declare with a kind and a reason; 42 are declared, in 28 rows (C10) |
+| `seat+knowledge` and the notebook | Could edit a notebook and could not create one | Carries `open_my_notebook`; 40 tools, was 39 (G8) |
+| A notebook longer than one tool answer, opened | Cut, with nothing naming how to read on | Cut, with the `get_page` call that continues (G8) |
+| Tools and routes | 146 tools (seat 28, seat+knowledge 39, conductor 41); 107 REST GET routes | 146 tools (28, 40, 41); 108 |
+
+The product gate's receipt is in PR #483.
+
+Decisions the lead took while building, each reversible by the owner:
+
+- **D27 as built (U4).** The migration tells an existing instance from a
+  new one by whether the database already has a user. A seat's slug is its
+  key and is never edited; removing a seat deletes its row and the trail
+  keeps what it held. `kind` is a closed set of three. Seats have no MCP
+  tool. The seats list over REST is admin only.
+- **A token is minted for agent accounts only (U5).** A person mints their
+  own; an admin holding a person's token would be acting as them. The
+  agent's role is not changed, so a token for a read-only agent reads and
+  nothing more, and the cockpit says so beside the token.
+- **The mint has no MCP tool (U5).** REST and the cockpit are the two
+  surfaces; a tool would put a raw credential into a model's context.
+- **The mint takes no `Idempotency-Key`**, as every route that answers with
+  a secret: a stored answer would hand the secret out again.
+- **A restore brings back a read-only viewer with no token**, as the command
+  always did. The section says the next two steps and offers the second.
+- **Removed people are not listed on the agents page.** The cockpit cannot
+  remove a person, so it has none to restore; REST can do both.
+- **The agents page keeps every agent in one page (U10)**, as disclosures,
+  not one page per agent: every control and fact is still in the page, and a
+  deep link opens the one section it names.
+- **An approval decision's outcome stays at the top of the agents page**,
+  beside the approvals panel it was made in.
+- **The inbox's kinds are five, fixed in the view (U8)**, and a verb the
+  view does not know is said as itself with its underscores as spaces.
+- **A board column pages with a disclosure, not a request (U13).** Every
+  card stays in the page, so a drag and the keyboard move need no new
+  parameter. A page is twenty cards.
+- **C10 builds no twin.** Each one-sided command is declared as a pair, a
+  read, one transport's by design, reached elsewhere, or a missing twin.
+  `main.py` is neither transport. MCP is a client of REST and is not
+  compared.
+- **G8: the profile carries the tool**, where the alternative was the desk
+  no longer saying how a notebook is made.
+
+Found while building, and fixed before each was committed:
+
+- **U5.** A playbook start let an issue write's refusal escape as a 500
+  (above); it has its own commit and a REST test. Three mutants survived the
+  first tests: the command's own admin check behind each transport's, the
+  token line beside a config that also carries the token, and a refused
+  restore whose redirect ended in the same 403. Each has a test.
+- **U4.** A test that migrates through 0085 and then runs today's desk
+  failed on the missing seats table; it now finishes the upgrade first. The
+  builder's suites did not include it, and the wider run the lead made did.
+- **U10.** The open section had no padding: `.panel-body` is styled only
+  inside a panel. The row has its own body rule now.
+- **U8.** The first rows showed a claim's generation hash, which the
+  finding had named. Two mutants survived the first tests.
+- **G8.** With the tool in a budgeted profile, the test that every budgeted
+  tool answers within its budget had no step for it, and a grown notebook
+  was cut with no reader; both are fixed in the commit.
+- **C10.** On integration the check failed on the two rows U5 had just
+  closed and on one new cockpit-only read. That is the check doing its
+  job; the rows are gone and the read is declared.
+
+Found and not fixed:
+
+- **C10's three missing twins.** Assign-to-seat with the Buzz radio has no
+  REST route; the cockpit cannot resume a claim handoff or edit a sprint.
+  The check cannot see a command reached through a string, a registry
+  filled at import, or `main.py`.
+- **U4.** A seat declared with no email is a drift line ("no Athena
+  handle"), as `glm` always was. A refused seat form loses what was typed
+  (U11). The floor looks a seat up once per chair. One mutant survives: a
+  cockpit route's admin check, behind which the command refuses again.
+- **U5.** An admin can revoke all of an agent's tokens, not one of them. A
+  refused mint form loses what was typed (U11). The cockpit
+  cannot remove or restore a person.
+- **U10.** The onboarding form still stands above the list of agents. At
+  390 px the page overflows sideways (U15). An approval decision's
+  outcome names no agent.
+- **U8.** The inbox still loads 100 rows with no next page. "Mark read" is
+  per row or for everything, not per group.
+- **U13.** A column opened with "Show N more" closes when a move redraws the
+  board. The whole board is still built and sent.
+- **G8.** The conductor profile does not carry the notebook tool.
 
 ## Priorities
 

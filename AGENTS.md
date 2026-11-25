@@ -197,8 +197,8 @@ check, generator and the changed profile's selection.
 1. Run `scripts/gate.sh` (default `product` profile): it executes the local product
    inventory in `scripts/gate.py`, including dependency validation, lint, formatting,
    type checks, architectural checks (import contracts, write ownership, transaction
-   commits, `imported_at` guards, template styles and routes) and full-suite
-   coverage. Explicit `--profile quick`
+   commits, `imported_at` guards, template styles and routes, surface parity) and
+   full-suite coverage. Explicit `--profile quick`
    is partial and cannot replace product evidence. Nor can `--profile changed`, the
    inner loop: while you work, run it for the static stages, the type check and the
    tests selected from your diff (see CONTRIBUTING.md); the product profile stays

@@ -35,6 +35,8 @@ from athena.web.render import MAX_PREVIEW_CHARS, render_comment, render_page_bod
 from athena.web.browsing import ATTACHMENT_STATUS_BY_KIND
 from athena.web.router import get_templates
 
+from athena.aegis import projects
+from athena.workflows import playbook_commands
 from athena.web.mentor import (
     page_visible_or_response,
     signin_required,
@@ -51,15 +53,52 @@ def page_detail(
 ):
     """Show one page: its current title/body, the space it belongs to, an Edit link
     (logged-in only), and its version history (superseded revisions, newest first)."""
-    templates = get_templates()
-
     user = getattr(request.state, "user", None)
     page = pages.get_page(conn, page_id)
     # A page in a private space the viewer can't see is a 404, gated by its space, so
     # privacy never leaks through the existence of a page id.
     if page is None or not access.can_see_space(conn, user, page["space_id"]):
         return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    return _page_response(request, conn, user, page)
 
+
+def _playbook_offer(
+    conn: sqlite3.Connection, user: dict | None, page: dict, page_labels: list[dict]
+) -> dict | None:
+    """What starting this page as a playbook would make, for a viewer who may
+    start it; None for a page that is not a playbook or a viewer who may not
+    write. The command decides again when it is started."""
+    if user is None or not identity.can_write(user):
+        return None
+    marks = {label["name"].lower() for label in page_labels}
+    if playbook_commands.PLAYBOOK_LABEL not in marks:
+        return None
+    steps, checked = playbook_commands.parse_checklist(page["body"])
+    return {
+        "steps": len(steps),
+        "checked": checked,
+        "over_limit": len(steps) > playbook_commands.MAX_ITEMS,
+        "limit": playbook_commands.MAX_ITEMS,
+        "projects": projects.list_projects(
+            conn, access.visible_project_filter(conn, user)
+        ),
+    }
+
+
+def _page_response(
+    request: Request,
+    conn: sqlite3.Connection,
+    user: dict | None,
+    page: dict,
+    *,
+    error: str | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    """The page as its viewer may see it. Also what a refused action on the
+    page renders: the same page with what went wrong (``error``), not a bare
+    line of text."""
+    templates = get_templates()
+    page_id = page["id"]
     # One read of the space's pages serves two needs: the navigation tree (so you can
     # jump to any page in the space without going back to its index — the Confluence
     # left-rail idea), and the "Move under" candidates (every OTHER page; self can't
@@ -88,11 +127,16 @@ def page_detail(
     comment_rows = page_comments.list_comments(conn, page_id)
     for comment in comment_rows:
         comment["body_html"] = render_comment(conn, comment["body"])
+    page_labels = labels.labels_for_page(conn, page_id)
     return templates.TemplateResponse(
         request=request,
         name="mentor/page_detail.html",
+        status_code=status_code,
         context={
             "page": page,
+            "error": error,
+            # A playbook page offers to start itself (U5).
+            "playbook": _playbook_offer(conn, user, page, page_labels),
             # Embeds resolve HERE, per request, against the VIEWER — never the
             # author. An admin's `q: is:open` renders for a member only the work
             # that member could already see, and nothing is cached between
@@ -100,7 +144,7 @@ def page_detail(
             # visibility to another.
             "body_html": render_page_body(conn, page["body"], actor=user, page=page),
             "comments": comment_rows,
-            "page_labels": labels.labels_for_page(conn, page_id),
+            "page_labels": page_labels,
             "all_labels": labels.list_labels(
                 conn
             ),  # the shared vocabulary, for autocomplete
@@ -897,6 +941,52 @@ def delete_page_comment(
             '<div class="error">Comment not found.</div>', status_code=404
         )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
+
+
+@router.post(
+    "/mentor/pages/{page_id}/start-playbook", dependencies=[Depends(verify_csrf)]
+)
+def start_playbook(
+    request: Request,
+    page_id: int,
+    project_id: str = Form(""),
+    title: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Start a playbook page from the page itself (U5): the command REST's
+    POST /pages/{id}/start-playbook calls. On success the operator lands on the
+    parent issue it made; a refusal renders in the page that posted it."""
+    user = getattr(request.state, "user", None)
+    err = write_required(user, "start playbooks")
+    if err is not None:
+        return err
+    assert user is not None, "write_required accepted a missing user"
+    page, err = page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
+    chosen = project_id.strip()
+    if chosen and not chosen.isdigit():
+        return _page_response(
+            request, conn, user, page, error="Choose a project.", status_code=400
+        )
+    try:
+        started = playbook_commands.start_playbook(
+            conn,
+            actor=user,
+            page_id=page_id,
+            project_id=int(chosen) if chosen else None,
+            title=title.strip() or None,
+        )
+    except playbook_commands.PlaybookCommandError as exc:
+        return _page_response(
+            request,
+            conn,
+            user,
+            page,
+            error=exc.detail,
+            status_code={"not_found": 404, "forbidden": 403}.get(exc.kind, 400),
+        )
+    return RedirectResponse(f"/aegis/issues/{started['parent']['id']}", status_code=303)
 
 
 @router.post("/mentor/pages/{page_id}/labels", dependencies=[Depends(verify_csrf)])

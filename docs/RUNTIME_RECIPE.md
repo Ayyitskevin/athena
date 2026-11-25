@@ -117,7 +117,7 @@ REST refusals remain in force.
 `command` is the absolute path of the `athena-mcp` script installed beside the
 Python that runs Athena, so the client needs no activated venv; the path above
 is a placeholder for yours. `ATHENA_MCP_PROFILE` is chosen from the token's
-scopes: `seat+knowledge` for a token with `docs:write`, as here (39 tools for
+scopes: `seat+knowledge` for a token with `docs:write`, as here (40 tools for
 this token class, including `record_run_learning`), and `seat` otherwise (28
 tools for issue work). Onboarding's optional `profile` prints another one. Profiles intersect scopes and never add permission. An
 unset profile still means `full`, and an unknown profile refuses startup. See

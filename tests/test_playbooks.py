@@ -428,6 +428,23 @@ def test_a_missing_page_and_an_invisible_one_answer_the_same(tmp_path):
         assert hidden.json()["detail"] == missing.json()["detail"]
 
 
+def test_a_project_that_does_not_exist_refuses_the_start_and_creates_nothing(tmp_path):
+    # WHY: the issue command's refusal ("no such project") escaped the playbook
+    # command as an unhandled error, so REST and the tool answered 500
+    # internal_error for a caller's own mistake. The start now refuses with the
+    # command's words, and the parent the transaction had begun is undone.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as client:
+        _bootstrap(client)
+        page = _page(client, _space(client)["id"])
+
+        refused = _start(client, page["id"], project_id=999_999)
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["code"] == "validation_error"
+        assert refused.json()["detail"] == "no such project"
+        assert client.get("/issues", headers=H1).json()["issues"] == []
+
+
 def test_anonymous_callers_cannot_start_work(tmp_path):
     app, _ = _app(tmp_path)
     with TestClient(app) as client:

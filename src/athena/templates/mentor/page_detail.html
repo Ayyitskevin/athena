@@ -53,10 +53,52 @@
     {% endif %}
 
     <div class="doc-main">
+        {# A refused action on this page says why here, in the page (U5). #}
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
         {% if page.body %}
         <div class="prose">{{ body_html }}</div>
         {% else %}
         <p class="empty-state">This page has no content yet.</p>
+        {% endif %}
+
+        {# A playbook page starts itself (U5): its unchecked steps become a
+           parent issue and one child each. Offered only to a viewer who may
+           write, and only when there is something to start. #}
+        {% if playbook %}
+        <section class="panel" aria-labelledby="start-playbook-heading">
+            <div class="panel-head"><h2 id="start-playbook-heading">Start this playbook</h2></div>
+            <div class="panel-body">
+            {% if playbook.steps == 0 %}
+            <p class="muted">This playbook has no unchecked <code>- [ ]</code> steps, so there is nothing to start.</p>
+            {% elif playbook.over_limit %}
+            <p class="muted">This playbook has {{ playbook.steps }} unchecked steps; at most {{ playbook.limit }} start at once. Split the page or check off steps first.</p>
+            {% else %}
+            <p class="subtitle">
+                Makes one parent issue and {{ playbook.steps }} step{{ "s" if playbook.steps != 1 }} under it, one per unchecked box{% if playbook.checked %} ({{ playbook.checked }} checked box{{ "es" if playbook.checked != 1 }} skipped){% endif %}.
+                The page is read as it is now; editing it later changes nothing already started.
+            </p>
+            <form method="post" action="/mentor/pages/{{ page.id }}/start-playbook" class="issue-form">
+                {% include "partials/csrf.html" %}
+                <div class="form-group">
+                    <label for="playbook-title">Parent issue title <span class="muted">(optional)</span></label>
+                    <input id="playbook-title" type="text" name="title" maxlength="200" placeholder="{{ page.title }}" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="playbook-project">Project</label>
+                    <select id="playbook-project" name="project_id">
+                        <option value="" selected>Backlog (no project)</option>
+                        {% for project in playbook.projects %}
+                        <option value="{{ project.id }}">{{ project.key }} — {{ project.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="button secondary">Start playbook</button>
+                </div>
+            </form>
+            {% endif %}
+            </div>
+        </section>
         {% endif %}
 
         <div class="doc-admin">

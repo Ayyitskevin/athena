@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 from fastapi.testclient import TestClient
 import pytest
+from support import declare_seat
 
 from athena.aegis import issue_commands, issues, projects
 from athena.core import budget_commands, buzz_radio, db, users
@@ -31,6 +32,14 @@ def transfer(tmp_path):
         )
         recipient = users.create_user(
             conn, email="grok@agents.local", name="Grok", is_agent=True, commit=True
+        )
+        # A new database declares no seat (D27): the test declares the one it uses.
+        declare_seat(
+            conn,
+            "grok",
+            email="grok@agents.local",
+            buzz_pubkey="ab" * 32,  # the radio addresses a seat by its key
+            actor=owner,
         )
         project = projects.create_project(
             conn, key="LAB", name="Lab", created_by=owner["id"], commit=True

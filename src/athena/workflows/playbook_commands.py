@@ -249,35 +249,46 @@ def start_playbook(
         # existing indexer builds the backlinks — this module never touches the
         # links table.
         citation = f"Started from [[page:{page_id}]]"
-        parent = issue_commands.create_issue(
-            conn,
-            actor=actor,
-            title=override or page["title"],
-            body=f"{citation} — a playbook with {len(steps)} steps.",
-            project_id=project_id,
-        )
-        children: list[dict] = []
-        for step in steps:
-            child = issue_commands.create_issue(
+        # Every issue write below can be refused by its own command (a project
+        # that does not exist or the actor may not write to, a title it will
+        # not take). That refusal is this start's refusal: it used to escape
+        # as an unhandled error, a 500 on every transport. The transaction
+        # undoes whatever was created before it.
+        try:
+            parent = issue_commands.create_issue(
                 conn,
                 actor=actor,
-                title=step["title"],
-                body=citation,
+                title=override or page["title"],
+                body=f"{citation} — a playbook with {len(steps)} steps.",
                 project_id=project_id,
             )
-            # A top-level step nests under the instantiation's parent issue; an
-            # indented one under the issue its enclosing step just became.
-            # set_issue_parent returns the updated row, so every child reported
-            # back carries its REAL parent_id rather than the pre-nesting None.
-            structural_parent = (
-                parent["id"]
-                if step["parent"] is None
-                else children[step["parent"]]["id"]
-            )
-            child = issue_commands.set_issue_parent(
-                conn, actor=actor, issue_id=child["id"], parent_id=structural_parent
-            )
-            children.append(child)
+            children: list[dict] = []
+            for step in steps:
+                child = issue_commands.create_issue(
+                    conn,
+                    actor=actor,
+                    title=step["title"],
+                    body=citation,
+                    project_id=project_id,
+                )
+                # A top-level step nests under the instantiation's parent issue; an
+                # indented one under the issue its enclosing step just became.
+                # set_issue_parent returns the updated row, so every child reported
+                # back carries its REAL parent_id rather than the pre-nesting None.
+                structural_parent = (
+                    parent["id"]
+                    if step["parent"] is None
+                    else children[step["parent"]]["id"]
+                )
+                child = issue_commands.set_issue_parent(
+                    conn, actor=actor, issue_id=child["id"], parent_id=structural_parent
+                )
+                children.append(child)
+
+        except issue_commands.IssueCommandError as exc:
+            raise PlaybookCommandError(
+                exc.kind if exc.kind in STATUS_BY_KIND else "invalid", exc.detail
+            ) from exc
 
         return {
             "page": {"id": page_id, "title": page["title"]},

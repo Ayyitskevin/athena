@@ -3,7 +3,7 @@
 from fastapi.testclient import TestClient
 import pytest
 
-from athena.core import db, fleet_roster, users
+from athena.core import db, fleet_roster, fleet_seat_commands, users
 from athena.main import create_app
 
 
@@ -30,29 +30,68 @@ def _probe(unit: str, scope: str) -> dict:
     )
 
 
-def test_seat_slug_for_declared_email():
-    assert fleet_roster.seat_slug_for_email("grok@agents.local") == "grok"
-    assert fleet_roster.seat_slug_for_email("GROK@agents.local") == "grok"
-    assert fleet_roster.seat_slug_for_email("stranger@e.com") is None
-    assert fleet_roster.seat_slug_for_email(None) is None
+def _admin_conn(tmp_path, name):
+    conn = db.connect(tmp_path / name)
+    db.migrate(conn)
+    admin = users.create_user(
+        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE, commit=True
+    )
+    return conn, admin
 
 
-def test_local_workers_declared_with_system_units():
-    # The 2026-08-21 drift repair: muse/qwen are onboarded (email + pubkey) and
-    # their hardened SYSTEM units are declared as such, so the probe stops
-    # reporting them "missing" against the wrong systemd manager. The retired
-    # nemotron seat is gone — its leftover account belongs in undeclared drift.
-    by_slug = {str(s["slug"]): s for s in fleet_roster.DECLARED_SEATS}
-    assert "nemotron" not in by_slug
-    for slug in ("muse", "qwen"):
-        seat = by_slug[slug]
-        assert seat["email"] == f"{slug}@agents.local"
-        assert seat["unit"] == f"buzz-seat-{slug}.service"
-        assert seat["unit_scope"] == "system"
-        assert seat["buzz_pubkey"], f"{slug} must carry its Buzz pubkey"
-    # Cloud seats stay user-scope by omission.
-    assert "unit_scope" not in by_slug["claude"]
-    assert set(fleet_roster.assignable_seat_slugs()) >= {"muse", "qwen"}
+def test_seat_slug_for_declared_email(tmp_path):
+    conn, admin = _admin_conn(tmp_path, "slug.db")
+    assert fleet_roster.seat_slug_for_email(conn, "grok@agents.local") is None
+    fleet_seat_commands.declare_seat(
+        conn, actor=admin, slug="grok", name="Grok", email="grok@agents.local"
+    )
+    assert fleet_roster.seat_slug_for_email(conn, "grok@agents.local") == "grok"
+    assert fleet_roster.seat_slug_for_email(conn, "GROK@agents.local") == "grok"
+    assert fleet_roster.seat_slug_for_email(conn, "stranger@e.com") is None
+    assert fleet_roster.seat_slug_for_email(conn, None) is None
+    conn.close()
+
+
+def test_local_workers_declared_with_system_units(tmp_path):
+    # The 2026-08-21 drift repair, now as data: a local worker's hardened
+    # SYSTEM unit is declared as such and the probe asks the system manager,
+    # so it stops reporting "missing" against the wrong one. A cloud seat's
+    # unit stays user-scope by default. (The eight seats the migration keeps
+    # are checked in test_fleet_seats.py.)
+    conn, admin = _admin_conn(tmp_path, "system-units.db")
+    fleet_seat_commands.declare_seat(
+        conn,
+        actor=admin,
+        slug="muse",
+        name="Muse",
+        email="muse@agents.local",
+        kind="local_ollama",
+        unit="buzz-seat-muse.service",
+        unit_scope="system",
+        buzz_pubkey="cc" * 32,
+    )
+    fleet_seat_commands.declare_seat(
+        conn,
+        actor=admin,
+        slug="claude",
+        name="Claude",
+        email="claude@agents.local",
+        unit="buzz-acp-claude.service",
+    )
+    seen: list[tuple[str, str]] = []
+
+    def probe(unit: str, scope: str) -> dict:
+        seen.append((unit, scope))
+        return {"load_state": "loaded", "active_state": "active", "sub_state": "x"}
+
+    roster = fleet_roster.build_roster(conn, probe=probe)
+    assert seen == [
+        ("buzz-seat-muse.service", "system"),
+        ("buzz-acp-claude.service", "user"),
+    ]
+    assert [seat["slug"] for seat in roster["seats"]] == ["muse", "claude"]
+    assert set(fleet_roster.assignable_seat_slugs(conn)) == {"muse", "claude"}
+    conn.close()
 
 
 def test_probe_scope_routed_from_declaration(tmp_path):
@@ -172,6 +211,19 @@ def test_admin_fleet_page_and_json(
             json={"name": "Grok", "scopes": ["read"]},
             headers={"X-Athena-Actor": "1"},
         )
+        # A new instance declares no seat (D27); this one declares four.
+        for slug in ("claude", "codex", "kimi", "grok"):
+            declared = client.post(
+                "/fleet/seats",
+                json={
+                    "slug": slug,
+                    "name": slug.title(),
+                    "email": f"{slug}@agents.local",
+                    "unit": f"buzz-acp-{slug}.service",
+                },
+                headers={"X-Athena-Actor": "1"},
+            )
+            assert declared.status_code == 201, declared.text
         item = client.post(
             "/issues",
             json={"title": "Fictional occupied chair"},

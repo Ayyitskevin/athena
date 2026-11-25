@@ -325,6 +325,8 @@ def _plan(world: dict[str, Any], admin: TestClient) -> list[Step]:
             "update_page",
             lambda s: {"page_id": page, "title": "the large page, renamed"},
         ),
+        # A notebook grown past the budget (G8): the tool answers with the page.
+        ("open_my_notebook", lambda s: s["large_notebook"]()),
         (
             "record_run_learning",
             # The seat's notebook is a second space, so the runbook's is named.
@@ -397,7 +399,18 @@ def _play_every_tool(tmp_path, monkeypatch, *, maxima: bool):
             desk = seat_http.get("/desk").json()
             return desk["signals"]["latest_visible_event_id"]
 
+        def large_notebook():
+            opened = seat_http.post("/desk/notebook")
+            assert opened.status_code in (200, 201), opened.text
+            grown = seat_http.patch(
+                f"/pages/{opened.json()['page']['id']}",
+                json={"body": _text(BIG_PAGE_CHARS, "notebook")},
+            )
+            assert grown.status_code == 200, grown.text
+            return {}
+
         state.update(
+            large_notebook=large_notebook,
             etag=etag,
             reclaim=reclaim,
             notification=notification,
@@ -553,6 +566,7 @@ def test_nothing_the_budget_cut_is_cut_silently(budget_run):
         "update_issue",
         "get_page",
         "update_page",
+        "open_my_notebook",
         "get_issue_work_context",
         "list_issue_comments",
         "get_issue_prior_text",

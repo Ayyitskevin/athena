@@ -237,6 +237,15 @@ class AgentOnboard(RequestBody):
     profile: PrintableProfile | None = None
 
 
+class AgentTokenIn(RequestBody):
+    # REQUIRED, as on every mint: what the token may do.
+    scopes: list[Literal["read", "issue:write", "docs:write", "admin"]]
+    # Defaults to the agent's name.
+    name: str | None = Field(default=None, max_length=200)
+    # The ATHENA_MCP_PROFILE the printed mcp_config names, as on onboarding.
+    profile: PrintableProfile | None = None
+
+
 class OnboardedTokenOut(BaseModel):
     id: int
     name: str
@@ -642,6 +651,46 @@ def update_paused(
             detail=str(exc),
             code=CODE_BY_KIND[exc.kind],
         ) from exc
+
+
+@router.post("/{user_id}/tokens", response_model=AgentOnboardOut, status_code=201)
+def mint_agent_token(
+    user_id: RowIdPath,
+    payload: AgentTokenIn,
+    request: Request,
+    actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """Mint a token for an existing agent account, as the admin (U5): the way
+    back for an agent whose tokens were revoked or that was restored. Answers
+    as onboarding does, with the one-time raw token and a ready-to-paste MCP
+    config. For agent accounts only; a person mints their own at POST /tokens.
+    Takes no Idempotency-Key: a replay would hand the secret out again."""
+    try:
+        result = agent_commands.mint_agent_token(
+            conn,
+            actor=actor,
+            target_user_id=user_id,
+            scopes=payload.scopes,
+            name=payload.name,
+            profile=payload.profile,
+        )
+    except agent_commands.AgentCommandError as exc:
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
+        ) from exc
+    return {
+        "user": result["user"],
+        "token": result["token"],
+        "mcp_config": claude_mcp_config(
+            base_url=str(request.base_url).rstrip("/"),
+            token=result["token"]["token"],
+            profile=result["profile"],
+            command=athena_mcp_command(),
+        ),
+    }
 
 
 @router.delete("/{user_id}/tokens", response_model=TokenRevocationOut)

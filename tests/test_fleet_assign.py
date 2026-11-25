@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from support import declare_seat
 
 from athena.aegis import issues
 from athena.core import buzz_radio, db, users
@@ -76,6 +77,7 @@ def test_assign_sets_assignee_and_delegates(tmp_path):
     users.create_user(
         conn, email="grok@agents.local", name="Grok", is_agent=True, commit=True
     )
+    declare_seat(conn, "grok", email="grok@agents.local", actor=admin)
     issue = issues.create_issue(
         conn, title="slice", body="do it", created_by=admin["id"], commit=True
     )
@@ -102,6 +104,9 @@ def test_assign_unknown_seat_and_operator(tmp_path):
     )
     issue = issues.create_issue(
         conn, title="x", body="", created_by=admin["id"], commit=True
+    )
+    declare_seat(
+        conn, "kevin", email="kevin@athena.local", kind="operator", actor=admin
     )
     try:
         fleet_assign_commands.assign_issue_to_seat(
@@ -132,6 +137,7 @@ def test_admin_form_assigns(tmp_path):
             json={"name": "Grok", "scopes": ["read", "issue:write"]},
             headers={"X-Athena-Actor": "1"},
         )
+        declare_seat(client, "grok", email="grok@agents.local")
         issue = client.post(
             "/issues",
             json={"title": "desk work"},
@@ -322,6 +328,7 @@ def test_assign_records_a_radioed_receipt_on_the_issue(tmp_path):
     users.create_user(
         conn, email="grok@agents.local", name="Grok", is_agent=True, commit=True
     )
+    declare_seat(conn, "grok", email="grok@agents.local", actor=admin)
     issue = issues.create_issue(
         conn, title="slice", body="do it", created_by=admin["id"], commit=True
     )
@@ -372,6 +379,7 @@ def test_assign_without_a_usable_receipt_records_no_event(tmp_path):
     users.create_user(
         conn, email="grok@agents.local", name="Grok", is_agent=True, commit=True
     )
+    declare_seat(conn, "grok", email="grok@agents.local", actor=admin)
     issue = issues.create_issue(
         conn, title="slice", body="", created_by=admin["id"], commit=True
     )

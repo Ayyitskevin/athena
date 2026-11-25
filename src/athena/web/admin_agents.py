@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from html import escape
 import json
+import re
 import sqlite3
 from urllib.parse import quote
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -38,10 +39,12 @@ from athena.core import (
     run_replay,
     users,
     fleet_roster,
+    fleet_seat_commands,
     worker_commands,
     workers,
 )
 from athena.core.deps import get_conn
+from athena.core.ids import MAX_SQLITE_INTEGER
 from athena.mcp.config import (
     athena_mcp_command,
     PRINTABLE_PROFILES,
@@ -86,15 +89,68 @@ def _reported_spend(
     }
 
 
-def _agents_redirect(**query: str) -> RedirectResponse:
+def _agents_redirect(
+    *, agent_id: int | None = None, anchor: bool = True, **query: str
+) -> RedirectResponse:
     """Send the operator back to the agents page with one encoded value per key.
 
     Error and notice text can contain & # ? = (it may echo input), so it must be
-    encoded rather than pasted into the URL."""
+    encoded rather than pasted into the URL.
+
+    ``agent_id`` is the agent the action was made on (U10): the page opens that
+    agent's section and says the outcome there, and the fragment scrolls to it.
+    ``anchor`` is off when the agent has no section to return to (it was just
+    removed); the outcome still names it."""
+    if agent_id is not None:
+        query["agent"] = str(agent_id)
     query_string = "&".join(
         f"{key}={quote(value, safe='')}" for key, value in query.items()
     )
-    return RedirectResponse(f"/admin/agents?{query_string}", status_code=303)
+    fragment = f"#agent-{agent_id}" if agent_id is not None and anchor else ""
+    return RedirectResponse(f"/admin/agents?{query_string}{fragment}", status_code=303)
+
+
+# What each outcome says: its lead, the word that joins the agent's name to it,
+# and the rest. With the agent it reads "Paused Sol: every ..."; without one
+# (an agent this page no longer has, or a link somebody shortened) the same
+# words with no name.
+_OUTCOMES: dict[str, tuple[str, str, str | None]] = {
+    "offboarded": (
+        "Offboarded",
+        " ",
+        "demoted to viewer, sessions and tokens revoked.",
+    ),
+    "removed": (
+        "Removed",
+        " ",
+        "offboarded and hidden from every list; history stays attributed. "
+        "Restore it under Removed agents, below.",
+    ),
+    "restored": (
+        "Restored",
+        " ",
+        "back as a read-only viewer with no token. Give it a role under Manage "
+        "users, then mint it a token here.",
+    ),
+    "paused": ("Paused", " ", "every authenticated action is refused until resumed."),
+    "resumed": ("Resumed", " ", "the account is active again."),
+    "budget_set": (
+        "Budget set",
+        " for ",
+        "metered writes are now capped for this window.",
+    ),
+    "budget_cleared": (
+        "Budget cleared",
+        " for ",
+        "metered writes are unlimited again.",
+    ),
+    "gate_changed": ("Approval policy updated", " for ", None),
+}
+
+
+def _outcome(lead: str, joiner: str, rest: str | None, name: str | None) -> str:
+    said = lead if name is None else f"{lead}{joiner}{name}"
+    return f"{said}." if rest is None else f"{said}: {rest}"
 
 
 def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
@@ -154,6 +210,13 @@ def _build_agents_context(
         "answerability": answerability.build_answerability(conn, now=now)["agents"],
         "unanswered_kills": unanswered_kills,
         "unanswered_kills_total": stop_total,
+        # Removed agents are hidden from every other list; this page removed
+        # them, so this page is where one is restored (U5).
+        "removed_agents": [
+            account
+            for account in users.list_users(conn, include_removed=True)
+            if account["removed_at"] and account["is_agent"]
+        ],
         "budget_windows": sorted(budgets.WINDOWS),
         "approval_kinds": sorted(approvals.ACTION_KINDS),
         # The MCP profiles the onboarding form may print (F9); empty = default.
@@ -177,6 +240,7 @@ def agents_admin(
     revoked: int | None = Query(None),
     offboarded: str | None = Query(None),
     removed: str | None = Query(None),
+    restored: str | None = Query(None),
     paused: str | None = Query(None),
     resumed: str | None = Query(None),
     budget_set: str | None = Query(None),
@@ -185,6 +249,7 @@ def agents_admin(
     gate_changed: str | None = Query(None),
     notice: str | None = Query(None),
     error: str | None = Query(None),
+    agent: int | None = Query(None, ge=1, le=MAX_SQLITE_INTEGER),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
@@ -193,35 +258,40 @@ def agents_admin(
     if err is not None:
         return err
     assert user is not None, "admin_required accepted a missing user"
+    # The agent the action was made on (U10). Its name is read, never taken
+    # from the URL; a removed agent is still named, as its outcome is about it.
+    acted_on = None if agent is None else users.get_user(conn, agent)
+    name = None if acted_on is None else acted_on["name"]
     # Post/redirect/get carries the outcome back as a query param so a refresh
     # doesn't re-post the destructive action.
+    flags = {
+        "offboarded": offboarded,
+        "removed": removed,
+        "restored": restored,
+        "paused": paused,
+        "resumed": resumed,
+        "budget_set": budget_set,
+        "budget_cleared": budget_cleared,
+    }
+    outcome = next((key for key, value in flags.items() if value), None)
     if revoked is not None:
-        notice = f"Revoked {revoked} live token{'' if revoked == 1 else 's'}."
-    elif offboarded:
-        notice = "Offboarded: demoted to viewer, sessions and tokens revoked."
-    elif removed:
-        notice = (
-            "Removed: offboarded and hidden from every list; history stays "
-            "attributed. Restore via POST /users/{id}/restore."
-        )
-    elif paused:
-        notice = "Paused: every authenticated action is refused until resumed."
-    elif resumed:
-        notice = "Resumed: the account is active again."
-    elif budget_set:
-        notice = "Budget set: metered writes are now capped for this window."
-    elif budget_cleared:
-        notice = "Budget cleared: metered writes are unlimited again."
+        tokens_revoked = f"Revoked {revoked} live token{'' if revoked == 1 else 's'}"
+        notice = _outcome(tokens_revoked, " of ", None, name)
+    elif outcome is not None:
+        notice = _outcome(*_OUTCOMES[outcome], name)
     elif decided == "approve":
         notice = "Approved: the requester may retry that action once."
     elif decided == "reject":
         notice = "Rejected: the requester is told to stop rather than wait."
     elif gate_changed:
-        notice = "Approval policy updated."
+        notice = _outcome(*_OUTCOMES["gate_changed"], name)
+    context = _agents_context(conn, user, notice=notice, error=error)
+    # The outcome is said in the section it was made in, which opens; an agent
+    # the page does not list has none, and the outcome is said at the top.
+    listed = {row["user"]["id"] for row in context["agents"]}
+    context["acted_on_agent_id"] = agent if agent in listed else None
     return templates.TemplateResponse(
-        request=request,
-        name="admin/agents.html",
-        context=_agents_context(conn, user, notice=notice, error=error),
+        request=request, name="admin/agents.html", context=context
     )
 
 
@@ -244,6 +314,15 @@ def _fleet_page_context(
     ]
     return {
         "roster": roster,
+        # A starting slug for the declare form on each seatless agent's row:
+        # the address's local part, cut to what a slug may hold. The admin may
+        # change it; the command validates whatever is sent.
+        "suggested_slugs": {
+            agent["id"]: _suggested_slug(agent["email"])
+            for agent in roster["undeclared_athena_agents"]
+        },
+        "seat_kinds": fleet_roster.SEAT_KINDS,
+        "unit_scopes": fleet_roster.UNIT_SCOPES,
         "open_issues": open_issues,
         "assignable": assignable,
         "radio_configured": config.buzz_radio_configured(),
@@ -259,6 +338,9 @@ def fleet_roster_page(
     assigned: str | None = Query(None),
     seat: str | None = Query(None),
     radio: str | None = Query(None),
+    declared: str | None = Query(None),
+    edited: str | None = Query(None),
+    removed: str | None = Query(None),
     error: str | None = Query(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
@@ -269,7 +351,16 @@ def fleet_roster_page(
     if err is not None:
         return err
     notice = None
-    if assigned:
+    if declared:
+        notice = f"Declared seat {declared}."
+    elif edited:
+        notice = f"Saved seat {edited}."
+    elif removed:
+        notice = (
+            f"Removed seat {removed}. Its account, if it had one, is kept and "
+            "now has no seat."
+        )
+    elif assigned:
         notice = f"Assigned {assigned} to {seat or 'seat'}."
         if radio == "sent":
             notice += " Radio posted to command-deck."
@@ -327,6 +418,147 @@ def fleet_assign_issue(
     radio = (result.get("radio") or {}).get("status") or "skipped"
     return RedirectResponse(
         f"/admin/fleet?assigned={result['issue_key']}&seat={result['seat']}&radio={radio}",
+        status_code=303,
+    )
+
+
+#: How the cockpit answers a seat command's refusal kind.
+_SEAT_STATUS_BY_KIND: dict[str, int] = {
+    "forbidden": 403,
+    "not_found": 404,
+    "conflict": 409,
+    "invalid": 400,
+}
+
+
+def _suggested_slug(email: str | None) -> str:
+    local = (email or "").split("@", 1)[0].lower()
+    slug = re.sub(r"[^a-z0-9-]+", "-", local).strip("-")
+    return slug[:40].rstrip("-")
+
+
+def _seat_form_fields(
+    name: str, email: str, kind: str, unit: str, unit_scope: str, buzz_pubkey: str
+) -> dict[str, str]:
+    return {
+        "name": name,
+        "email": email,
+        "kind": kind,
+        "unit": unit,
+        "unit_scope": unit_scope,
+        "buzz_pubkey": buzz_pubkey,
+    }
+
+
+def _seat_refused(
+    request: Request,
+    conn: sqlite3.Connection,
+    exc: fleet_seat_commands.FleetSeatCommandError,
+) -> HTMLResponse:
+    return get_templates().TemplateResponse(
+        request=request,
+        name="admin/fleet.html",
+        context=_fleet_page_context(conn, error=exc.detail),
+        status_code=_SEAT_STATUS_BY_KIND[exc.kind],
+    )
+
+
+@router.post(
+    "/admin/fleet/seats",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def declare_fleet_seat(
+    request: Request,
+    slug: str = Form(""),
+    name: str = Form(""),
+    email: str = Form(""),
+    kind: str = Form("seat"),
+    unit: str = Form(""),
+    unit_scope: str = Form("user"),
+    buzz_pubkey: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Declare a seat from the cockpit: the command REST's POST /fleet/seats
+    calls. Empty optional fields mean none."""
+    user = getattr(request.state, "user", None)
+    err = admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None, "admin_required accepted a missing user"
+    try:
+        seat = fleet_seat_commands.declare_seat(
+            conn,
+            actor=user,
+            slug=slug,
+            **_seat_form_fields(name, email, kind, unit, unit_scope, buzz_pubkey),
+        )
+    except fleet_seat_commands.FleetSeatCommandError as exc:
+        return _seat_refused(request, conn, exc)
+    return RedirectResponse(
+        f"/admin/fleet?declared={quote(seat['slug'], safe='')}", status_code=303
+    )
+
+
+@router.post(
+    "/admin/fleet/seats/{slug}",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def edit_fleet_seat(
+    request: Request,
+    slug: str,
+    name: str = Form(""),
+    email: str = Form(""),
+    kind: str = Form("seat"),
+    unit: str = Form(""),
+    unit_scope: str = Form("user"),
+    buzz_pubkey: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Save a seat's edit form. The form sends every field, so an empty one
+    clears it; the slug is the seat's key and is not edited."""
+    user = getattr(request.state, "user", None)
+    err = admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None, "admin_required accepted a missing user"
+    try:
+        seat = fleet_seat_commands.update_seat(
+            conn,
+            actor=user,
+            slug=slug,
+            changes=_seat_form_fields(name, email, kind, unit, unit_scope, buzz_pubkey),
+        )
+    except fleet_seat_commands.FleetSeatCommandError as exc:
+        return _seat_refused(request, conn, exc)
+    return RedirectResponse(
+        f"/admin/fleet?edited={quote(seat['slug'], safe='')}", status_code=303
+    )
+
+
+@router.post(
+    "/admin/fleet/seats/{slug}/remove",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def remove_fleet_seat(
+    request: Request,
+    slug: str,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Remove a seat. The account it named is kept."""
+    user = getattr(request.state, "user", None)
+    err = admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None, "admin_required accepted a missing user"
+    try:
+        removed = fleet_seat_commands.remove_seat(conn, actor=user, slug=slug)
+    except fleet_seat_commands.FleetSeatCommandError as exc:
+        return _seat_refused(request, conn, exc)
+    return RedirectResponse(
+        f"/admin/fleet?removed={quote(removed['seat']['slug'], safe='')}",
         status_code=303,
     )
 
@@ -473,17 +705,22 @@ def request_worker_kill(
     withdrawing = cancel.strip().lower() in ("1", "true", "on", "yes")
     try:
         if withdrawing:
-            worker_commands.cancel_kill(conn, actor=user, worker_id=worker_id)
+            worker = worker_commands.cancel_kill(conn, actor=user, worker_id=worker_id)
         else:
-            worker_commands.request_kill(conn, actor=user, worker_id=worker_id)
+            worker = worker_commands.request_kill(conn, actor=user, worker_id=worker_id)
     except worker_commands.WorkerCommandError as exc:
         return _agents_redirect(error=str(exc.detail))
+    # Which worker, and whose: the page lists several, under several agents.
+    owner = users.get_user(conn, worker["agent_id"])
+    which = worker["node_label"] or worker["worker_key"]
+    if owner is not None:
+        which = f"{which} ({owner['name']})"
     notice = (
-        "Kill request withdrawn."
+        f"Kill request for {which} withdrawn."
         if withdrawing
-        else "Worker asked to stop; it will be told on its next heartbeat."
+        else f"{which} asked to stop; it will be told on its next heartbeat."
     )
-    return _agents_redirect(notice=notice)
+    return _agents_redirect(agent_id=worker["agent_id"], notice=notice)
 
 
 @router.post(
@@ -519,10 +756,10 @@ def set_approval_policy(
                 action_kind=action_kind.strip(),
             )
     except approval_commands.ApprovalDecisionError as exc:
-        return _agents_redirect(error=exc.detail)
+        return _agents_redirect(agent_id=user_id, error=exc.detail)
     except ValueError as exc:
-        return _agents_redirect(error=str(exc))
-    return RedirectResponse("/admin/agents?gate_changed=1", status_code=303)
+        return _agents_redirect(agent_id=user_id, error=str(exc))
+    return _agents_redirect(agent_id=user_id, gate_changed="1")
 
 
 @router.post(
@@ -547,15 +784,14 @@ def set_agent_budget(
     assert user is not None, "admin_required accepted a missing user"
     raw = action_limit.strip()
     if not raw.isdigit():
-        return RedirectResponse(
-            "/admin/agents?error=Action+limit+must+be+a+whole+number.",
-            status_code=303,
+        return _agents_redirect(
+            agent_id=user_id, error="Action limit must be a whole number."
         )
     coordination_raw = coordination_limit.strip()
     if coordination_raw and not coordination_raw.isdigit():
-        return RedirectResponse(
-            "/admin/agents?error=Coordination+limit+must+be+a+whole+number+or+empty.",
-            status_code=303,
+        return _agents_redirect(
+            agent_id=user_id,
+            error="Coordination limit must be a whole number or empty.",
         )
     try:
         budget_commands.set_budget(
@@ -567,10 +803,10 @@ def set_agent_budget(
             coordination_limit=int(coordination_raw) if coordination_raw else None,
         )
     except budget_commands.BudgetCommandError as exc:
-        return _agents_redirect(error=exc.detail)
+        return _agents_redirect(agent_id=user_id, error=exc.detail)
     except ValueError as exc:
-        return _agents_redirect(error=str(exc))
-    return RedirectResponse("/admin/agents?budget_set=1", status_code=303)
+        return _agents_redirect(agent_id=user_id, error=str(exc))
+    return _agents_redirect(agent_id=user_id, budget_set="1")
 
 
 @router.post(
@@ -589,8 +825,8 @@ def clear_agent_budget(
     try:
         budget_commands.clear_budget(conn, actor_id=user["id"], target_user_id=user_id)
     except budget_commands.BudgetCommandError as exc:
-        return _agents_redirect(error=exc.detail)
-    return RedirectResponse("/admin/agents?budget_cleared=1", status_code=303)
+        return _agents_redirect(agent_id=user_id, error=exc.detail)
+    return _agents_redirect(agent_id=user_id, budget_cleared="1")
 
 
 @router.post(
@@ -609,8 +845,8 @@ def pause_agent(
             conn, actor=user, target_user_id=user_id, paused=True
         )
     except agent_commands.AgentCommandError as exc:
-        return _agents_redirect(error=str(exc))
-    return RedirectResponse("/admin/agents?paused=1", status_code=303)
+        return _agents_redirect(agent_id=user_id, error=str(exc))
+    return _agents_redirect(agent_id=user_id, paused="1")
 
 
 @router.post(
@@ -629,8 +865,8 @@ def resume_agent(
             conn, actor=user, target_user_id=user_id, paused=False
         )
     except agent_commands.AgentCommandError as exc:
-        return _agents_redirect(error=str(exc))
-    return RedirectResponse("/admin/agents?resumed=1", status_code=303)
+        return _agents_redirect(agent_id=user_id, error=str(exc))
+    return _agents_redirect(agent_id=user_id, resumed="1")
 
 
 @router.post(
@@ -649,9 +885,9 @@ def revoke_agent_tokens(
             conn, actor=user, target_user_id=user_id
         )
     except agent_commands.AgentCommandError as exc:
-        return _agents_redirect(error=str(exc))
-    return RedirectResponse(
-        f"/admin/agents?revoked={result['revoked_token_count']}", status_code=303
+        return _agents_redirect(agent_id=user_id, error=str(exc))
+    return _agents_redirect(
+        agent_id=user_id, revoked=str(result["revoked_token_count"])
     )
 
 
@@ -669,8 +905,8 @@ def offboard_agent(
     try:
         agent_commands.offboard_user(conn, actor=user, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
-        return _agents_redirect(error=str(exc))
-    return RedirectResponse("/admin/agents?offboarded=1", status_code=303)
+        return _agents_redirect(agent_id=user_id, error=str(exc))
+    return _agents_redirect(agent_id=user_id, offboarded="1")
 
 
 @router.post(
@@ -687,8 +923,97 @@ def remove_agent(
     try:
         agent_commands.remove_user(conn, actor=user, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
+        return _agents_redirect(agent_id=user_id, error=str(exc))
+    # A removed agent has no section left to return to; the outcome names it.
+    return _agents_redirect(agent_id=user_id, anchor=False, removed="1")
+
+
+@router.post(
+    "/admin/agents/{user_id}/restore",
+    dependencies=[Depends(verify_csrf)],
+)
+def restore_agent(
+    request: Request, user_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Bring a removed agent back: the command REST's POST /users/{id}/restore
+    calls. It returns as a read-only viewer with no token, and its section says
+    so; a role and a token are each their own act."""
+    user = getattr(request.state, "user", None)
+    err = admin_required(user)
+    if err is not None:
+        return err
+    try:
+        agent_commands.restore_user(conn, actor=user, target_user_id=user_id)
+    except agent_commands.AgentCommandError as exc:
         return _agents_redirect(error=str(exc))
-    return RedirectResponse("/admin/agents?removed=1", status_code=303)
+    return _agents_redirect(agent_id=user_id, restored="1")
+
+
+@router.post(
+    "/admin/agents/{user_id}/tokens",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def mint_agent_token(
+    request: Request,
+    user_id: int,
+    token_name: str = Form(""),
+    scope_read: str | None = Form(None),
+    scope_issue_write: str | None = Form(None),
+    scope_docs_write: str | None = Form(None),
+    scope_admin: str | None = Form(None),
+    profile: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Mint a token for an existing agent (U5): the command REST's
+    POST /users/{id}/tokens calls. Rendered inline, in the agent's section, and
+    never redirected: the raw token is shown exactly once and a secret must
+    never ride a query string."""
+    templates = get_templates()
+    user = getattr(request.state, "user", None)
+    err = admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None, "admin_required accepted a missing user"
+
+    def page(status_code: int, **extra) -> HTMLResponse:
+        context = _agents_context(conn, user, **extra)
+        listed = {row["user"]["id"] for row in context["agents"]}
+        context["acted_on_agent_id"] = user_id if user_id in listed else None
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/agents.html",
+            context=context,
+            status_code=status_code,
+        )
+
+    try:
+        result = agent_commands.mint_agent_token(
+            conn,
+            actor=user,
+            target_user_id=user_id,
+            scopes=selected_scopes(
+                scope_read, scope_issue_write, scope_docs_write, scope_admin
+            ),
+            name=token_name.strip() or None,
+            profile=profile.strip() or None,
+        )
+    except agent_commands.AgentCommandError as exc:
+        return page(404 if exc.kind == "not_found" else 400, error=str(exc))
+    minted = {
+        "user": result["user"],
+        "token": result["token"],
+        "config_json": json.dumps(
+            claude_mcp_config(
+                base_url=str(request.base_url).rstrip("/"),
+                token=result["token"]["token"],
+                profile=result["profile"],
+                command=athena_mcp_command(),
+            ),
+            indent=2,
+        ),
+    }
+    return page(201, minted=minted)
 
 
 @router.get("/admin/agents/runs", response_class=HTMLResponse)
