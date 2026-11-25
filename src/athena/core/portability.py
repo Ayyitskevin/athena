@@ -760,8 +760,8 @@ def _replay_project_import(
     comment_count = 0
     for comment in bundle["comments"]:
         conn.execute(
-            "INSERT INTO comments (issue_id, author_id, body, created_at) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO comments (issue_id, author_id, body, created_at, imported_at) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
             (
                 issue_map[comment["issue_id"]],
                 user_map[comment["author_id"]],
@@ -876,7 +876,8 @@ def _replay_space_import(
         cur = conn.execute(
             "INSERT INTO pages "
             "(id, space_id, parent_id, title, body, created_by, created_at, updated_by, "
-            "updated_at) SELECT next_id, ?, ?, ?, ?, ?, ?, ?, ? "
+            "updated_at, imported_at) SELECT next_id, ?, ?, ?, ?, ?, ?, ?, ?, "
+            "datetime('now') "
             "FROM activity_target_id_sequences WHERE target_kind = 'page'",
             (
                 space_id,
@@ -922,8 +923,8 @@ def _replay_space_import(
     for version in bundle["versions"]:
         conn.execute(
             "INSERT INTO page_versions "
-            "(page_id, version, title, body, edited_by, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "(page_id, version, title, body, edited_by, created_at, imported_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
             (
                 page_map[version["page_id"]],
                 version["version"],
@@ -938,8 +939,9 @@ def _replay_space_import(
     comment_count = 0
     for comment in bundle["comments"]:
         conn.execute(
-            "INSERT INTO page_comments (page_id, author_id, body, created_at) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO page_comments "
+            "(page_id, author_id, body, created_at, imported_at) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
             (
                 page_map[comment["page_id"]],
                 user_map[comment["author_id"]],

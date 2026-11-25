@@ -9,8 +9,9 @@ that holds free text an account wrote carries::
 
 for the account that wrote the CURRENT text (a page's latest version, an issue's
 latest edit), or ``null`` when Athena does not know it: an imported row (the
-text arrived in a bundle; Athena was told, not shown) or a row with no native
-record of its writing. It is never guessed from a neighbouring fact.
+text arrived in a bundle; Athena was told, not shown: an imported event, or a
+comment, page or page version whose ``imported_at`` is set, G3) or a row with
+no native record of its writing. It is never guessed from a neighbouring fact.
 
 This module owns the shape and the lookups. It reveals no account the reader
 could not already see on that row: an author read from a row's own column is
@@ -143,13 +144,16 @@ def issue_text_authors(
 def _comment_authors(
     conn: sqlite3.Connection, table: str, comment_ids: Collection[int]
 ) -> dict[int, Author | None]:
-    """Each comment's author: the account on its row, which alone may edit it."""
+    """Each comment's author: the account on its row, which alone may edit it,
+    or ``null`` for a comment whose text arrived in a bundle (G3)."""
     wanted = sorted({int(i) for i in comment_ids})
     writers: dict[int, int] = {}
     for chunk in _chunks(wanted):
         marks = ",".join("?" * len(chunk))
         for row in conn.execute(
-            f"SELECT id, author_id FROM {table} WHERE id IN ({marks})", chunk
+            f"SELECT id, author_id FROM {table} "
+            f"WHERE id IN ({marks}) AND imported_at IS NULL",
+            chunk,
         ):
             writers[int(row["id"])] = int(row["author_id"])
     known = accounts(conn, writers.values())
@@ -189,14 +193,15 @@ def page_authors(
     conn: sqlite3.Connection, page_ids: Iterable[int]
 ) -> dict[int, Author | None]:
     """The author of each page's current text: the account that saved its
-    current version (``pages.updated_by``, which every page read already shows)."""
+    current version (``pages.updated_by``, which every page read already shows),
+    or ``null`` when that text arrived in a bundle (G3)."""
     wanted = sorted({int(i) for i in page_ids})
     editors: dict[int, int | None] = {}
     for chunk in _chunks(wanted):
         marks = ",".join("?" * len(chunk))
         for row in conn.execute(
             "SELECT id, COALESCE(updated_by, created_by) AS editor FROM pages "
-            f"WHERE id IN ({marks})",
+            f"WHERE id IN ({marks}) AND imported_at IS NULL",
             chunk,
         ):
             editors[int(row["id"])] = row["editor"]

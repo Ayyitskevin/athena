@@ -322,7 +322,8 @@ def _attachments(conn: sqlite3.Connection, issue_id: int) -> dict[str, Any]:
 
 def _comments(conn: sqlite3.Connection, issue_id: int) -> dict[str, Any]:
     select_sql = (
-        "SELECT c.id, c.author_id, u.name AS author_name, c.body, c.created_at "
+        "SELECT c.id, c.author_id, u.name AS author_name, c.body, c.created_at, "
+        "c.imported_at "
         "FROM comments c JOIN users u ON u.id = c.author_id "
         "WHERE c.issue_id = ?"
     )
@@ -342,6 +343,8 @@ def _comments(conn: sqlite3.Connection, issue_id: int) -> dict[str, Any]:
                 "author_name": row["author_name"],
                 "body": _excerpt(row["body"], COMMENT_BODY_LIMIT),
                 "created_at": row["created_at"],
+                # Read by _mark_authors and removed there (G3).
+                "imported_at": row["imported_at"],
             }
             for row in rows
         ],
@@ -598,7 +601,16 @@ def _mark_authors(
     authorship.stamp_references(references, issues=issue_authors, pages=page_authors)
     if checklist is not None:
         checklist[authorship.KEY] = page_authors[checklist["page_id"]]
-    authorship.stamp(conn, payload["comments"]["items"], id_key="author_id")
+    # A comment whose text arrived in a bundle has no known author (G3); the
+    # mark itself is not part of the packet.
+    authorship.stamp(
+        conn,
+        payload["comments"]["items"],
+        id_key="author_id",
+        imported_key="imported_at",
+    )
+    for item in payload["comments"]["items"]:
+        item.pop("imported_at", None)
     authorship.stamp(
         conn,
         payload["recent_activity"]["items"],

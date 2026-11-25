@@ -258,11 +258,13 @@ def update_page(
     )
     # The snapshot carries the SUPERSEDED revision's own run_id (like its edited_by
     # and created_at) — the run that authored this content, not the run doing the
-    # superseding. NULL when that revision was a human write or predates 0052.
+    # superseding. NULL when that revision was a human write or predates 0052. It
+    # keeps the revision's import mark too (G3): text that arrived in a bundle is
+    # still text Athena was given, not shown being written.
     conn.execute(
         "INSERT INTO page_versions "
-        "(page_id, version, title, body, edited_by, created_at, run_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "(page_id, version, title, body, edited_by, created_at, run_id, imported_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             page_id,
             next_version,
@@ -271,15 +273,17 @@ def update_page(
             page["updated_by"],
             page["updated_at"],
             page["run_id"],
+            page.get("imported_at"),
         ),
     )
 
     # The live row now belongs to THIS edit's run (None for a human write), so the
-    # next snapshot attributes this content to the run that just wrote it.
+    # next snapshot attributes this content to the run that just wrote it, and
+    # its text is the editor's own, no longer the bundle's (G3).
     assignments = ", ".join(f"{col} = ?" for col in fields)
     conn.execute(
         f"UPDATE pages SET {assignments}, updated_by = ?, "
-        "updated_at = datetime('now'), run_id = ? WHERE id = ?",
+        "updated_at = datetime('now'), run_id = ?, imported_at = NULL WHERE id = ?",
         (*fields.values(), editor_id, run_context.get_run_id(), page_id),
     )
     # Re-index inside the write transaction (commit=False) so the derived link and
