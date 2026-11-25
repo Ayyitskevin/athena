@@ -508,7 +508,7 @@ def test_a_hidden_projects_event_does_not_wake_a_wait_filtered_on_it(ws, parked)
     assert control["wait"]["outcome"] == "event"
 
 
-def test_the_lapse_observer_still_answers_a_filtered_wait(ws, fast_waits):
+def test_the_lapse_observer_still_answers_a_filtered_wait(clock, ws, fast_waits):
     """The conductor files and delegates the work; the seat claims it and goes
     away. One project-filtered call, and one mine call, each learn of the lapse."""
     issue_id = ws.issue("Abandoned", ws.alpha, headers=ws.as_conductor())
@@ -525,7 +525,7 @@ def test_the_lapse_observer_still_answers_a_filtered_wait(ws, fast_waits):
     )
     assert claimed.status_code == 201, claimed.text
     start = ws.latest()
-    lapse_lease(ws.db_file, issue_id)
+    lapse_lease(clock, ws.db_file, issue_id)
     by_project = ws.feed(ws.as_conductor(), after=start, project_id=ws.alpha, wait=1)
     assert [event["verb"] for event in by_project["events"]] == ["lease_lapsed"]
     assert by_project["wait"]["outcome"] == "event"
@@ -537,7 +537,7 @@ def test_the_lapse_observer_still_answers_a_filtered_wait(ws, fast_waits):
 
 
 def test_a_mine_wait_returns_the_lapse_the_delegating_account_answers_for(
-    ws, fast_waits
+    clock, ws, fast_waits
 ):
     """The operator files the work and assigns it to the conductor; the conductor
     delegates it to a seat, which claims; the operator names another owner; the
@@ -571,7 +571,7 @@ def test_a_mine_wait_returns_the_lapse_the_delegating_account_answers_for(
     )
     assert put.status_code == 200, put.text
     start = ws.latest()
-    lapse_lease(ws.db_file, issue_id)
+    lapse_lease(clock, ws.db_file, issue_id)
     by_mine = ws.feed(ws.as_conductor(), after=start, mine="true", wait=1)
     assert [event["verb"] for event in by_mine["events"]] == ["lease_lapsed"]
     assert by_mine["wait"]["outcome"] == "event"

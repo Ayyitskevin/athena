@@ -37,6 +37,8 @@ from typing import Annotated, Any
 
 from pydantic import PlainSerializer, WithJsonSchema
 
+from athena.core import clock as app_clock
+
 #: The one shape: RFC 3339, UTC, whole seconds.
 SHAPE = "%Y-%m-%dT%H:%M:%SZ"
 PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"
@@ -56,8 +58,9 @@ _STORED = re.compile(
 
 
 def clock() -> datetime:
-    """One clock read for one packet: the instant its verdicts are made at."""
-    return datetime.now(UTC)
+    """One clock read for one packet: the instant its verdicts are made at,
+    from the app's one clock (``core/clock.py``, G6)."""
+    return app_clock.now()
 
 
 def rfc3339(value: Any) -> Any:

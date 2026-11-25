@@ -21,7 +21,7 @@ def _bearer(agent):
 
 
 @pytest.fixture
-def subject(tmp_path):
+def subject(clock, tmp_path):
     database = tmp_path / "held-note.db"
     with TestClient(create_app(database)) as client:
         created = client.post(
@@ -88,13 +88,12 @@ def _row(conn, issue_id):
     return tuple(row) if row else None
 
 
-def _expire(conn, issue_id):
-    # Fixture-only clock setup, never a production mutation or renewal.
-    conn.execute(
-        "UPDATE issue_leases SET expires_at = '2000-01-01 00:00:00' WHERE issue_id = ?",
-        (issue_id,),
-    )
-    conn.commit()
+def _expire(clock, conn, issue_id):
+    # The app's clock passes the lease's expiry; the row is read, never written.
+    (expires_at,) = conn.execute(
+        "SELECT expires_at FROM issue_leases WHERE issue_id = ?", (issue_id,)
+    ).fetchone()
+    clock.pass_expiry(expires_at)
 
 
 def _side_state(conn):
@@ -117,10 +116,12 @@ def _unchanged_closeout(before, conn):
 
 @pytest.mark.parametrize("surface", ["rest", "client", "mcp"])
 @pytest.mark.parametrize("expired", [False, True])
-def test_own_row_note_crosses_real_chain_without_releasing(subject, surface, expired):
+def test_own_row_note_crosses_real_chain_without_releasing(
+    clock, subject, surface, expired
+):
     client, conn, issue_id, agents, claim = subject
     if expired:
-        _expire(conn, issue_id)
+        _expire(clock, conn, issue_id)
     row = _row(conn, issue_id)
     before = _side_state(conn)
     baseline = conn.execute("SELECT max(id) FROM activity").fetchone()[0]
@@ -156,12 +157,9 @@ def test_own_row_note_crosses_real_chain_without_releasing(subject, surface, exp
     assert set(note) == {"generation", "expires_at", "active", "message"}
     assert note["generation"] == claim["generation"]
     # The note rides the issue's own write answer, which keeps the stored
-    # shape; the claim answers the lease packet in RFC 3339 (A13). One instant.
-    assert note["expires_at"] == (
-        "2000-01-01 00:00:00"
-        if expired
-        else claim["expires_at"].replace("T", " ").removesuffix("Z")
-    )
+    # shape; the claim answers the lease packet in RFC 3339 (A13). One instant,
+    # lapsed or not: the clock moved, the expiry did not.
+    assert note["expires_at"] == claim["expires_at"].replace("T", " ").removesuffix("Z")
     assert note["active"] is (not expired)
     assert "separate deliberate action" in note["message"]
     assert (
@@ -193,10 +191,10 @@ def test_own_row_note_crosses_real_chain_without_releasing(subject, surface, exp
 
 @pytest.mark.parametrize("actor", ["other", "admin"])
 @pytest.mark.parametrize("expired", [False, True])
-def test_other_actor_never_receives_holder_row(subject, actor, expired):
+def test_other_actor_never_receives_holder_row(clock, subject, actor, expired):
     client, conn, issue_id, agents, _ = subject
     if expired:
-        _expire(conn, issue_id)
+        _expire(clock, conn, issue_id)
     before = _row(conn, issue_id)
     response = client.patch(
         f"/issues/{issue_id}",

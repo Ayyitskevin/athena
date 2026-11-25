@@ -192,7 +192,10 @@ answered one (`low`). A claim with any other reason stays `high`.
 
 ### A lapsed lease is an event
 
-`lease_expired` is the clock's verdict, and the clock tells nobody. So the first
+`lease_expired` is the clock's verdict, and the clock tells nobody. (The clock is
+the app's one clock, `src/athena/core/clock.py`, which the lease reads, claims,
+renewals and the lapse observer all read; in a running app it is the system
+clock.) So the first
 request that observes an expired, unsettled lease on an issue its account answers
 for records one native `lease_lapsed` event for that lease generation (requirement
 C4, decision D11). An account answers for a lease when it is the issue's assignee

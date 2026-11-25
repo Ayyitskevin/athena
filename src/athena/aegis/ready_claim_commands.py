@@ -6,7 +6,7 @@ Direct claims retain their existing policy and exact reviewed-revision contract.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 import sqlite3
 
 from athena.aegis import (
@@ -19,7 +19,7 @@ from athena.aegis import (
     work_context,
 )
 from athena.aegis.issue_commands import IssueCommandError, _require_issue_writer
-from athena.core import access, agent_signal_commands, db
+from athena.core import access, agent_signal_commands, clock, db
 from athena.core.ids import MAX_SQLITE_INTEGER
 
 SCHEMA = "athena.ready_claim.v1"
@@ -128,7 +128,7 @@ def claim_next_ready(
 
     with db.transaction(conn, immediate=True):
         # Sampling before BEGIN IMMEDIATE could reuse a clock from before a wait.
-        now = datetime.now(UTC)
+        now = clock.now()
         if project_id is not None and not access.can_see_project(
             conn, actor, project_id
         ):

@@ -8,7 +8,7 @@ import runpy
 from fastapi.testclient import TestClient
 import pytest
 
-from support import answer_fields, lease_facts, replayed_fields
+from support import answer_fields, lapse_lease, lease_facts, replayed_fields
 
 from athena import config
 from athena.main import create_app
@@ -735,20 +735,10 @@ def test_qualified_directory_nonoverlap_can_coexist(client):
     )
 
 
-def test_expired_reacquisition_replaces_whole_root_binding(client):
-    from athena.core import db
-
+def test_expired_reacquisition_replaces_whole_root_binding(clock, client):
     item = issue(client)
     first = claim(client, item, paths=["docs"], coordination_root=root()).json()
-    conn = db.connect(client.app.state.db_path)
-    try:
-        conn.execute(
-            "UPDATE issue_leases SET expires_at = datetime('now','-1 second') WHERE issue_id = ?",
-            (item,),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    lapse_lease(clock, client.app.state.db_path, item)
     assert (
         claim(
             client, item, generation=first["generation"], coordination_root=root("two")
@@ -1054,14 +1044,16 @@ def test_malformed_fence_does_not_prevent_existing_release(
 
 
 def test_expired_malformed_fence_reacquires_without_stale_bytes(
-    client, malformed_lease
+    clock, client, malformed_lease
 ):
     item, held, conn = malformed_lease
+    # The stored binding is damaged on purpose; the lease lapses by the clock.
     conn.execute(
-        "UPDATE issue_leases SET expires_at = datetime('now','-1 second'), coordination_root = 'retained-unknown' WHERE issue_id = ?",
+        "UPDATE issue_leases SET coordination_root = 'retained-unknown' WHERE issue_id = ?",
         (item,),
     )
     conn.commit()
+    lapse_lease(clock, client.app.state.db_path, item)
     result = claim(client, item)
     assert result.status_code == 201, result.text
     assert result.json()["generation"] != held["generation"]

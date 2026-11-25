@@ -471,7 +471,7 @@ def test_a_release_carries_no_completion_report(tmp_path):
     assert _lease_events(db_file) == []
 
 
-def test_no_release_control_without_a_live_lease(tmp_path):
+def test_no_release_control_without_a_live_lease(clock, tmp_path):
     """The page's release is for a live lease (U3); a lapsed row is settled by its
     holder or, naming its generation, by an admin over REST (C8), so the page
     offers no release for it; an unclaimed issue offers none either."""
@@ -482,7 +482,7 @@ def test_no_release_control_without_a_live_lease(tmp_path):
         free = _issue(client, "nobody holds this")
         lapsed = _issue(client, "the clock let go")
         _claim(client, agent, lapsed["id"])
-        lapse_lease(db_file, lapsed["id"])
+        lapse_lease(clock, db_file, lapsed["id"])
         login(client, "a@e.com")
         free_page = client.get(f"/aegis/issues/{free['id']}").text
         lapsed_page = client.get(f"/aegis/issues/{lapsed['id']}").text

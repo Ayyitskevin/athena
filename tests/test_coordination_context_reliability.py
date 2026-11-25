@@ -1,9 +1,10 @@
 """Orientation is actor-visible, bounded after filtering, and one WAL snapshot."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 import pytest
+from support import lapse_lease
 
 from athena.aegis import desk, issue_etags, issues, lease_commands, leases, office
 from athena.aegis import projects, ready_queue
@@ -43,13 +44,25 @@ def _issue(conn, *, project_id=None, title="Synthetic work"):
 
 
 def _held(
-    conn, actor, *, project_id=None, handoff=False, title="Synthetic work", paths=None
+    conn,
+    actor,
+    *,
+    project_id=None,
+    handoff=False,
+    title="Synthetic work",
+    paths=None,
+    lease_seconds=leases.DEFAULT_LEASE_SECONDS,
 ):
     issue = _issue(conn, project_id=project_id, title=title)
     issue = issues.set_assignee(conn, issue["id"], actor["id"], commit=True)
     tag = issue_etags.current_etag(conn, issue)
     held = lease_commands.claim_issue(
-        conn, actor=actor, issue_id=issue["id"], if_match=[tag], paths=paths
+        conn,
+        actor=actor,
+        issue_id=issue["id"],
+        if_match=[tag],
+        paths=paths,
+        lease_seconds=lease_seconds,
     )
     if handoff:
         lease_commands.yield_claim(
@@ -288,21 +301,16 @@ def test_hidden_handoffs_are_filtered_before_the_bound_and_clipping(board):
     assert packet["office"]["active_lease_count"] == 22
 
 
-def test_newer_lapsed_leases_do_not_hide_the_older_active_chair(board):
-    _, conn, admin, _ = board
+def test_newer_lapsed_leases_do_not_hide_the_older_active_chair(clock, board):
+    path, conn, admin, _ = board
     active, _ = _held(conn, admin)
-    for _ in range(20):
-        issue, _ = _held(conn, admin)
-        conn.execute(
-            "UPDATE issue_leases SET claimed_at = '2020-01-02 00:00:00', expires_at = '2020-01-03 00:00:00' WHERE issue_id = ?",
-            (issue["id"],),
-        )
-        conn.commit()
-    conn.execute(
-        "UPDATE issue_leases SET claimed_at = '2020-01-01 00:00:00' WHERE issue_id = ?",
-        (active["id"],),
-    )
-    conn.commit()
+    # Twenty newer claims, each the shortest lease there is: the app's clock
+    # passes them and leaves the older chair live.
+    clock.advance(seconds=1)
+    lapsed = [
+        _held(conn, admin, lease_seconds=leases.MIN_LEASE_SECONDS)[0] for _ in range(20)
+    ]
+    lapse_lease(clock, path, lapsed[-1]["id"])
     packet = desk.build_desk(conn, actor=admin)
     assert packet["work"]["leases"]["lapsed_total"] == 20
     assert packet["office"]["active_lease_count"] == 1
@@ -312,24 +320,23 @@ def test_newer_lapsed_leases_do_not_hide_the_older_active_chair(board):
 
 def test_standalone_office_observes_expiry_at_one_clock_instant(board, monkeypatch):
     _, conn, admin, _ = board
-    issue, _ = _held(conn, admin)
-    conn.execute(
-        "UPDATE issue_leases SET expires_at = '2030-01-01 00:00:01' WHERE issue_id = ?",
-        (issue["id"],),
-    )
-    conn.commit()
+    issue, held = _held(conn, admin)
 
-    class CrossingClock(datetime):
-        observed = datetime(2030, 1, 1, tzinfo=UTC)
+    class CrossingClock:
+        """The app's one clock as the office and the lease reads see it, a
+        second later at every read, starting a second before the lease's
+        expiry: a second read lands on the expiry, where it has lapsed."""
+
+        observed = packet_time.parse(held["expires_at"]) - timedelta(seconds=1)
 
         @classmethod
-        def now(cls, tz=None):
+        def now(cls):
             value = cls.observed
             cls.observed += timedelta(seconds=1)
-            return value if tz is None else value.astimezone(tz)
+            return value
 
-    monkeypatch.setattr(office, "datetime", CrossingClock)
-    monkeypatch.setattr(leases, "datetime", CrossingClock)
+    monkeypatch.setattr(office, "clock", CrossingClock)
+    monkeypatch.setattr(leases, "clock", CrossingClock)
     packet = office.build_office(conn, actor=admin)
     assert packet["active_lease_count"] == 1
     assert packet["chair"]["issue_id"] == issue["id"]

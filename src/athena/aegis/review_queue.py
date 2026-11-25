@@ -4,7 +4,6 @@ Newest canonical rows are selected BEFORE visibility and report parsing. Losing
 access or a malformed new report can never resurrect an older visible PASS.
 """
 
-from datetime import UTC, datetime
 import sqlite3
 from typing import Any
 
@@ -17,7 +16,7 @@ from athena.aegis import (
 )
 from athena.aegis.project_brief import _excerpt, _person, _rows, _group
 from athena.aegis.review_commands import latest_candidate_id
-from athena.core import access, db
+from athena.core import access, clock, db
 from athena.core.ids import MAX_SQLITE_INTEGER
 
 DEFAULT_LIMIT = 5
@@ -190,7 +189,7 @@ def build_project_review_queue(
         project = projects.get_project(conn, project_id)
         if project is None or not access.can_see_project(conn, actor, project_id):
             return None
-        now = datetime.now(UTC)
+        now = clock.now()
         total, rows = _candidate_page(conn, project_id, actor, limit, cursor)
         items = []
         for row in rows[:limit]:

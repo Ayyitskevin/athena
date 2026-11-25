@@ -221,17 +221,13 @@ def test_holder_reclaim_renews_window(tmp_path):
     assert "claimed" in verbs and "lease_renewed" in verbs
 
 
-def test_expired_lease_is_reclaimable_by_another_agent(tmp_path):
+def test_expired_lease_is_reclaimable_by_another_agent(clock, tmp_path):
     conn = _migrated_conn(tmp_path / "exp.db")
     _seed(conn)
     issue = _delegated_issue(conn)
     _claim(conn, 2, issue["id"])
-    # Force the lease into the past — a crashed holder whose window has elapsed.
-    conn.execute(
-        "UPDATE issue_leases SET expires_at = datetime('now','-1 minute') WHERE issue_id = ?",
-        (issue["id"],),
-    )
-    conn.commit()
+    # The clock passes the lease — a crashed holder whose window has elapsed.
+    _expire(clock, conn, issue["id"])
     assert leases.get_lease(conn, issue["id"])["active"] is False
     # A different eligible agent can now take it — no crash pins the work forever.
     lease = _claim(conn, 3, issue["id"])
@@ -266,15 +262,14 @@ def test_complete_releases_only_for_the_holder(tmp_path):
     assert reclaim["holder_id"] == 3
 
 
-def _expire(conn, issue_id):
-    """Push one lease into the past. Nothing in Athena sweeps the row — that is
-    the whole reason the holder has to be able to clear it."""
-    conn.execute(
-        "UPDATE issue_leases SET expires_at = datetime('now','-1 minute') "
-        "WHERE issue_id = ?",
-        (issue_id,),
-    )
-    conn.commit()
+def _expire(clock, conn, issue_id):
+    """The app's clock passes one lease's expiry; the row is read, not written.
+    Nothing in Athena sweeps the row — that is the whole reason the holder has
+    to be able to clear it."""
+    (expires_at,) = conn.execute(
+        "SELECT expires_at FROM issue_leases WHERE issue_id = ?", (issue_id,)
+    ).fetchone()
+    clock.pass_expiry(expires_at)
 
 
 def _completed_generations(conn, issue_id):
@@ -289,7 +284,7 @@ def _completed_generations(conn, issue_id):
     ]
 
 
-def test_complete_clears_my_own_lapsed_lease_under_its_generation(tmp_path):
+def test_complete_clears_my_own_lapsed_lease_under_its_generation(clock, tmp_path):
     # WHY: a lease row outlives its window and only its holder's own release
     # removes it, so refusing complete on an expired row left the holder with a
     # row they could see, could not clear, and were told they still held. The
@@ -300,7 +295,7 @@ def test_complete_clears_my_own_lapsed_lease_under_its_generation(tmp_path):
     _seed(conn)
     issue = _delegated_issue(conn)
     lease = _claim(conn, 2, issue["id"])
-    _expire(conn, issue["id"])
+    _expire(clock, conn, issue["id"])
     assert leases.get_lease(conn, issue["id"])["active"] is False
 
     released = lease_commands.complete_claim(
@@ -336,6 +331,7 @@ def test_complete_on_an_active_lease_reports_it_was_not_lapsed(tmp_path):
 
 
 def test_complete_on_a_lapsed_lease_without_a_generation_uses_the_observed_one(
+    clock,
     tmp_path,
 ):
     # WHY: the active path REQUIRES the generation because a live possession can
@@ -347,7 +343,7 @@ def test_complete_on_a_lapsed_lease_without_a_generation_uses_the_observed_one(
     _seed(conn)
     issue = _delegated_issue(conn)
     lease = _claim(conn, 2, issue["id"])
-    _expire(conn, issue["id"])
+    _expire(clock, conn, issue["id"])
 
     released = lease_commands.complete_claim(
         conn, actor=_actor(conn, 2), issue_id=issue["id"], generation=None
@@ -359,7 +355,7 @@ def test_complete_on_a_lapsed_lease_without_a_generation_uses_the_observed_one(
     ]
 
 
-def test_complete_with_a_stale_generation_on_a_lapsed_lease_is_refused(tmp_path):
+def test_complete_with_a_stale_generation_on_a_lapsed_lease_is_refused(clock, tmp_path):
     # WHY: omitting the fence is allowed; getting it WRONG is not. A supplied
     # token is a claim about which possession the caller means, and a stale one
     # means they are acting on an epoch that is gone — the loosened rule must
@@ -368,7 +364,7 @@ def test_complete_with_a_stale_generation_on_a_lapsed_lease_is_refused(tmp_path)
     _seed(conn)
     issue = _delegated_issue(conn)
     _claim(conn, 2, issue["id"])
-    _expire(conn, issue["id"])
+    _expire(clock, conn, issue["id"])
 
     with pytest.raises(issue_commands.IssueCommandError) as refused:
         lease_commands.complete_claim(
@@ -382,7 +378,7 @@ def test_complete_with_a_stale_generation_on_a_lapsed_lease_is_refused(tmp_path)
     assert _completed_generations(conn, issue["id"]) == []
 
 
-def test_complete_never_clears_someone_elses_lapsed_lease(tmp_path):
+def test_complete_never_clears_someone_elses_lapsed_lease(clock, tmp_path):
     # WHY: "the holder clears it" is the rule, and expiry does not turn a row
     # into common property: another delegated contributor may not complete it.
     # The one exception is an admin settling a dead agent's row with its
@@ -391,7 +387,7 @@ def test_complete_never_clears_someone_elses_lapsed_lease(tmp_path):
     _seed(conn)
     issue = _delegated_issue(conn)
     lease = _claim(conn, 2, issue["id"])
-    _expire(conn, issue["id"])
+    _expire(clock, conn, issue["id"])
 
     with pytest.raises(issue_commands.IssueCommandError) as refused:
         lease_commands.complete_claim(
@@ -415,7 +411,9 @@ def test_complete_never_clears_someone_elses_lapsed_lease(tmp_path):
     assert _completed_generations(conn, issue["id"]) == []
 
 
-def test_complete_clears_a_lapsed_lease_even_with_an_open_claim_handoff(tmp_path):
+def test_complete_clears_a_lapsed_lease_even_with_an_open_claim_handoff(
+    clock, tmp_path
+):
     # WHY: an ACTIVE holder must resume the context handed to them before
     # completing. A lapsed holder cannot — resume_claim_handoff itself requires
     # an active claim — so applying the gate here would be a refusal whose
@@ -434,7 +432,7 @@ def test_complete_clears_a_lapsed_lease_even_with_an_open_claim_handoff(tmp_path
     )
     second = _claim(conn, 3, issue["id"])
     assert claim_handoffs.get_open_handoff(conn, issue["id"]) is not None
-    _expire(conn, issue["id"])
+    _expire(clock, conn, issue["id"])
 
     released = lease_commands.complete_claim(
         conn,
@@ -754,17 +752,12 @@ def test_current_holder_can_yield_after_eligibility_was_removed(tmp_path):
     assert leases.get_lease(conn, issue["id"]) is None
 
 
-def test_nonholder_cannot_yield_or_delete_a_replacement_claim(tmp_path):
+def test_nonholder_cannot_yield_or_delete_a_replacement_claim(clock, tmp_path):
     conn = _migrated_conn(tmp_path / "yield-holder.db")
     _seed(conn)
     issue = _delegated_issue(conn)
     _claim(conn, 2, issue["id"])
-    conn.execute(
-        "UPDATE issue_leases SET expires_at = datetime('now','-1 minute') "
-        "WHERE issue_id = ?",
-        (issue["id"],),
-    )
-    conn.commit()
+    _expire(clock, conn, issue["id"])
     replacement = _claim(conn, 3, issue["id"])
 
     for actor_id in (1, 2):
@@ -789,7 +782,7 @@ def test_nonholder_cannot_yield_or_delete_a_replacement_claim(tmp_path):
     )
 
 
-def test_yield_rejects_absent_expired_and_invalid_requests(tmp_path):
+def test_yield_rejects_absent_expired_and_invalid_requests(clock, tmp_path):
     conn = _migrated_conn(tmp_path / "yield-invalid.db")
     _seed(conn)
     issue = _delegated_issue(conn)
@@ -804,12 +797,7 @@ def test_yield_rejects_absent_expired_and_invalid_requests(tmp_path):
     assert absent.value.kind == "conflict"
 
     expired_lease = _claim(conn, 2, issue["id"])
-    conn.execute(
-        "UPDATE issue_leases SET expires_at = datetime('now','-1 minute') "
-        "WHERE issue_id = ?",
-        (issue["id"],),
-    )
-    conn.commit()
+    _expire(clock, conn, issue["id"])
     with pytest.raises(issue_commands.IssueCommandError) as expired:
         lease_commands.yield_claim(
             conn,
@@ -934,7 +922,7 @@ def test_rest_claim_conflict_and_lease_read(tmp_path):
         assert again.status_code == 201 and again.json()["holder_id"] == 3
 
 
-def test_rest_complete_reports_lapsed_through_the_response_model(tmp_path):
+def test_rest_complete_reports_lapsed_through_the_response_model(clock, tmp_path):
     # WHY: the route declares a response_model, which FILTERS the returned dict —
     # a key the model does not name is dropped silently, with no error anywhere.
     # `lapsed` is the difference between "you stood up" and "you cleared a row
@@ -957,7 +945,7 @@ def test_rest_complete_reports_lapsed_through_the_response_model(tmp_path):
         assert claimed.status_code == 201, claimed.text
 
         conn = db.connect(db_file)
-        _expire(conn, issue["id"])
+        _expire(clock, conn, issue["id"])
         conn.close()
 
         done = client.post(
@@ -1215,7 +1203,7 @@ def test_rest_yield_is_run_stamped_and_idempotent_without_reassignment(tmp_path)
             assert invalid.status_code == 422
 
 
-def test_rest_yield_conflicts_are_holder_only_and_side_effect_free(tmp_path):
+def test_rest_yield_conflicts_are_holder_only_and_side_effect_free(clock, tmp_path):
     db_path = tmp_path / "rest-yield-conflicts.db"
     app = create_app(db_path)
     with TestClient(app) as client:
@@ -1259,12 +1247,7 @@ def test_rest_yield_conflicts_are_holder_only_and_side_effect_free(tmp_path):
             assert client.get(f"/issues/{issue['id']}/lease").json()["holder_id"] == 2
 
         conn = db.connect(db_path)
-        conn.execute(
-            "UPDATE issue_leases SET expires_at = datetime('now','-1 minute') "
-            "WHERE issue_id = ?",
-            (issue["id"],),
-        )
-        conn.commit()
+        _expire(clock, conn, issue["id"])
         conn.close()
         expired = client.post(
             f"/issues/{issue['id']}/yield",

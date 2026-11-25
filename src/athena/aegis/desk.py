@@ -31,7 +31,7 @@ owns each number. Nothing here is a second source of truth.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 import sqlite3
 
 from athena.aegis import (
@@ -56,7 +56,7 @@ from athena.core import (
     identity,
     notifications,
 )
-from athena.core import run_control_commands, workers
+from athena.core import clock, run_control_commands, workers
 from athena.core.desk_cursors import DESK_CURSOR
 
 SCHEMA = "athena.agent_desk.v2"
@@ -155,7 +155,7 @@ def build_desk(
     """Compose every lane at one database snapshot and observation instant."""
     with db.transaction(conn):
         return _build_desk(
-            conn, actor=actor, now=now if now is not None else datetime.now(UTC)
+            conn, actor=actor, now=now if now is not None else clock.now()
         )
 
 

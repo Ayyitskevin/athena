@@ -48,7 +48,7 @@ import re
 import sqlite3
 
 from athena.aegis import statuses
-from athena.core import access, approvals, identity, tokens
+from athena.core import access, approvals, clock, identity, tokens
 
 SCHEMA = "athena.work_progress.v1"
 
@@ -89,7 +89,7 @@ _STATUS_CATEGORY_SQL = statuses.category_sql(
 
 
 def _now(now: datetime | None) -> datetime:
-    current = datetime.now(UTC) if now is None else now
+    current = clock.now() if now is None else now
     return current.replace(tzinfo=UTC) if current.tzinfo is None else current
 
 

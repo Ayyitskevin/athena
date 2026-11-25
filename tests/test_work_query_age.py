@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from support import lapse_lease
 
 from athena.aegis import issue_query, work_progress
 from athena.core import db, work_query
@@ -81,7 +82,7 @@ def _make_old(db_file, issue_id, *, days):
     )
 
 
-def _claim(client, agent, issue_id):
+def _claim(client, agent, issue_id, lease_seconds=None):
     client.post(
         f"/issues/{issue_id}/delegate",
         json={"user_id": agent["user"]["id"]},
@@ -90,6 +91,7 @@ def _claim(client, agent, issue_id):
     read = client.get(f"/issues/{issue_id}", headers=_bearer(agent))
     claimed = client.post(
         f"/issues/{issue_id}/claim",
+        json=None if lease_seconds is None else {"lease_seconds": lease_seconds},
         headers={
             **_bearer(agent),
             "If-Match": read.headers["ETag"],
@@ -257,20 +259,18 @@ def test_sort_idle_desc_puts_the_longest_idle_first(tmp_path):
 # ── claimed follows the lease clock ─────────────────────────────────────────
 
 
-def test_is_unclaimed_excludes_an_issue_with_a_live_lease(tmp_path):
+def test_is_unclaimed_excludes_an_issue_with_a_live_lease(clock, tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
         agent = _agent(c)
         held = _issue(c, "held")
         _claim(c, agent, held["id"])
+        # The shortest lease there is: the app's clock passes it and leaves the
+        # held one live.
         lapsed = _issue(c, "lapsed")
-        _claim(c, agent, lapsed["id"])
-        _sql(
-            db_file,
-            "UPDATE issue_leases SET expires_at = ? WHERE issue_id = ?",
-            (_ago(hours=1), lapsed["id"]),
-        )
+        _claim(c, agent, lapsed["id"], lease_seconds=60)
+        lapse_lease(clock, db_file, lapsed["id"])
         _issue(c, "free")
 
         assert "held" not in _titles(c, "is:unclaimed")

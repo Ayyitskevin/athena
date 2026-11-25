@@ -46,7 +46,7 @@ from athena.core import (
     webhooks,
     workers,
 )
-from athena.core import identity, tokens
+from athena.core import clock, identity, tokens
 
 SCHEMA = "athena.fleet_attention.v1"
 
@@ -58,7 +58,7 @@ _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def _normalized_now(now: datetime | None) -> datetime:
-    current = datetime.now(UTC) if now is None else now
+    current = clock.now() if now is None else now
     return current.replace(tzinfo=UTC) if current.tzinfo is None else current
 
 

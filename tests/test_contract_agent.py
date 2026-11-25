@@ -7,9 +7,8 @@ played the agent. This one does. A seat, built from the MCP config Athena
 emits for its token, works through ``build_server`` with the ``seat`` profile
 over the MCP protocol, using only tools that profile carries. A second seat
 and the operator act through their own clients where a scenario needs them,
-and a lease lapses by moving its stored expiry into the past (the clock
-``tests/test_desk.py`` and ``tests/test_delegation_lease.py`` use), never by
-sleeping.
+and a lease lapses as it does in use: the app's clock (G6) moves past its
+expiry, and nothing writes the lease row or sleeps.
 
 The run asserts progress, not status codes:
 
@@ -40,6 +39,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 import pytest
 from support import (
+    AppClock,
     McpAgent as Agent,
     Meter,
     lapse_lease,
@@ -69,6 +69,7 @@ class Board:
     seats: dict[str, dict[str, Any]]  # name -> onboarding answer
     issues: dict[str, int]
     project_id: int
+    clock: AppClock
     facts: dict[str, Any] = field(default_factory=dict)  # what one scenario hands on
 
     def ok(self, response, status: int = 200) -> Any:
@@ -102,7 +103,7 @@ class Board:
         )
 
     def lapse(self, issue_id: int) -> None:
-        lapse_lease(self.db_file, issue_id)
+        lapse_lease(self.clock, self.db_file, issue_id)
 
     def server_for(self, name: str) -> Any:
         """The server athena-mcp builds from the config Athena emitted for this
@@ -111,7 +112,7 @@ class Board:
 
 
 @pytest.fixture
-def board(tmp_path):
+def board(clock, tmp_path):
     db_file = tmp_path / "contract.db"
     app = create_app(db_file)
     with TestClient(app) as anonymous:
@@ -143,7 +144,7 @@ def board(tmp_path):
             seats[name] = onboarded.json()
         project = operator.post("/projects", json={"name": "Contract", "key": "CON"})
         assert project.status_code == 201, project.text
-        board = Board(app, db_file, operator, 1, seats, {}, project.json()["id"])
+        board = Board(app, db_file, operator, 1, seats, {}, project.json()["id"], clock)
         # The seat is gated on closing an issue, as athena-demo gates Sol.
         board.ok(
             operator.put(

@@ -977,7 +977,7 @@ def test_c6_disjoint_paths_are_both_fenced_without_a_root_catalog(fleet, monkeyp
     assert [r.tool for agent in agents.values() for r in agent.meter.refusals] == []
 
 
-def test_c4_a_lapsed_lease_reaches_the_conductor_that_delegated_it(fleet):
+def test_c4_a_lapsed_lease_reaches_the_conductor_that_delegated_it(clock, fleet):
     async def scene(fleet: Fleet, agents: dict[str, FleetAgent]) -> None:
         conductor, seat = agents["conductor"], agents["design"]
         made = await conductor.call(
@@ -1001,7 +1001,7 @@ def test_c4_a_lapsed_lease_reaches_the_conductor_that_delegated_it(fleet):
             "claim_issue", issue_id=issue_id, if_match=context["issue_etag"]
         )
         await conductor.start()
-        lapse_lease(fleet.db_file, issue_id)  # the holder went away
+        lapse_lease(clock, fleet.db_file, issue_id)  # the holder went away
 
         # One wait_for_events call is enough: it observes the lapse on entry.
         page = await conductor.call("wait_for_events", after=conductor.cursor, wait=0)

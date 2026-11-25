@@ -12,15 +12,15 @@ since I looked" are different facts, and collapsing them would make a fresh
 agent believe it was caught up.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
-from support import declare_seat
+from support import declare_seat, lapse_lease
 
 from athena.aegis import desk, desk_commands
-from athena.core import db
+from athena.core import db, packet_time
 from athena.main import create_app
 from athena.mcp.client import AthenaClient, AthenaError
 
@@ -75,16 +75,10 @@ def _claimed_issue(client, agent, title="work"):
     return issue
 
 
-def _expire(db_file, issue_id):
-    """Force one lease into the past — a holder that walked away. Same row, and
-    every derived `active` flips with no write of ours."""
-    conn = db.connect(db_file)
-    conn.execute(
-        "UPDATE issue_leases SET expires_at = '2000-01-01 00:00:00' WHERE issue_id = ?",
-        (issue_id,),
-    )
-    conn.commit()
-    conn.close()
+def _expire(clock, db_file, issue_id):
+    """The app's clock passes one lease's expiry — a holder that walked away.
+    Same row, and every derived `active` flips with no write at all."""
+    lapse_lease(clock, db_file, issue_id)
 
 
 # --- shape and zero state ---------------------------------------------------
@@ -239,7 +233,7 @@ def test_a_kill_request_appears_for_the_worker_owner_only_while_unconfirmed(tmp_
         assert _desk(client, bearer)["asks"]["worker_kill_requests"]["items"] == []
 
 
-def test_leases_show_what_i_hold_with_the_clocks_verdict(tmp_path):
+def test_leases_show_what_i_hold_with_the_clocks_verdict(clock, tmp_path):
     # WHY: `active` is derived at read time from expires_at, never stored, so a
     # lapsed lease reads as lapsed the instant it lapses. An expired row stays
     # VISIBLE on purpose — losing a lease silently is worse than seeing it.
@@ -270,13 +264,9 @@ def test_leases_show_what_i_hold_with_the_clocks_verdict(tmp_path):
         assert held["items"][0]["active"] is True
         assert held["items"][0]["generation"]  # 0057 fencing rides along
 
-    # Expire it in the past: same row, and the derived flag flips with no write.
+    # The clock passes it: same row, and the derived flag flips with no write.
+    _expire(clock, db_file, issue["id"])
     conn = db.connect(db_file)
-    conn.execute(
-        "UPDATE issue_leases SET expires_at = '2000-01-01 00:00:00' WHERE issue_id = ?",
-        (issue["id"],),
-    )
-    conn.commit()
     from athena.aegis import leases
 
     lapsed = leases.leases_held_by(conn, holder_id=sol["user"]["id"])
@@ -284,7 +274,7 @@ def test_leases_show_what_i_hold_with_the_clocks_verdict(tmp_path):
     assert len(lapsed) == 1 and lapsed[0]["active"] is False
 
 
-def test_a_lapsed_lease_leaves_held_and_appears_under_lapsed(tmp_path):
+def test_a_lapsed_lease_leaves_held_and_appears_under_lapsed(clock, tmp_path):
     # WHY: "held" has to be true. A lease row outlives its window — nothing
     # sweeps it — so a desk that lists every row it owns reports work the agent
     # lost as work it is doing, and `total` counts it. The row is not hidden:
@@ -307,7 +297,7 @@ def test_a_lapsed_lease_leaves_held_and_appears_under_lapsed(tmp_path):
         assert held["lapsed"] == []
         assert held["lapsed_total"] == 0
 
-        _expire(db_file, issue["id"])
+        _expire(clock, db_file, issue["id"])
 
         after = _desk(client, bearer)["work"]["leases"]
         assert after["items"] == []
@@ -334,25 +324,25 @@ def test_one_desk_read_keeps_lease_lanes_consistent_across_expiry(
         issue = _claimed_issue(client, agent)
         conn = db.connect(db_file)
         try:
-            conn.execute(
-                "UPDATE issue_leases SET expires_at = ? WHERE issue_id = ?",
-                ("2030-01-01 00:00:01", issue["id"]),
-            )
-            conn.commit()
+            expiry = leases.get_lease(conn, issue["id"])["expires_at"]
         finally:
             conn.close()
 
-        class CrossingClock(datetime):
-            observed = datetime(2030, 1, 1, tzinfo=UTC)
+        class CrossingClock:
+            """The app's one clock as the desk and the lease reads see it, a
+            second later at every read, starting a second before the lease's
+            expiry: a second read lands on the expiry, where it has lapsed."""
+
+            observed = packet_time.parse(expiry) - timedelta(seconds=1)
 
             @classmethod
-            def now(cls, tz=None):
+            def now(cls):
                 value = cls.observed
                 cls.observed += timedelta(seconds=1)
-                return value if tz is None else value.astimezone(tz)
+                return value
 
-        monkeypatch.setattr(desk, "datetime", CrossingClock)
-        monkeypatch.setattr(leases, "datetime", CrossingClock)
+        monkeypatch.setattr(desk, "clock", CrossingClock)
+        monkeypatch.setattr(leases, "clock", CrossingClock)
         board = _desk(client, _bearer(agent))
 
     lane = board["work"]["leases"]
@@ -365,7 +355,7 @@ def test_one_desk_read_keeps_lease_lanes_consistent_across_expiry(
     assert board["office"]["chair"]["issue_id"] == issue["id"]
 
 
-def test_a_lapsed_lease_on_a_done_issue_is_shown_to_its_holder(tmp_path):
+def test_a_lapsed_lease_on_a_done_issue_is_shown_to_its_holder(clock, tmp_path):
     # WHY: marking work done does not release its coordination row. Hiding
     # that row prevents its holder from seeing and deliberately settling it.
     app, db_file = _app(tmp_path)
@@ -374,7 +364,10 @@ def test_a_lapsed_lease_on_a_done_issue_is_shown_to_its_holder(tmp_path):
         sol = _agent(client)
         bearer = _bearer(sol)
         issue = _claimed_issue(client, sol)
-        _expire(db_file, issue["id"])
+        expiry = client.get(f"/issues/{issue['id']}/lease", headers=bearer).json()[
+            "expires_at"
+        ]
+        _expire(clock, db_file, issue["id"])
 
         closed = client.patch(
             f"/issues/{issue['id']}", json={"status": "done"}, headers=H1
@@ -387,7 +380,7 @@ def test_a_lapsed_lease_on_a_done_issue_is_shown_to_its_holder(tmp_path):
         assert leases_lane["lapsed"][0]["issue_done"] is True
         assert leases_lane["lapsed_total"] == 1
         assert leases_lane["lapsed_clipped"] is False
-        assert leases_lane["lapsed_oldest_expires_at"] == "2000-01-01T00:00:00Z"
+        assert leases_lane["lapsed_oldest_expires_at"] == expiry
         assert leases_lane["lapsed_oldest_expires_in_seconds"] == 0
 
         # The owning surface still shows the last holder.
@@ -397,7 +390,7 @@ def test_a_lapsed_lease_on_a_done_issue_is_shown_to_its_holder(tmp_path):
         assert row.json()["active"] is False
 
 
-def test_lapsed_total_counts_open_and_done_rows_without_changing_them(tmp_path):
+def test_lapsed_total_counts_open_and_done_rows_without_changing_them(clock, tmp_path):
     # WHY: open and done are issue states, not different lease lifecycles.
     # Both expired rows still belong to this holder and must remain visible.
     app, db_file = _app(tmp_path)
@@ -407,8 +400,8 @@ def test_lapsed_total_counts_open_and_done_rows_without_changing_them(tmp_path):
         bearer = _bearer(sol)
         still_open = _claimed_issue(client, sol, title="open work")
         finished = _claimed_issue(client, sol, title="finished work")
-        _expire(db_file, still_open["id"])
-        _expire(db_file, finished["id"])
+        _expire(clock, db_file, still_open["id"])
+        _expire(clock, db_file, finished["id"])
         assert (
             client.patch(
                 f"/issues/{finished['id']}", json={"status": "done"}, headers=H1
@@ -424,7 +417,7 @@ def test_lapsed_total_counts_open_and_done_rows_without_changing_them(tmp_path):
         assert leases_lane["lapsed_total"] == 2
 
 
-def test_lapsed_done_visibility_survives_real_client_and_is_self_only(tmp_path):
+def test_lapsed_done_visibility_survives_real_client_and_is_self_only(clock, tmp_path):
     # A custom status uses the owning category rule, not literal "done".
     # Seeing it through the client is read-only and grants no admin release.
     app, db_file = _app(tmp_path)
@@ -450,7 +443,7 @@ def test_lapsed_done_visibility_survives_real_client_and_is_self_only(tmp_path):
             headers=H1,
         )
         assert closed.status_code == 200, closed.text
-        _expire(db_file, issue["id"])
+        _expire(clock, db_file, issue["id"])
         generation = client.get(
             f"/issues/{issue['id']}/lease", headers=_bearer(holder)
         ).json()["generation"]
@@ -477,9 +470,11 @@ def test_lapsed_done_visibility_survives_real_client_and_is_self_only(tmp_path):
         assert before == after
 
 
-def test_lapsed_bounds_do_not_claim_oldest_from_a_clipped_claim_order(tmp_path):
+def test_lapsed_bounds_do_not_claim_oldest_from_a_clipped_claim_order(clock, tmp_path):
     # The oldest expiry is deliberately the oldest claim, outside the page.
     # A minimum over the returned page must not be passed off as a full-set age.
+    # Each lease is claimed after the one before it lapsed, so claims and
+    # expiries both run oldest first.
     app, db_file = _app(tmp_path)
     with TestClient(app) as client:
         _bootstrap(client)
@@ -488,15 +483,7 @@ def test_lapsed_bounds_do_not_claim_oldest_from_a_clipped_claim_order(tmp_path):
         for index in range(22):
             issue = _claimed_issue(client, holder, title=f"work {index}")
             ids.append(issue["id"])
-            _expire(db_file, issue["id"])
-        conn = db.connect(db_file)
-        conn.execute(
-            "UPDATE issue_leases SET claimed_at = '1998-01-01 00:00:00', "
-            "expires_at = '1999-01-01 00:00:00' WHERE issue_id = ?",
-            (ids[0],),
-        )
-        conn.commit()
-        conn.close()
+            _expire(clock, db_file, issue["id"])
         lane = _desk(client, _bearer(holder))["work"]["leases"]
         assert lane["lapsed_total"] == 22
         assert len(lane["lapsed"]) == lane["limit"] == 20
@@ -505,7 +492,7 @@ def test_lapsed_bounds_do_not_claim_oldest_from_a_clipped_claim_order(tmp_path):
         assert lane["lapsed_oldest_expires_at"] is None
 
 
-def test_lapsed_projection_does_not_invent_a_missing_original(tmp_path):
+def test_lapsed_projection_does_not_invent_a_missing_original(clock, tmp_path):
     # Defensive reader proof on a deliberately damaged disposable fixture.
     # The normal FK cascade removes the lease; bypassing it here tests only
     # the existing missing-original read behavior, never production repair.
@@ -516,7 +503,7 @@ def test_lapsed_projection_does_not_invent_a_missing_original(tmp_path):
         _bootstrap(client)
         holder = _agent(client)
         issue = _claimed_issue(client, holder)
-        _expire(db_file, issue["id"])
+        _expire(clock, db_file, issue["id"])
     conn = db.connect(db_file)
     conn.execute("PRAGMA foreign_keys = OFF")
     conn.execute("DELETE FROM issues WHERE id = ?", (issue["id"],))

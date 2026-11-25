@@ -19,7 +19,7 @@ from athena.aegis import (
     statuses,
     work_progress,
 )
-from athena.core import access, agent_run_checkins, db
+from athena.core import access, agent_run_checkins, clock, db
 
 
 SCHEMA = "athena.fleet_active_work.v1"
@@ -615,7 +615,7 @@ def _positive_bounded_int(value: object, *, name: str, maximum: int) -> int:
 
 
 def _utc_now(now: datetime | None) -> datetime:
-    current = datetime.now(UTC) if now is None else now
+    current = clock.now() if now is None else now
     if current.tzinfo is None:
         return current.replace(tzinfo=UTC)
     return current.astimezone(UTC)

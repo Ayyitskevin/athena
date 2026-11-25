@@ -16,7 +16,6 @@ MCP share one boundary.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 import re
 import secrets
 import sqlite3
@@ -47,6 +46,7 @@ from athena.core import (
     access,
     activity,
     budgets,
+    clock,
     coordination_roots,
     db,
     identity,
@@ -1365,7 +1365,7 @@ def complete_claim(
     with db.transaction(conn, immediate=True):
         # Only extensions strengthen possession authority. The clock is sampled
         # after the writer reservation, never before a competing writer's wait.
-        extension_stamp = leases.clock_stamp(datetime.now(UTC)) if extended else None
+        extension_stamp = leases.clock_stamp(clock.now()) if extended else None
         issue = _visible_issue(conn, actor, issue_id)
         _claimant_or_reject(conn, issue, actor)
         existing = leases.get_lease(conn, issue_id)

@@ -30,7 +30,7 @@ from datetime import UTC, datetime, timedelta
 import sqlite3
 
 from athena.aegis import issues, leases, ready_queue, statuses, work_progress
-from athena.core import work_query
+from athena.core import clock, work_query
 from athena.core.work_query import Query
 
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -262,7 +262,7 @@ def compile_query(
     ``now`` is the one clock every time-relative atom (``idle:``, ``age:``,
     ``is:claimed``) is measured against; it defaults to the current UTC time.
     """
-    current = datetime.now(UTC) if now is None else now
+    current = clock.now() if now is None else now
     if current.tzinfo is None:
         current = current.replace(tzinfo=UTC)
     current = current.astimezone(UTC)

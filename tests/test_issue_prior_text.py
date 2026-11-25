@@ -572,7 +572,7 @@ def test_a_bearer_link_mention_on_an_issue_needs_the_tag(tmp_path):
         assert prior["prior_body"] == "see WRK-1 here"
 
 
-def test_a_seat_whose_lease_lapsed_still_edits_with_a_fresh_tag(tmp_path):
+def test_a_seat_whose_lease_lapsed_still_edits_with_a_fresh_tag(clock, tmp_path):
     """FLEET-10's third sentence is narrowed, not closed: the lapsed seat can no
     longer edit blind, but a fresh read gives it the tag. F10 adds no lease
     requirement; the edit is kept and can be undone."""
@@ -587,7 +587,7 @@ def test_a_seat_whose_lease_lapsed_still_edits_with_a_fresh_tag(tmp_path):
             headers={"If-Match": _etag(client, issue_id)},
         )
         assert claimed.status_code == 201, claimed.text
-        lapse_lease(db_file, issue_id)
+        lapse_lease(clock, db_file, issue_id)
         assert (
             client.get(f"/issues/{issue_id}/lease", headers=ADMIN).json()["active"]
             is False

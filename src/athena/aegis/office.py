@@ -10,7 +10,7 @@ spawn a process, or invent a git remote.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 import sqlite3
 
 from athena.aegis import (
@@ -22,7 +22,7 @@ from athena.aegis import (
     rooms,
     statuses,
 )
-from athena.core import access, db, fleet_roster, users
+from athena.core import access, clock, db, fleet_roster, users
 
 FLOOR_SCHEMA = "athena.project_floor.v1"
 
@@ -105,7 +105,7 @@ def build_office(
         return _build_office(
             conn,
             actor=actor,
-            now=now if now is not None else datetime.now(UTC),
+            now=now if now is not None else clock.now(),
             inbox_items=inbox_items,
         )
 

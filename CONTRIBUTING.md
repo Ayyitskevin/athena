@@ -422,7 +422,11 @@ login, and starts Athena. It refuses to overwrite an existing path.
    `tests/support.py` (the first user, more accounts, agents, tokens of a given
    scope set, clients that act as an account, the activity trail) rather than
    declaring another `_bootstrap`; `tests/test_suite_conventions.py` fails if the
-   count of files that do rises, or if a test waits with `time.sleep`.
+   count of files that do rises, or if a test waits with `time.sleep`. A test
+   that needs time to pass takes the `clock` fixture (`tests/conftest.py`): it
+   holds the app's one clock (`src/athena/core/clock.py`) still and moves it by
+   hand, and `support.lapse_lease(clock, db_file, issue_id)` lapses a lease by
+   moving the clock past its expiry, never by rewriting the stored expiry.
 4. If the change is notable to a reader of the changelog, add a fragment under
    `changelog.d/` (see [Changelog entries](#changelog-entries)); do not edit
    `CHANGELOG.md` by hand.

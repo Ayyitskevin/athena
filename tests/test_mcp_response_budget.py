@@ -351,7 +351,7 @@ def _plan(world: dict[str, Any], admin: TestClient) -> list[Step]:
     ]
 
 
-def _play_every_tool(tmp_path, monkeypatch, *, maxima: bool):
+def _play_every_tool(tmp_path, monkeypatch, *, maxima: bool, clock=None):
     """Every budgeted tool called once over the protocol against the seeded
     workspace: the size of each answer, and the answer itself. With ``maxima``
     the seat's desk also has every lane at its declared maximum."""
@@ -368,6 +368,7 @@ def _play_every_tool(tmp_path, monkeypatch, *, maxima: bool):
                 seat=world["seat"],
                 other=world["reviewer"],
                 project_id=world["project"]["id"],
+                clock=clock,
             )
         bearer = {"Authorization": f"Bearer {world['seat']['token']['token']}"}
         seat_http = TestClient(app, headers=bearer)
@@ -458,10 +459,10 @@ def _play_every_tool(tmp_path, monkeypatch, *, maxima: bool):
 
 
 @pytest.fixture
-def budget_run(tmp_path, monkeypatch):
+def budget_run(clock, tmp_path, monkeypatch):
     """The contract's workspace: the large rows, and the seat's desk with every
     lane at its declared maximum (F3)."""
-    yield from _play_every_tool(tmp_path, monkeypatch, maxima=True)
+    yield from _play_every_tool(tmp_path, monkeypatch, maxima=True, clock=clock)
 
 
 @pytest.fixture

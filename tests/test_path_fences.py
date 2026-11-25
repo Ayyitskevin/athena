@@ -289,10 +289,10 @@ def test_a_renewal_keeps_its_own_paths_and_does_not_fence_itself(world):
     assert world.lease(first)["declared_paths"] == ["src/a", "src/a/x"]
 
 
-def test_an_expired_or_settled_lease_no_longer_fences(world):
+def test_an_expired_or_settled_lease_no_longer_fences(clock, world):
     first, second, third = world.issue(2), world.issue(3), world.issue(4)
     held = granted(world.claim(2, first, paths=["src/a"]))
-    lapse_lease(world.db_file, first)
+    lapse_lease(clock, world.db_file, first)
     taken = granted(world.claim(3, second, paths=["src/a"]))
     completed = world.client.post(
         f"/issues/{second}/complete",

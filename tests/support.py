@@ -33,6 +33,7 @@ from collections import Counter
 from collections.abc import AsyncIterator, Coroutine, Iterable, Mapping
 import contextlib
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
 import sqlite3
@@ -42,6 +43,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db, fleet_seat_commands, refusal_codes
+from athena.core import clock as app_clock
 from athena.main import create_app
 
 if TYPE_CHECKING:  # the MCP helpers import these lazily: most tests never need them
@@ -301,20 +303,65 @@ def lease_facts(lease: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def lapse_lease(db_file: Path, issue_id: int) -> None:
-    """The clock passes the issue's lease expiry: its stored ``expires_at`` moves
-    into the past, as ``tests/test_desk.py`` lapses a lease. The app has no
-    injectable clock, and a test never sleeps."""
+class AppClock:
+    """The app's one clock (``athena.core.clock``, G6), held still and moved by
+    hand. A test gets one from the ``clock`` fixture in ``tests/conftest.py``,
+    which installs it before the test and puts the system clock back after.
+
+    It does not tick: every read is the instant it was last moved to, so a test
+    says exactly when time passes. It starts at the current second, so what
+    still reads the system clock (``julianday('now')``, a bare
+    ``datetime.now()``) stays close to it until the test moves it on."""
+
+    def __init__(self, start: datetime) -> None:
+        self._at = start
+
+    def now(self) -> datetime:
+        return self._at
+
+    def advance(self, **delta: float) -> datetime:
+        """Move the clock forward by ``timedelta(**delta)``; never backward."""
+        step = timedelta(**delta)
+        if step < timedelta(0):
+            raise ValueError("the clock only moves forward")
+        self._at += step
+        return self._at
+
+    def pass_expiry(self, expires_at: str) -> datetime:
+        """Move the clock one second past a stored expiry (``2026-11-21
+        18:19:13``), unless it is already there: from that instant the expiry
+        is in the past, the clock's verdict on it is lapsed."""
+        expiry = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+        if self._at <= expiry:
+            self._at = expiry + timedelta(seconds=1)
+        return self._at
+
+
+def restore_system_clock() -> bool:
+    """Put the system clock back if anything replaced the app's clock; say
+    whether it had to. The autouse guard in ``tests/conftest.py`` runs this
+    before and after every test, so a test that leaves a replaced clock behind
+    fails instead of handing it to the next test."""
+    leaked = app_clock.replaced()
+    if leaked:
+        app_clock._source = app_clock._system
+    return leaked
+
+
+def lapse_lease(clock: AppClock, db_file: Path, issue_id: int) -> None:
+    """Time passes the issue's lease expiry: the app's clock moves one second
+    past it. The lease row is read, never written; any lease that expires no
+    later lapses with it, and one that expires later stays live. A test never
+    sleeps."""
     conn = db.connect(db_file)
     try:
-        conn.execute(
-            "UPDATE issue_leases SET expires_at = '2000-01-01 00:00:00' "
-            "WHERE issue_id = ?",
-            (issue_id,),
-        )
-        conn.commit()
+        row = conn.execute(
+            "SELECT expires_at FROM issue_leases WHERE issue_id = ?", (issue_id,)
+        ).fetchone()
     finally:
         conn.close()
+    assert row is not None, f"issue {issue_id} has no lease to lapse"
+    clock.pass_expiry(row["expires_at"])
 
 
 def index_search_without_entry_keys(monkeypatch: Any) -> None:
@@ -566,6 +613,7 @@ def fill_desk_lanes(
     seat: Mapping[str, Any],
     other: Mapping[str, Any],
     project_id: int,
+    clock: AppClock,
 ) -> dict[str, Any]:
     """Fill every lane of ``seat``'s desk one row past its maximum, with texts at
     their longest: ready work, review requests, run controls, worker stop
@@ -576,7 +624,9 @@ def fill_desk_lanes(
     ``admin`` acts as the operator (an admin client). ``seat`` and ``other`` are
     onboarded agents; ``seat`` needs ``docs:write`` for its notebook. The caller
     turns the token rate limit off (``config.TOKEN_RATE_LIMIT_PER_MINUTE = 0``):
-    this is several hundred requests. Returns the maxima used and the ids made."""
+    this is several hundred requests. The leases lapse as they do in use: the
+    app's ``clock`` (the ``clock`` fixture) passes their expiry, a minute on, and
+    leaves the held ones live. Returns the maxima used and the ids made."""
     from athena import config
 
     maxima = _desk_maxima()
@@ -602,10 +652,10 @@ def fill_desk_lanes(
             ok(admin.post(f"/issues/{made}/delegate", json={"user_id": user_id}), 201)
         return made
 
-    def claim(client: TestClient, issue_id: int) -> str:
+    def claim(client: TestClient, issue_id: int, **body: Any) -> str:
         tag = client.get(f"/issues/{issue_id}").headers["ETag"]
         held = client.post(
-            f"/issues/{issue_id}/claim", json={}, headers={"If-Match": tag}
+            f"/issues/{issue_id}/claim", json=body, headers={"If-Match": tag}
         )
         return ok(held, 201)["generation"]
 
@@ -696,10 +746,12 @@ def fill_desk_lanes(
         claim(as_seat, handed)
         made["handed"].append(handed)
 
+    # The shortest lease there is, so the clock can pass these and leave the
+    # held ones live.
     made["lapsed"] = []
     for n in range(maxima["leases"] + extra):
         lapsed = issue(f"lapsed {n}", seat_id)
-        claim(as_seat, lapsed)
+        claim(as_seat, lapsed, lease_seconds=60)
         made["lapsed"].append(lapsed)
 
     # The seat's own open questions, which also hold the work back (not_offered).
@@ -721,14 +773,10 @@ def fill_desk_lanes(
     lines = ["l" * NOTEBOOK_LINE_CHARS] * (maxima["notebook_lines"] + extra)
     ok(as_seat.patch(f"/pages/{notebook['id']}", json={"body": "\n".join(lines)}))
 
+    for issue_id in made["lapsed"]:
+        lapse_lease(clock, db_file, issue_id)
     conn = db.connect(db_file)
     try:
-        for issue_id in made["lapsed"]:
-            conn.execute(
-                "UPDATE issue_leases SET expires_at = '2000-01-01 00:00:00' "
-                "WHERE issue_id = ?",
-                (issue_id,),
-            )
         for issue_id in made["waiting"]:
             conn.execute(
                 "UPDATE issue_contributors SET added_at = '2000-01-01 00:00:00' "

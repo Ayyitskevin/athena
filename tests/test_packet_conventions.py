@@ -43,7 +43,15 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 import pytest
-from support import ADMIN, bearer, bootstrap, make_app, onboard_agent
+from support import (
+    ADMIN,
+    AppClock,
+    bearer,
+    bootstrap,
+    lapse_lease,
+    make_app,
+    onboard_agent,
+)
 
 from athena import agent_openapi, config
 from athena.core import db, packet_time
@@ -206,10 +214,11 @@ def _yield_for_input(client: TestClient, issue_id: int) -> None:
     )
 
 
-def seed(tmp_path: Path) -> dict[str, Any]:
+def seed(tmp_path: Path, clock: AppClock) -> dict[str, Any]:
     """A seat (``sol``) whose desk has a row in every lane and every expiry, a
     review issue it holds with a handoff and a review request, and the
-    conductor packets of their project. Returns every packet, read at the end."""
+    conductor packets of their project. Returns every packet, read at the end.
+    The lapsed lease lapses as it does in use: the app's ``clock`` passes it."""
     app, db_file = make_app(tmp_path)
     with TestClient(app) as admin:
         admin.headers.update(ADMIN)
@@ -285,9 +294,10 @@ def seed(tmp_path: Path) -> dict[str, Any]:
             ),
             201,
         )
-        # work.leases.lapsed
+        # work.leases.lapsed: the shortest lease there is, so the clock can
+        # pass it and leave the held ones live.
         lapsed = issue("lapsed for sol", sol_id)
-        _claim(as_sol, lapsed)
+        _claim(as_sol, lapsed, lease_seconds=60)
         # work.waiting_on_operator: sol's own open question
         _yield_for_input(as_sol, issue("asked by sol", sol_id))
         # work.waiting_on: sol delegated, terra has not picked it up
@@ -296,13 +306,9 @@ def seed(tmp_path: Path) -> dict[str, Any]:
         _ok(as_sol.post(f"/issues/{waiting}/delegate", json={"user_id": terra_id}), 201)
         # identity.notebook
         _ok(as_sol.post("/desk/notebook"), 201)
+        lapse_lease(clock, db_file, lapsed)
         conn = db.connect(db_file)
         try:
-            conn.execute(
-                "UPDATE issue_leases SET expires_at = '2000-01-01 00:00:00' "
-                "WHERE issue_id = ?",
-                (lapsed,),
-            )
             conn.execute(
                 "UPDATE issue_contributors SET added_at = '2000-01-01 00:00:00' "
                 "WHERE issue_id = ?",
@@ -345,9 +351,9 @@ def seed(tmp_path: Path) -> dict[str, Any]:
 
 
 @pytest.fixture
-def packets(tmp_path, monkeypatch) -> dict[str, Any]:
+def packets(clock, tmp_path, monkeypatch) -> dict[str, Any]:
     monkeypatch.setattr(config, "TOKEN_RATE_LIMIT_PER_MINUTE", 0)
-    return seed(tmp_path)
+    return seed(tmp_path, clock)
 
 
 def timestamps(value: Any, path: str = "") -> Iterator[tuple[str, str]]:

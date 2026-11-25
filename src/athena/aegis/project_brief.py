@@ -9,7 +9,7 @@ import sqlite3
 from typing import Any
 
 from athena.aegis import lease_commands, leases, projects, statuses
-from athena.core import access, db, packet_time
+from athena.core import access, clock, db, packet_time
 from athena.core.ids import MAX_SQLITE_INTEGER
 
 DEFAULT_LIMIT = 5
@@ -108,7 +108,7 @@ def build_project_brief(
             or not 1 <= value <= maximum
         ):
             raise ValueError(f"{name} must be an integer between 1 and {maximum}")
-    current = datetime.now(UTC) if now is None else now
+    current = clock.now() if now is None else now
     current = (
         current.replace(tzinfo=UTC)
         if current.tzinfo is None

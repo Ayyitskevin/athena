@@ -45,7 +45,7 @@ import sqlite3
 from typing import Literal
 
 from athena.aegis import ready_queue, work_progress
-from athena.core import access
+from athena.core import access, clock
 
 #: A run that recorded real work within this window is moving. Thirty minutes is
 #: one default lease (``leases.DEFAULT_LEASE_SECONDS``): a run that holds work for
@@ -79,7 +79,7 @@ MEANING = (
 
 
 def _now(now: datetime | None) -> datetime:
-    current = datetime.now(UTC) if now is None else now
+    current = clock.now() if now is None else now
     if current.tzinfo is None:
         current = current.replace(tzinfo=UTC)
     return current.astimezone(UTC)

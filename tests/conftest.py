@@ -12,6 +12,7 @@ the test (e.g. `monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)`).
 effect immediately.
 """
 
+from datetime import UTC, datetime
 import functools
 
 import fastapi.dependencies.models as fastapi_dependency_models
@@ -19,8 +20,10 @@ import httpx
 import hypothesis
 from fastapi.testclient import TestClient
 import pytest
+import support
 
 from athena import config
+from athena.core import clock as app_clock
 from athena.core import db, passwords, users_api
 
 _TEST_BOOTSTRAP_TOKEN = "test-bootstrap-token-0000000000000001"
@@ -83,6 +86,39 @@ def bootstrap_enabled_for_unrelated_tests(monkeypatch):
         return original_request(self, method, url, **kwargs)
 
     monkeypatch.setattr(TestClient, "request", request_with_bootstrap)
+
+
+@pytest.fixture(autouse=True)
+def the_system_clock_between_tests():
+    """No test starts or ends with the app's clock replaced (G6).
+
+    The ``clock`` fixture puts the system clock back itself; this catches
+    anything else that replaced it, restores it, and fails the test that did,
+    so a frozen clock can never reach the next test in the worker."""
+    assert not support.restore_system_clock(), (
+        "the app's clock was already replaced when this test started"
+    )
+    yield
+    if support.restore_system_clock():
+        pytest.fail(
+            "this test left the app's clock replaced; use the `clock` fixture, "
+            "which puts the system clock back"
+        )
+
+
+@pytest.fixture
+def clock():
+    """The app's one clock, held still at the current second and moved by hand
+    (``support.AppClock``): ``clock.advance(minutes=31)`` and
+    ``support.lapse_lease(clock, db_file, issue_id)`` pass time without a
+    sleep or a write. Request it before the app: a connection opened earlier
+    keeps SQLite's own ``datetime('now')`` (see ``athena.core.clock``)."""
+    manual = support.AppClock(datetime.now(UTC).replace(microsecond=0))
+    app_clock._source = manual.now
+    try:
+        yield manual
+    finally:
+        app_clock._source = app_clock._system
 
 
 @pytest.fixture(autouse=True)

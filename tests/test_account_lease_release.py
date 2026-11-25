@@ -32,6 +32,7 @@ import pytest
 
 from support import (
     ADMIN,
+    AppClock,
     add_user,
     as_user,
     bearer,
@@ -54,7 +55,7 @@ def _issue(client: TestClient, title: str, **fields) -> dict:
     return response.json()
 
 
-def _claim(client: TestClient, agent: dict, issue_id: int) -> dict:
+def _claim(client: TestClient, agent: dict, issue_id: int, **body) -> dict:
     delegated = client.post(
         f"/issues/{issue_id}/delegate",
         json={"user_id": agent["user"]["id"]},
@@ -64,6 +65,7 @@ def _claim(client: TestClient, agent: dict, issue_id: int) -> dict:
     read = client.get(f"/issues/{issue_id}", headers=bearer(agent))
     claimed = client.post(
         f"/issues/{issue_id}/claim",
+        json=body or None,
         headers={**bearer(agent), "If-Match": read.headers["ETag"]},
     )
     assert claimed.status_code in (200, 201), claimed.text
@@ -122,7 +124,7 @@ def _act(client: TestClient, act: str, user_id: int, **params):
 
 
 @pytest.mark.parametrize("act", sorted(_ACTS))
-def test_each_act_names_the_active_leases_and_releases_nothing(tmp_path, act):
+def test_each_act_names_the_active_leases_and_releases_nothing(clock, tmp_path, act):
     """The baseline said nothing. Without the option nothing is released: the
     lease and its fence stay exactly as they were, and no event is written."""
     app, db_file = make_app(tmp_path)
@@ -134,9 +136,10 @@ def test_each_act_names_the_active_leases_and_releases_nothing(tmp_path, act):
         free = _issue(client, "not held")
         lease_one = _claim(client, agent, first["id"])
         lease_two = _claim(client, agent, second["id"])
-        # A lapsed row is not an active lease, so the act does not name it.
-        _claim(client, agent, free["id"])
-        lapse_lease(db_file, free["id"])
+        # A lapsed row is not an active lease, so the act does not name it. The
+        # shortest lease there is: the clock passes it and leaves the others.
+        _claim(client, agent, free["id"], lease_seconds=60)
+        lapse_lease(clock, db_file, free["id"])
 
         answer = _act(client, act, agent["user"]["id"])
         assert answer.status_code == 200, answer.text
@@ -437,16 +440,16 @@ def test_mcp_tools_pass_the_option_and_return_the_leases(tmp_path):
 
 
 def _dead_agent_with_lapsed_lease(
-    client: TestClient, db_file, *, assignee_id: int = 1
+    clock: AppClock, client: TestClient, db_file, *, assignee_id: int = 1
 ) -> tuple[dict, dict]:
     agent = onboard_agent(client, name="Dead Agent")
     issue = _issue(client, "left behind", assignee_id=assignee_id)
     lease = _claim(client, agent, issue["id"])
-    lapse_lease(db_file, issue["id"])
+    lapse_lease(clock, db_file, issue["id"])
     return issue, lease
 
 
-def test_an_admin_settles_a_dead_agents_expired_lease_without_claiming(tmp_path):
+def test_an_admin_settles_a_dead_agents_expired_lease_without_claiming(clock, tmp_path):
     """The baseline answered ``409 claim_required``. Now one ``complete`` with
     the lease's generation settles it: the lapse is recorded (the clock ended
     the possession) and the settlement is ``lease_released`` (the admin cleared
@@ -454,7 +457,7 @@ def test_an_admin_settles_a_dead_agents_expired_lease_without_claiming(tmp_path)
     app, db_file = make_app(tmp_path)
     with TestClient(app) as client:
         admin = bootstrap(client)
-        issue, lease = _dead_agent_with_lapsed_lease(client, db_file)
+        issue, lease = _dead_agent_with_lapsed_lease(clock, client, db_file)
         settled = client.post(
             f"/issues/{issue['id']}/complete",
             json={"generation": lease["generation"]},
@@ -479,13 +482,13 @@ def test_an_admin_settles_a_dead_agents_expired_lease_without_claiming(tmp_path)
     assert events(db_file, "claimed")[0]["actor_id"] != admin["id"]
 
 
-def test_a_lapse_already_recorded_is_not_recorded_twice(tmp_path):
+def test_a_lapse_already_recorded_is_not_recorded_twice(clock, tmp_path):
     """One possession, one lapse: an observer that recorded the lapse first
     leaves the settlement to write only the release."""
     app, db_file = make_app(tmp_path)
     with TestClient(app) as client:
         bootstrap(client)
-        issue, lease = _dead_agent_with_lapsed_lease(client, db_file)
+        issue, lease = _dead_agent_with_lapsed_lease(clock, client, db_file)
         # The assignee's event feed observes the lapse (C4).
         assert client.get("/events", headers=ADMIN).status_code == 200
         assert len(events(db_file, "lease_lapsed")) == 1
@@ -500,14 +503,16 @@ def test_a_lapse_already_recorded_is_not_recorded_twice(tmp_path):
     assert len(events(db_file, "lease_released")) == 1
 
 
-def test_settling_another_accounts_expired_lease_is_fenced_by_generation(tmp_path):
+def test_settling_another_accounts_expired_lease_is_fenced_by_generation(
+    clock, tmp_path
+):
     """Only the holder's own lapsed row may omit the generation. An admin names
     the possession it settles; a missing one is not handed out, and a stale
     one is refused. Each refusal records nothing."""
     app, db_file = make_app(tmp_path)
     with TestClient(app) as client:
         bootstrap(client)
-        issue, lease = _dead_agent_with_lapsed_lease(client, db_file)
+        issue, lease = _dead_agent_with_lapsed_lease(clock, client, db_file)
         missing = client.post(f"/issues/{issue['id']}/complete", headers=ADMIN)
         stale = client.post(
             f"/issues/{issue['id']}/complete",
@@ -524,7 +529,7 @@ def test_settling_another_accounts_expired_lease_is_fenced_by_generation(tmp_pat
     assert events(db_file, "lease_lapsed", "lease_released") == []
 
 
-def test_a_member_still_cannot_settle_another_accounts_expired_lease(tmp_path):
+def test_a_member_still_cannot_settle_another_accounts_expired_lease(clock, tmp_path):
     """The lever is an admin's. A member eligible on the issue is refused as
     before and records nothing."""
     app, db_file = make_app(tmp_path)
@@ -533,7 +538,7 @@ def test_a_member_still_cannot_settle_another_accounts_expired_lease(tmp_path):
         member = add_user(client, "m@e.com")
         # The member is the assignee, so eligible to claim the issue itself.
         issue, lease = _dead_agent_with_lapsed_lease(
-            client, db_file, assignee_id=member["id"]
+            clock, client, db_file, assignee_id=member["id"]
         )
         refused = client.post(
             f"/issues/{issue['id']}/complete",

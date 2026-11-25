@@ -130,15 +130,17 @@ def test_targeted_keyed_retry_preserves_pending_control_and_cursor(desk, monkeyp
     admin, client, user, _ = desk
     clock = datetime.now(UTC).replace(microsecond=0)
 
-    class DeskClock(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return clock.replace(tzinfo=None) if tz is None else clock.astimezone(tz)
+    class DeskClock:
+        """The app's one clock as the desk reads it."""
+
+        @staticmethod
+        def now():
+            return clock
 
     # The desk captures one clock for all lanes; control that public read
     # boundary (the REST desk reads the packet clock, A13) as well as the
     # run-control creation clock below.
-    monkeypatch.setattr(desk_projection, "datetime", DeskClock)
+    monkeypatch.setattr(desk_projection, "clock", DeskClock)
     monkeypatch.setattr(packet_time, "clock", lambda: clock)
     monkeypatch.setattr(
         run_controls,
