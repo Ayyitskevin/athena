@@ -218,18 +218,27 @@ def _build(
 
     # Choose the latest visible native event BEFORE parsing or limiting. Invalid
     # newer reports cannot resurrect a previous PASS. No project-wide Python scan.
+    # Per issue of the project, one walk of that issue's own trail down
+    # idx_activity_target, newest first, stopping at its first visible native
+    # completion (H5): never a walk of every issue event in the workspace,
+    # which is what grouping the completions by issue cost. The indexes and the
+    # join order are named, so statistics cannot turn the read around.
+    latest_gate, latest_params = access.event_visibility_clause(conn, actor, alias="la")
+    latest_gate = f" AND ({latest_gate})" if latest_gate else ""
     latest = (
-        "SELECT MAX(a.id) AS event_id FROM activity a JOIN issues i ON i.id = a.target_id "
-        f"WHERE a.target_kind = 'issue' AND {root} AND a.verb = 'claim_completed' "
-        f"AND a.imported_at IS NULL{event_gate} GROUP BY i.id"
+        "SELECT la.id FROM activity la INDEXED BY idx_activity_target "
+        "WHERE la.target_kind = 'issue' AND la.target_id = i.id "
+        "AND la.verb = 'claim_completed' AND la.imported_at IS NULL"
+        f"{latest_gate} ORDER BY la.id DESC LIMIT 1"
     )
     total, rows = _rows(
         conn,
         columns=f"{_issue_columns('i')}, a.id AS event_id, a.created_at, a.actor_id, "
         "u.name AS actor_name, a.verb, a.imported_at, a.detail",
-        base=f"FROM ({latest}) latest JOIN activity a ON a.id = latest.event_id "
-        "JOIN issues i ON i.id = a.target_id JOIN users u ON u.id = a.actor_id",
-        params=[project_id, *event_params],
+        base="FROM issues i INDEXED BY idx_issues_project "
+        f"CROSS JOIN activity a ON a.id = ({latest}) "
+        f"CROSS JOIN users u ON u.id = a.actor_id WHERE {root}",
+        params=[*latest_params, project_id],
         order="a.id DESC",
         limit=limit,
     )

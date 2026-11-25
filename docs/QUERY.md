@@ -186,6 +186,11 @@ It **composes the two searches that already exist and invents no third**:
 | grammar atoms (`is:open`, `label:infra`, …) | the issue query compiler — issues only |
 | bare words and quoted phrases | full-text search, across issues, pages, and comments |
 
+Full-text search ranks the 1,000 newest matching entries the caller may see
+(`search.RANK_WINDOW`; see [PERFORMANCE.md](PERFORMANCE.md)). A word in fewer
+entries is ranked over all of them; for a commoner word the best hits come from
+its newest entries, and paging stops at the window's end.
+
 Which one applies is decided by **this parser**, not a second notion of
 "grammar-shaped": if `parse()` produced terms, issues come from the compiler;
 if it produced only text, issues come from full-text search like everything
