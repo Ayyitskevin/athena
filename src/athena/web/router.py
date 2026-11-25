@@ -83,6 +83,15 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
     from aegis.delegations, so this route only lays them out. Open to read, like the
     issue list."""
     user = getattr(request.state, "user", None)
+    # The navigation badge's poll (U12), answered before anything else is read:
+    # the badge sits on every page and this is the one route it asks. Its counts
+    # are gated by the session exactly as the badge is (web/nav.py): nothing
+    # signed out, the unread inbox for a member, and the "needs you" number for
+    # an admin. Signed out, the answer carries no poll, so the tab stops asking.
+    if live.wants_panel(request, live.NAV_COUNTS):
+        return get_templates().TemplateResponse(
+            request=request, name="partials/intervene_counts_panel.html"
+        )
     # The steer-by-exception rollup, admin-only because every input is already an
     # admin-scoped read. It is counts and links only — it computes no state of its
     # own, so it can never disagree with the surfaces it points at.

@@ -1,0 +1,3 @@
+{# The navigation badge on its own: what its poll swaps in (U12). #}
+{% from "partials/intervene_counts.html" import intervene_counts %}
+{{- intervene_counts(request.state.nav, live=nav_live(request)) -}}

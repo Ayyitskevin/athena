@@ -50,7 +50,9 @@ from athena.web.issue_html import (
     issue_command_response,
     issue_visible_or_404,
     render_issue_detail,
+    render_issue_supervision,
 )
+from athena.web import live
 from athena.web.render import (
     MAX_PREVIEW_CHARS,
     render_issue_body,
@@ -845,6 +847,10 @@ def issue_detail(
             status_code=404,
         )
 
+    # The supervision block's own poll (U12), past the gate above: a viewer who
+    # may not see the issue is answered the same 404 as for the page.
+    if live.wants_panel(request, live.ISSUE_SUPERVISION):
+        return render_issue_supervision(request, conn, issue)
     return render_issue_detail(request, conn, issue)
 
 

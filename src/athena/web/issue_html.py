@@ -38,6 +38,7 @@ from athena.core import (
     undo,
     users,
 )
+from athena.web import live
 from athena.web.form_errors import BrowserRefusal, is_htmx
 from athena.web.render import render_comment, render_issue_body
 from athena.web.router import get_templates
@@ -136,6 +137,45 @@ def _reflected(request: Request, name: str) -> str:
     return (request.query_params.get(name) or "").strip()[:REFLECTED_MESSAGE_MAX_CHARS]
 
 
+def supervision_context(
+    request: Request, conn: sqlite3.Connection, issue: dict, *, trail: list[dict]
+) -> dict:
+    """What the supervision block reads (aegis/partials/issue_supervision.html):
+    the page builds it once, and the block's own poll builds it alone (U12)."""
+    user = getattr(request.state, "user", None)
+    return {
+        "issue": issue,
+        "activity": trail,
+        "users": users.list_users(conn),
+        "open_claim_handoff": claim_handoffs.get_open_handoff(conn, issue["id"]),
+        # The Claim card reads the lease, never the assignee: the same row
+        # GET /issues/{id}/lease serves (expired rows included, active=False, so
+        # a lapsed lease still names its last holder). Gated by the same
+        # visibility check that read applies, so the card can never show a
+        # holder to a viewer the REST read would answer 404.
+        "lease": (
+            leases.get_lease(conn, issue["id"])
+            if access.can_see_project_or_backlog(conn, user, issue["project_id"])
+            else None
+        ),
+        "is_admin": user is not None and identity.is_admin(user),
+        "live": live.issue_supervision(request, issue["id"]),
+    }
+
+
+def render_issue_supervision(request: Request, conn: sqlite3.Connection, issue: dict):
+    """The supervision block alone: what its poll swaps in (U12)."""
+    user = getattr(request.state, "user", None)
+    trail = activity.list_activity(
+        conn, target_kind="issue", target_id=issue["id"], actor=user
+    )
+    return get_templates().TemplateResponse(
+        request=request,
+        name="aegis/partials/issue_supervision.html",
+        context=supervision_context(request, conn, issue, trail=trail),
+    )
+
+
 def render_issue_detail(
     request: Request,
     conn: sqlite3.Connection,
@@ -196,19 +236,7 @@ def render_issue_detail(
         "inline_image_types": attachments.INLINE_CONTENT_TYPES,
         "is_watching": user is not None
         and notifications.is_watching(conn, user["id"], "issue", issue_id),
-        "users": users.list_users(conn),
         "contributors": contributors.list_contributors(conn, issue_id),
-        "open_claim_handoff": claim_handoffs.get_open_handoff(conn, issue_id),
-        # The Claim card reads the lease, never the assignee: the same row
-        # GET /issues/{id}/lease serves (expired rows included, active=False, so
-        # a lapsed lease still names its last holder). Gated by the same
-        # visibility check that read applies, so the card can never show a
-        # holder to a viewer the REST read would answer 404.
-        "lease": (
-            leases.get_lease(conn, issue_id)
-            if access.can_see_project_or_backlog(conn, user, issue["project_id"])
-            else None
-        ),
         "issue_labels": labels.labels_for_issue(conn, issue_id),
         "all_labels": labels.list_labels(conn),
         "all_projects": visible_projects,
@@ -242,8 +270,9 @@ def render_issue_detail(
         "can_write": can_write,
         # Admins may moderate (delete) any comment, not just their own — drives the
         # per-comment Delete control the same way the server-side override gates it.
-        "is_admin": user is not None and identity.is_admin(user),
-        "activity": trail,
+        # Who holds the work, the run, the last event, the viewer's role and
+        # the block's poll (U12): one builder, shared with the block's refresh.
+        **supervision_context(request, conn, issue, trail=trail),
         # Undo where the operator looks (U9): the History list offers it for the
         # newest undoable event of THIS trail, when the undo engine would accept
         # it from this viewer now (undo.offer: shape, not yet reversed, and the

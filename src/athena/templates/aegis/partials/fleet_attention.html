@@ -158,4 +158,4 @@
 </section>
 {# On a live refresh only, the nav's counts ride along out of band, so the badge
    moves with the card it must match (U6). The full page renders the nav itself. #}
-{% if oob_nav %}{{ intervene_counts(request.state.nav, oob=True) }}{% endif %}
+{% if oob_nav %}{{ intervene_counts(request.state.nav, oob=True, live=nav_live(request)) }}{% endif %}

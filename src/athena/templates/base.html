@@ -106,7 +106,7 @@
             <details class="nav-group" name="athena-nav">
                 <summary>
                     Intervene
-                    {{ intervene_counts(request.state.nav) }}
+                    {{ intervene_counts(request.state.nav, live=nav_live(request)) }}
                 </summary>
                 <div class="nav-menu">
                     <p>Recorded inbox and attention signals, shown apart. Counts only — each links to the surface that owns it.</p>

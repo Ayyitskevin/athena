@@ -224,7 +224,10 @@ Everything the original migration deferred has since shipped:
 - **Fleet attention in the Intervene nav badge** — read per request for
   admins, lazily, only when a page renders the nav (`web/nav.py`); members get
   nothing, not zeros. The badge is the "needs you" total alone; the card's live
-  refresh swaps it out of band so the two never differ (U6).
+  refresh swaps it out of band so the two never differ (U6). The badge also
+  refreshes itself on every page, as a panel of the dashboard route, and an
+  issue page's supervision block refreshes as a panel of the issue route
+  (U12); both use `partials/live.html` like every other live panel.
 - **Issue detail** adopted `.issue-layout` + `.supervision` + `.meta-rail`;
   **Mentor page detail** adopted `.doc-layout` + `.doc-admin` disclosures.
   Their §8 shell rules are gone — the shrink-one-surface-at-a-time path in
