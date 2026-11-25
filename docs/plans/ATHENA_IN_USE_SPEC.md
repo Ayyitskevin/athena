@@ -134,7 +134,11 @@ comment draft that survives a sign-in, a navigation badge and an issue page
 that refresh themselves, and a cockpit that fits a phone and a long name.
 "Wave 8 results" says the same for each. From Wave 9: the cockpit's JSON
 refusals with registered codes, `authored_by` on issue lists, single reads
-and searches, and `valid_statuses` on a bulk row. From Wave 5: the prior text of an edit, its
+and searches, `valid_statuses` on a bulk row, writers that compose inside a
+caller's transaction with a check that holds it, the agent OpenAPI
+document's scopes, 404 and 428 and its build at start, one clock the lease
+lifecycle reads and tests move, and imported comments and pages that name
+no author. From Wave 5: the prior text of an edit, its
 read and its undo, `If-Match` for a bearer edit of a title or body, and the
 idempotency fence scoped to the issue a key names, a key that survives a
 restart with replays marked for the agent, the leases of a stopped
@@ -148,10 +152,10 @@ an idempotency key's state, and learnings that reach an issue's parent and
 siblings. Wave 5 is built. "Wave 5 results" says the same for
 each.
 
-**Next step.** G2 (writers that commit on their own) is being built. Wave 8
-is built except the idle sort that H5 left and the three missing twins the
-parity gate names; what is left of Wave 9 is G1, G3, G5, G6, G7, G9 and B6b
-(G4, G8 and G10 are built; B11 is blocked). Each requirement that removes calls lowers the fleet trial's ceilings
+**Next step.** G9 (documents that drift) is being built. Wave 8 is built
+except the idle sort that H5 left and the three missing twins the parity gate
+names; what is left of Wave 9 is G1, G7, G9 and B6b (G2 to G6, G8 and G10 are
+built; B11 is blocked). Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
 
 **How work is done here.** One requirement, one commit, with the test that
@@ -277,6 +281,64 @@ Found and not fixed:
   shell without the typed values.
 - **U12.** The board and the inbox do not refresh themselves.
 - **C10's three missing twins** remain, as above.
+
+### Wave 9 results (second lanes)
+
+This is G2, G5, G6 and G3, one commit each. G2 and G6 were built by a
+delegated builder from the lead's brief and read, probed and re-run by the
+lead; G5 and G3 were built by the lead.
+
+| Measure | Before | After |
+|---|---|---|
+| Writers that commit whatever their caller is doing | 22, and five functions open `BEGIN IMMEDIATE` by hand | 0 outside two allowed functions, each with its reason in the check: `activity.record` (hands its writer reservation back to its command) and the export's read snapshot (always rolls back). Each converted writer is a savepoint inside a caller's transaction (G2) |
+| A new unconditional commit or hand-written transaction statement | Passed the gate | Fails `check_transaction_commits` (G2) |
+| The token scope an operation needs, in `/openapi-agent.json` | Not stated | The bearer requirement's role list: 127 operations scoped. A `read` token is refused `scope_denied` by 125 of them and by no unscoped one but two that check `admin` only for another account (G5) |
+| 404 and 428 in the agent document | Under `default` | Declared where the route's code refuses with them (G5) |
+| The first request for the agent document | Paid the build, about 3 s | `athena-serve` builds it in a thread once bound; a request during the build waits for it (G5) |
+| Where the lease lifecycle reads the time | `datetime.now` in five places and SQLite's `datetime('now')` in four | `core/clock.py`; tests replace it through a fixture, and a guard fails a test that leaves it replaced (G6) |
+| How a test lapses a lease | Rewrites its stored expiry (36 files) | Moves the clock past it; the tests that still write an expiry plant stored data on purpose, each named (G6) |
+| The author of an imported comment, page or page version | The local account the import matched | `null`, from a mark migration 0094 adds; a native edit makes the text its editor's own (G3) |
+
+Decisions the lead took while building, each reversible by the owner:
+
+- **G2: the notifications writers use `db.transaction`, not a `commit`
+  parameter**, so no caller changed. A call that passes `commit=True` from a
+  function with no `commit` parameter is not a finding: the caller chose.
+- **G5: a scope checked in a branch is not a route's requirement**; its 403
+  still says a scope may be refused. The document may declare 404 or 428 where
+  only an item refuses (`POST /issues/bulk`), as the walk reads what the code
+  can raise. The demo server still builds the document on first request.
+- **G6: while a test has replaced the clock, `db.connect` installs a
+  `datetime()` that reads it**, because the triggers of migrations 0057 and
+  0058 read SQLite's clock and an applied migration is never edited. A running
+  app installs nothing. Only `datetime()` is bridged.
+- **G3: rows imported before 0094 are not marked**: the import is a host
+  command with no record of what it wrote, and an author is never guessed.
+
+Found while building, and fixed before each was committed:
+
+- **G5.** A dependency that checks its scope with `if not token_has_scope(...):
+  raise` was read as unscoped; the reader knows that shape. The code reader
+  walked each tree once per question and again for its calls; it walks once.
+  Two mutants survived the first tests (a check after a `return`, and `admin`
+  absorbing another scope); each has a test.
+- **G6.** Five mutants survived the first tests (the fixture's restore, and
+  four readers' default clock); each has a test.
+- **G3.** The page read stamped its author from the public projection, which
+  carries no mark; it reads the stored row's.
+
+Found and not fixed:
+
+- **G2.** 19 call sites ask a writer to commit from a function with no
+  `commit` parameter. The check cannot see `rollback()` or `with conn:`.
+  `seed_field_guide` cannot compose inside a caller's transaction.
+- **G6.** 113 `datetime('now')` and 20 `datetime.now(` uses remain outside the
+  lease lifecycle; in clock tests the SQL ones follow the clock through the
+  bridge. `julianday`, `strftime` and `CURRENT_TIMESTAMP` keep SQLite's clock.
+- **G3.** The import indexes issues and pages for search, not comments, so an
+  imported comment cannot be found by search.
+- **G5.** The build still takes about 1.5 s of the code reader beside FastAPI's
+  own 2 s; it now runs before the first request rather than in it.
 
 ## Scorecard
 
