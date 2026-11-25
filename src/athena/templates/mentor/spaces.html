@@ -13,6 +13,7 @@
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
 {% if spaces %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead>
         <tr>
@@ -33,7 +34,7 @@
                 <span class="chip" data-tone="neutral" title="Private — members only">🔒</span>
                 {% endif %}
             </td>
-            <td class="muted">{{ s.description or "—" }}</td>
+            <td class="muted cell-wrap">{{ s.description or "—" }}</td>
             <td class="muted">{{ counts.get(s.id, 0) }}</td>
             <td class="muted">
                 {% if can_write and (request.state.user.id == s.created_by or is_admin) %}
@@ -44,11 +45,16 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
-<p class="empty-state">No spaces yet.</p>
+{% if can_write %}
+<p class="empty-state">No spaces yet. <a href="#new-space">Create the first space</a> to start writing pages.</p>
+{% else %}
+<p class="empty-state">No spaces yet. They appear here when a member creates one.</p>
+{% endif %}
 {% endif %}
 
-<div class="panel">
+<div class="panel" id="new-space">
     <div class="panel-body">
     {% if can_write %}
     <h3>New Space</h3>
@@ -80,5 +86,4 @@
     </div>
 </div>
 
-<p class="note">Data from the Mentor spaces API.</p>
 {% endblock %}

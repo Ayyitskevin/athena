@@ -49,6 +49,7 @@
              role="region"
              aria-label="Unanswered run controls table"
              tabindex="0">
+        <div class="table-scroll">
         <table class="issues-table">
             <thead>
                 <tr><th>Worker</th><th>Agent</th><th>Asked</th><th>State</th><th></th></tr>
@@ -85,6 +86,7 @@
             </tbody>
         </table>
         </div>
+        </div>
     </div>
 </section>
 {% endif %}
@@ -107,6 +109,7 @@
              role="region"
              aria-label="Pending approvals table"
              tabindex="0">
+        <div class="table-scroll">
         <table class="issues-table">
             <thead>
                 <tr><th>Requested</th><th>Action</th><th>Target</th><th>Run</th><th>Decision</th></tr>
@@ -162,6 +165,7 @@
             {% endfor %}
             </tbody>
         </table>
+        </div>
         </div>
     </div>
 </section>
@@ -226,6 +230,7 @@
              role="region"
              aria-label="Answerability table"
              tabindex="0">
+        <div class="table-scroll">
         <table class="issues-table">
             <thead>
                 <tr>
@@ -264,6 +269,7 @@
             </tbody>
         </table>
         </div>
+        </div>
     </div>
 </section>
 {% endif %}
@@ -282,7 +288,7 @@
 </div>
 {% endif %}
 
-<section class="panel" aria-labelledby="onboard-heading">
+<section class="panel" id="onboard" aria-labelledby="onboard-heading">
     <div class="panel-head"><h2 id="onboard-heading">Onboard an agent</h2></div>
     <div class="panel-body">
     <p class="subtitle">
@@ -663,7 +669,7 @@
 </div>
 {% else %}
 <p class="empty-state">
-    No agent accounts yet. Use <strong>Onboard an agent</strong> above — do not
+    No agent accounts yet. <a href="#onboard">Onboard an agent</a> above — do not
     create a human user and tick a box.
 </p>
 {% endif %}
@@ -679,6 +685,7 @@
         Restoring one brings it back as a read-only viewer with no token: its
         role and a token are each a further step.
     </p>
+    <div class="table-scroll">
     <table class="issues-table">
         <thead>
             <tr>
@@ -702,6 +709,7 @@
             {% endfor %}
         </tbody>
     </table>
+    </div>
     </div>
 </section>
 {% endif %}

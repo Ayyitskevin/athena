@@ -46,6 +46,7 @@
          role="region"
          aria-label="Active claimed work table"
          tabindex="0">
+        <div class="table-scroll">
         <table class="issues-table agent-health-table">
             <thead>
                 <tr>
@@ -140,7 +141,7 @@
                         <a href="/admin/agents/runs/{{ work.run.run_id }}/replay.json">replay.json</a>
                         <div><a href="/aegis/activity/runs/{{ work.run.run_id }}/lineage">lineage</a></div>
                         {% elif work.run.replay_ready %}
-                        <span class="muted">Evidence exists, but current path routes cannot address this run ID.</span>
+                        <span class="muted">Evidence exists, but this run ID cannot be opened as a page.</span>
                         {% else %}
                         <span class="muted">No tagged replay evidence.</span>
                         {% endif %}
@@ -149,6 +150,7 @@
             {% endfor %}
             </tbody>
         </table>
+        </div>
     </div>
     {% else %}
     <p class="empty-state">No agent-held issue claims match this filter.</p>

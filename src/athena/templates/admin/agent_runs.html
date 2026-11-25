@@ -103,6 +103,7 @@
          role="region"
          aria-label="Latest agent check-ins table"
          tabindex="0">
+        <div class="table-scroll">
         <table class="issues-table agent-checkin-table">
         <thead>
             <tr>
@@ -141,6 +142,7 @@
         {% endfor %}
         </tbody>
         </table>
+        </div>
     </div>
     {% else %}
     <p class="empty-state">No cooperative agent check-ins yet.</p>
@@ -152,6 +154,7 @@
              role="region"
              aria-label="Recent agent check-in history table"
              tabindex="0">
+            <div class="table-scroll">
             <table class="issues-table agent-checkin-table">
             <thead>
                 <tr>
@@ -176,6 +179,7 @@
             {% endfor %}
             </tbody>
             </table>
+            </div>
         </div>
     </details>
     {% endif %}
@@ -218,6 +222,7 @@
 
 <p class="subtitle">Activity-derived run health is independent of cooperative check-ins.</p>
 
+<div class="table-scroll">
 <table class="issues-table agent-health-table">
     <thead>
         <tr>
@@ -305,6 +310,7 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
 {% if agent_options and selected_agent_id %}
 <p class="empty-state">

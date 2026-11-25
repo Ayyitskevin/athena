@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 
 from athena.aegis import issues
-from athena.core import access, labels
+from athena.core import access, identity, labels
 from athena.core.deps import get_conn
 from athena.mentor import pages
 from athena.web.router import get_templates
@@ -42,7 +42,8 @@ def labels_index(request: Request, conn: sqlite3.Connection = Depends(get_conn))
     return templates.TemplateResponse(
         request=request,
         name="labels/index.html",
-        context={"labels": usage},
+        # An empty hub points a writer at the issues, where labels are added.
+        context={"labels": usage, "can_write": identity.can_write(user)},
     )
 
 

@@ -23,7 +23,7 @@ from athena.aegis import (
     sprints,
     statuses,
 )
-from athena.core import access
+from athena.core import access, identity
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.browsing import attach_claims, attach_labels, statuses_in_use
@@ -283,6 +283,8 @@ def _render_board(
             "group": group,
             "column_page": COLUMN_PAGE,
             "move_conflict": move_conflict,
+            # An empty board offers "create an issue" only to whoever may.
+            "can_write": identity.can_write(getattr(request.state, "user", None)),
         },
     )
 

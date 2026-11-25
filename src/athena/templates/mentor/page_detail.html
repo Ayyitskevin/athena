@@ -208,6 +208,7 @@
             <details>
                 <summary>History <span class="count-pill">{{ versions | length }}</span></summary>
                 {% if versions %}
+                <div class="table-scroll">
                 <table class="issues-table">
                     <thead>
                         <tr><th>Version</th><th>Title</th><th>Edited</th>{% if can_write %}<th></th>{% endif %}</tr>
@@ -231,6 +232,7 @@
                     {% endfor %}
                     </tbody>
                 </table>
+                </div>
                 {% else %}
                 <p class="note-small">No prior versions — this page hasn't been edited yet.</p>
                 {% endif %}

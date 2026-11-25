@@ -11,6 +11,7 @@
 </div>
 
 {% if labels %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead>
         <tr>
@@ -33,8 +34,9 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
-<p class="empty-state">No labels yet — add one to an issue or a page.</p>
+<p class="empty-state">No labels yet.{% if can_write %} Add one from an issue or a page: <a href="/aegis/issues">open the issues</a>.{% endif %}</p>
 {% endif %}
 
 <p class="note">The same label can sit on an issue and a page. Pick one to see everything tagged with it.</p>

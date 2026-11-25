@@ -23,6 +23,7 @@
 {% endif %}
 
 {% if tokens %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead>
         <tr>
@@ -54,11 +55,12 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
-<p class="empty-state">No tokens yet.</p>
+<p class="empty-state">No tokens yet.{% if can_manage_tokens %} <a href="#new-token">Create one</a> for a script or an agent to act as you.{% endif %}</p>
 {% endif %}
 
-<div class="panel">
+<div class="panel" id="new-token">
     <div class="panel-body">
     {% if can_manage_tokens %}
     <h3>Create token</h3>

@@ -51,6 +51,7 @@
 </p>
 
 {% if tree %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead>
         <tr><th>Page</th><th>Last updated</th></tr>
@@ -68,8 +69,9 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
-<p class="empty-state">No pages in this space yet.</p>
+<p class="empty-state">No pages in this space yet.{% if can_write %} <a href="#new-page">Write the first page</a>.{% endif %}</p>
 {% endif %}
 
 {% if can_write %}
@@ -122,7 +124,7 @@
 {% endif %}
 {% endif %}
 
-<div class="panel">
+<div class="panel" id="new-page">
     <div class="panel-body">
     {% if can_write %}
     <h3>New Page</h3>
@@ -189,5 +191,4 @@
 </section>
 {% endif %}
 
-<p class="note">Data from the Mentor pages API.</p>
 {% endblock %}

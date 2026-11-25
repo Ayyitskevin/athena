@@ -15,6 +15,7 @@
 </div>
 
 {% if sprints %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead>
         <tr>
@@ -60,12 +61,13 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
-<p class="empty-state">No sprints yet for {{ project.name }}.</p>
+<p class="empty-state">No sprints yet for {{ project.name }}.{% if can_manage %} <a href="#new-sprint">Plan the first sprint</a>.{% endif %}</p>
 {% endif %}
 
 {% if can_manage %}
-<div class="panel">
+<div class="panel" id="new-sprint">
     <h3>New sprint</h3>
     <form method="post" action="/aegis/projects/{{ project.id }}/sprints" class="issue-form">
         {% include "partials/csrf.html" %}

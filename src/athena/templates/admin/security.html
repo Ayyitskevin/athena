@@ -44,8 +44,7 @@
     <p class="muted">
         The newest {{ chain_tail.checked }} entries re-verified on this render.
         That checks the tail, not the whole trail — run
-        <code>athena-doctor</code> (or walk <code>GET /activity/chain/verify</code>)
-        for the full claim. Note the head hash somewhere Athena does not control
+        <code>athena-doctor</code> on the server for the full claim. Note the head hash somewhere Athena does not control
         and even a rebuilt chain becomes detectable.
     </p>
     {% endif %}
@@ -74,6 +73,7 @@
 </form>
 
 {% if events %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead>
         <tr><th>When</th><th>Account</th><th>Refusal</th><th>Detail</th></tr>
@@ -92,6 +92,7 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
 <p class="muted">No refusals recorded{% if selected_verb %} of this kind{% endif %}.</p>
 {% endif %}

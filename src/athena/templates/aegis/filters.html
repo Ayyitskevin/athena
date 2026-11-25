@@ -22,6 +22,7 @@
 {% if error %}<div data-refused><div class="error">{{ error }}</div></div>{% endif %}
 
 {% if filters %}
+<div class="table-scroll">
 <table class="issues-table">
     <thead>
         <tr>
@@ -47,11 +48,12 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
-<p class="empty-state">No saved filters yet. Create one below, or use “★ Save current view” on the issues list.</p>
+<p class="empty-state">No saved filters yet. <a href="#new-filter">Create one below</a>, or use “★ Save current view” on the <a href="/aegis/issues">issues list</a>.</p>
 {% endif %}
 
-<div class="panel">
+<div class="panel" id="new-filter">
     <h3>New filter</h3>
     <form method="post" action="/aegis/filters" class="issue-form">
         {% include "partials/csrf.html" %}
@@ -113,5 +115,5 @@
     </form>
 </div>
 
-<p class="note">Filters are private to you. Running one returns issues from the same query the API serves.</p>
+<p class="note">Filters are private to you. Running one lists the issues it matches now, not when it was saved.</p>
 {% endblock %}
