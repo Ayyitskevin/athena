@@ -102,37 +102,87 @@ def latest_text_authors(
     not see it, so the answer never reveals an editor the reader could not
     already see in the target's history.
 
-    It reads through the trail's own readers: ``activity.list_activity`` for
-    the newest event, imported rows included (an imported newest event must be
-    seen to answer ``null`` instead of falling back to an older native one),
-    then ``activity.get_visible_activity`` for the reader's gate."""
-    result: dict[int, Author | None] = {}
-    newest: dict[int, dict] = {}
-    for target_id in sorted({int(i) for i in ids}):
-        result[target_id] = None
-        candidates = [
-            row
-            for verb in verbs
-            for row in activity.list_activity(
-                conn,
-                target_kind=target_kind,
-                target_id=target_id,
-                verb=verb,
-                limit=1,
-            )
-        ]
-        if candidates:
-            newest[target_id] = max(candidates, key=lambda row: int(row["id"]))
+    It reads through the trail's own readers, batched (G10): the newest
+    event among ``verbs`` for every target at once, imported events included
+    (an imported newest event must be seen to answer ``null`` instead of
+    falling back to an older native one), then the reader's gate for all of
+    them at once, under the predicate ``activity.get_visible_activity``
+    applies to one."""
+    wanted = sorted({int(i) for i in ids})
+    result: dict[int, Author | None] = dict.fromkeys(wanted)
+    newest = activity.newest_target_events(
+        conn, target_kind=target_kind, verbs=verbs, target_ids=wanted
+    )
+    seen = activity.visible_activity(conn, newest.values(), actor)
     native = {
-        target_id: row
-        for target_id, row in newest.items()
-        if row["imported_at"] is None
-        and activity.get_visible_activity(conn, int(row["id"]), actor) is not None
+        target_id: seen[event_id]
+        for target_id, event_id in newest.items()
+        if event_id in seen and seen[event_id]["imported_at"] is None
     }
     known = accounts(conn, (row["actor_id"] for row in native.values()))
     for target_id, row in native.items():
         result[target_id] = known.get(int(row["actor_id"]))
     return result
+
+
+#: The events that write an issue's title and body: its creation and its
+#: edits. Its current text's author is the actor of the newest of these.
+ISSUE_TEXT_VERBS = ("created", "issue_edited")
+
+
+def issue_text_authors(
+    conn: sqlite3.Connection, issue_ids: Collection[int], *, actor: dict | None
+) -> dict[int, Author | None]:
+    """``authored_by`` for each issue's current title and body, as ``actor`` may
+    see it: see :func:`latest_text_authors`."""
+    return latest_text_authors(
+        conn, target_kind="issue", verbs=ISSUE_TEXT_VERBS, ids=issue_ids, actor=actor
+    )
+
+
+def _comment_authors(
+    conn: sqlite3.Connection, table: str, comment_ids: Collection[int]
+) -> dict[int, Author | None]:
+    """Each comment's author: the account on its row, which alone may edit it."""
+    wanted = sorted({int(i) for i in comment_ids})
+    writers: dict[int, int] = {}
+    for chunk in _chunks(wanted):
+        marks = ",".join("?" * len(chunk))
+        for row in conn.execute(
+            f"SELECT id, author_id FROM {table} WHERE id IN ({marks})", chunk
+        ):
+            writers[int(row["id"])] = int(row["author_id"])
+    known = accounts(conn, writers.values())
+    result: dict[int, Author | None] = dict.fromkeys(wanted)
+    for comment_id, writer in writers.items():
+        result[comment_id] = known.get(writer)
+    return result
+
+
+def stamp_search_hits(
+    conn: sqlite3.Connection, hits: list[dict[str, Any]], *, actor: dict | None
+) -> list[dict[str, Any]]:
+    """Set ``authored_by`` on search hits (G10): the author of the text the
+    hit's snippet comes from. An issue hit names its current text's author (as
+    ``actor`` may see it), a page hit its current version's, and a comment hit
+    the comment's, though its title is borrowed from the issue or page it is on.
+    One batch per kind."""
+    by_kind: dict[str, list[int]] = {}
+    for hit in hits:
+        by_kind.setdefault(hit["kind"], []).append(int(hit["source_id"]))
+    authors = {
+        "issue": issue_text_authors(conn, by_kind.get("issue", ()), actor=actor),
+        "page": page_authors(conn, by_kind.get("page", ())),
+        "issue_comment": _comment_authors(
+            conn, "comments", by_kind.get("issue_comment", ())
+        ),
+        "page_comment": _comment_authors(
+            conn, "page_comments", by_kind.get("page_comment", ())
+        ),
+    }
+    for hit in hits:
+        hit[KEY] = authors.get(hit["kind"], {}).get(int(hit["source_id"]))
+    return hits
 
 
 def page_authors(

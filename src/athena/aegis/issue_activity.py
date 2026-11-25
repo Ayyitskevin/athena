@@ -37,7 +37,7 @@ COMPLETION_REPORT_MARKER = "; reported_completion_v1 "
 #: ``issue_edited`` and keeps the text it replaced in ``issue_prior_texts``; an
 #: undo of an edit is itself an ``issue_edited``). The newest names the current
 #: text's author.
-ISSUE_TEXT_VERBS = ("created", "issue_edited")
+ISSUE_TEXT_VERBS = authorship.ISSUE_TEXT_VERBS
 #: The fields an ``issue_edited`` event can change, in the order answers list them.
 ISSUE_TEXT_FIELDS = ("title", "body")
 
@@ -52,14 +52,8 @@ def issue_text_authors(
     conn: sqlite3.Connection, issue_ids: Collection[int], *, actor: dict | None
 ) -> dict[int, authorship.Author | None]:
     """``authored_by`` for each issue's current title and body, as ``actor`` may
-    see it: see :func:`athena.core.authorship.latest_text_authors`."""
-    return authorship.latest_text_authors(
-        conn,
-        target_kind="issue",
-        verbs=ISSUE_TEXT_VERBS,
-        ids=issue_ids,
-        actor=actor,
-    )
+    see it: see :func:`athena.core.authorship.issue_text_authors`."""
+    return authorship.issue_text_authors(conn, issue_ids, actor=actor)
 
 
 def _project_scope_key(conn: sqlite3.Connection, project_id: int | None) -> str | None:

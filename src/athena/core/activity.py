@@ -475,6 +475,57 @@ def get_visible_activity(
     return dict(row) if row else None
 
 
+def newest_target_events(
+    conn: sqlite3.Connection,
+    *,
+    target_kind: str,
+    verbs: Collection[str],
+    target_ids: Collection[int],
+) -> dict[int, int]:
+    """``{target_id: event id}``: each target's newest event among ``verbs``,
+    imported events included. One indexed query per 500 targets, where reading
+    each target's timeline costs a query per target and verb (G10)."""
+    wanted = sorted({int(i) for i in target_ids})
+    verb_list = sorted(set(verbs))
+    if not wanted or not verb_list:
+        return {}
+    verb_marks = ",".join("?" * len(verb_list))
+    newest: dict[int, int] = {}
+    for start in range(0, len(wanted), 500):
+        chunk = wanted[start : start + 500]
+        marks = ",".join("?" * len(chunk))
+        # The same join list_activity reads through, so an event it would not
+        # list is not counted here either.
+        for row in conn.execute(
+            "SELECT a.target_id, MAX(a.id) AS id FROM activity a "
+            "JOIN users u ON u.id = a.actor_id "
+            f"WHERE a.target_kind = ? AND a.verb IN ({verb_marks}) "
+            f"AND a.target_id IN ({marks}) GROUP BY a.target_id",
+            [target_kind, *verb_list, *chunk],
+        ):
+            newest[int(row["target_id"])] = int(row["id"])
+    return newest
+
+
+def visible_activity(
+    conn: sqlite3.Connection, activity_ids: Collection[int], actor: dict | None
+) -> dict[int, dict]:
+    """``get_visible_activity`` for many ids at once: ``{id: event}`` for each
+    event that exists and this actor may see, under the same predicate."""
+    wanted = sorted({int(i) for i in activity_ids})
+    if not wanted:
+        return {}
+    gate, params = access.event_visibility_clause(conn, actor, alias="a")
+    found: dict[int, dict] = {}
+    for start in range(0, len(wanted), 500):
+        chunk = wanted[start : start + 500]
+        marks = ",".join("?" * len(chunk))
+        where = f" WHERE a.id IN ({marks}){f' AND {gate}' if gate else ''}"
+        for row in conn.execute(f"{_SELECT}{where}", [*chunk, *params]):
+            found[int(row["id"])] = dict(row)
+    return found
+
+
 def reversal_of(conn: sqlite3.Connection, event_id: int) -> dict | None:
     """The event that already reversed ``event_id``, if any (0064 allows one)."""
     row = conn.execute(
