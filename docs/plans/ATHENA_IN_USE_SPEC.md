@@ -137,8 +137,10 @@ refusals with registered codes, `authored_by` on issue lists, single reads
 and searches, `valid_statuses` on a bulk row, writers that compose inside a
 caller's transaction with a check that holds it, the agent OpenAPI
 document's scopes, 404 and 428 and its build at start, one clock the lease
-lifecycle reads and tests move, and imported comments and pages that name
-no author. From Wave 5: the prior text of an edit, its
+lifecycle reads and tests move, imported comments and pages that name
+no author, seat documents held to their profile with the desk loop executed
+and the settings tables generated, and the surface's size held to a tracked
+file. From Wave 5: the prior text of an edit, its
 read and its undo, `If-Match` for a bearer edit of a title or body, and the
 idempotency fence scoped to the issue a key names, a key that survives a
 restart with replays marked for the agent, the leases of a stopped
@@ -152,10 +154,10 @@ an idempotency key's state, and learnings that reach an issue's parent and
 siblings. Wave 5 is built. "Wave 5 results" says the same for
 each.
 
-**Next step.** G9 (documents that drift) is being built. Wave 8 is built
-except the idle sort that H5 left and the three missing twins the parity gate
-names; what is left of Wave 9 is G1, G7, G9 and B6b (G2 to G6, G8 and G10 are
-built; B11 is blocked). Each requirement that removes calls lowers the fleet trial's ceilings
+**Next step.** G1 (the debtor ratchet) is being built. Wave 8 is built except
+the idle sort that H5 left and the three missing twins the parity gate names;
+what is left of Wave 9 is G1 and G7 (G2 to G6, G8 to G10 and B6b are built;
+B11 is blocked). Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
 
 **How work is done here.** One requirement, one commit, with the test that
@@ -339,6 +341,48 @@ Found and not fixed:
   imported comment cannot be found by search.
 - **G5.** The build still takes about 1.5 s of the code reader beside FastAPI's
   own 2 s; it now runs before the first request rather than in it.
+
+### Wave 9 results (third lanes)
+
+This is G9 and B6b, one commit each. G9 was built by a delegated builder from
+the lead's brief and read, probed and re-run by the lead; B6b was built by the
+lead.
+
+| Measure | Before | After |
+|---|---|---|
+| Seat documents naming a tool the reader's profile lacks | Field guide pages 03, 05, 06, 07, 08 and 09, and `DESK.md` | None; a test holds each document to the profile it addresses, a tool of another profile named beside it (G9) |
+| `examples/desk_loop.md` | Its tool names were checked | It runs after `RUNTIME_RECIPE.md` as the agent's `seat+knowledge` session, writes included. Running it found three faults: `begin_run` on a profile without it, a lane named `delegated` (it is `work.delegations`), and no space for a runbook (G9) |
+| Settings tables in `DISPATCH.md` and `WORKERS.md` | Kept by hand; one default wrong | Generated from the registry; `--check` covers them, and a test fails on a hand row anywhere under `docs/` (G9) |
+| Where `AGENT_API.md` and `INDEX.md` send an agent | `/openapi.json`, "the full reference" | `/openapi-agent.json`, the surface its token can call (G9) |
+| Documents presenting old coverage floors as current | Two plan guides | None; a test fails on a present-tense document that copies a floor (G9) |
+| The prune ledger's counts | 362 routes, 124 tools, 65 tables, from August | 417, 146 and 73 in `scripts/surface_counts.toml`; the gate fails unless the baseline plus every recorded change equals the measurement, and an addition says what it earns (B6b) |
+
+Decisions the lead took while building, each reversible by the owner:
+
+- **G9: the field guide is held to plain `seat`**, the strictest profile; a
+  page names another profile's tool beside that profile. `DISPATCH.md` and
+  `WORKERS.md` take generated blocks rather than a link, so the table stays
+  where the prose discusses it. `RUNTIME_RECIPE.md` now creates a
+  "Runbooks" space, and page 07 tells a seat to watch over REST.
+- **B6b counts every registered route** (browser pages included, as
+  `check_template_routes.py` reads them), every declared MCP tool, and every
+  table and virtual table of a migrated database without SQLite's own and
+  shadow tables. A removal is recorded too, without `earns`. No verdict is
+  set.
+
+Found while building, and fixed before each was committed:
+
+- **G9.** Two harness rules survived the first tests (a call missing a
+  required argument sent anyway, a block of mixed lines accepted); each has a
+  test.
+- **B6b.** A change named only by spaces passed; it has a test.
+
+Found and not fixed:
+
+- **G9.** `SECURITY.md` keeps a hand table of the login rate limits (outside
+  `docs/`). Field guide page 01 says the guide is read with the same tools,
+  but plain `seat` carries no page reader. Page 07's advice to watch over
+  REST assumes the seat's runtime can make HTTP calls.
 
 ## Scorecard
 
