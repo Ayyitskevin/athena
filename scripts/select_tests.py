@@ -15,9 +15,19 @@ changed path is judged by these rules, in order:
    import it. The graph is not followed through ``COMPOSITION_ROOTS``: they
    import nearly every module to assemble the app, so following them would
    select every test that builds the app for every change.
-3. The map. ``TEST_MAP`` names the tests for modules and files reached without
-   an import: routers and MCP tools over HTTP, templates and static assets
-   through rendered pages, package data and documents by being read. It is
+3. The map. For Python modules it is the generated map, ``MAP_FILE``
+   (``scripts/test_map.json``): for each source file under ``src/athena``,
+   the test files whose tests executed it, recorded with per-test coverage
+   contexts, less those the graph already selects for it. That is how a router
+   reached over HTTP, a page and a helper used only by the app find their
+   tests. ``scripts/generate_test_map.py`` writes it, and the scheduled
+   ``Test map`` workflow fails when the committed map is stale. Regenerate it
+   with one command (it runs the suite)::
+
+       .venv/bin/python scripts/generate_test_map.py --record
+
+   Coverage does not measure templates, static assets or documents, so
+   ``TEST_MAP`` keeps hand entries for those, each with its reason. Both are
    applied to every changed path and to every module the graph reaches.
 4. References. A test whose string constants (docstrings aside) name the
    changed path, its file name, or a directory containing it (a path built
@@ -25,11 +35,18 @@ changed path is judged by these rules, in order:
    script the graph reaches: tests run scripts by path as often as by import.
 5. Nothing else. A changed path that none of these rules maps, or a change that
    reaches a module only a composition root imports and the map does not name,
-   runs the full suite, and the receipt says which path did it.
+   runs the full suite, and the receipt says which path did it. So does a
+   change to a file the generated map leaves out because more than half the
+   recorded test files run it (the middleware, which every request passes
+   through). Such a file that the graph merely reaches adds no tests and forces
+   nothing: the tests that run the changed file are in its own entry.
 
-Blind spot of rule 2 plus 3: a test that reaches a module only through the app
-(it imports ``athena.main`` and nothing that imports the module) is selected
-only when the map names it, and the map matches tests by file name.
+Blind spots of rule 2 plus 3: a test that reaches a module only through the app
+is selected only when the recorded coverage saw it run the module. A test
+added since the map was generated, a change to what a module does at import
+time (coverage gives import time no test), and code a test runs in a
+subprocess are missed until the map is regenerated or the product profile
+runs everything.
 """
 
 from __future__ import annotations
@@ -39,12 +56,16 @@ from collections import deque
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from functools import cache
+import json
 from pathlib import Path
 import re
 import subprocess
 
 # Modules that wire the app together. Their own change runs the full suite.
 COMPOSITION_ROOTS = frozenset({"athena.main", "athena.web", "athena.web.router"})
+
+# The generated map of tests that reach a source file through the app.
+MAP_FILE = "scripts/test_map.json"
 
 # (path pattern, why): a changed path that matches runs the full suite.
 FULL_SUITE_VALVES = (
@@ -84,86 +105,14 @@ class MapEntry:
     why: str
 
 
+# Hand entries for what per-test coverage cannot see: files that are not Python
+# modules, reached by being rendered, served or read. Python modules reached
+# through the app take their tests from the generated map (MAP_FILE).
 TEST_MAP = (
-    MapEntry(
-        "src/athena/*/{name}_api.py",
-        ("tests/test_{name}*.py", "tests/test_*_{name}*.py"),
-        "REST router, reached over HTTP; tests are named for its resource",
-    ),
-    MapEntry(
-        "src/athena/aegis/api.py",
-        ("tests/test_issue*.py", "tests/test_label*.py", "tests/test_project*.py"),
-        "issue, label and project REST routers",
-    ),
-    MapEntry(
-        "src/athena/mentor/api.py",
-        (
-            "tests/test_page*.py",
-            "tests/test_space*.py",
-            "tests/test_mentor*.py",
-            "tests/test_agent_notebook.py",
-        ),
-        "space, page and notebook REST routers",
-    ),
-    MapEntry(
-        "src/athena/aegis/claims_api.py",
-        (
-            "tests/test_claim*.py",
-            "tests/test_*lease*.py",
-            "tests/test_atomic_pickup*.py",
-            "tests/test_issue_contributors.py",
-        ),
-        "claim, lease and contributor routes",
-    ),
-    MapEntry(
-        "src/athena/aegis/delegations_api.py",
-        ("tests/test_delegation*.py",),
-        "delegation routes",
-    ),
-    MapEntry(
-        "src/athena/aegis/fleet_work_api.py",
-        ("tests/test_fleet_active_work.py", "tests/test_work_progress.py"),
-        "active-work routes",
-    ),
-    MapEntry(
-        "src/athena/aegis/notification_state_api.py",
-        ("tests/test_inbox_target_state.py", "tests/test_notifications.py"),
-        "notification inbox routes",
-    ),
-    MapEntry(
-        "src/athena/core/agent_runs_api.py",
-        ("tests/test_agent_run*.py",),
-        "agent-run routes",
-    ),
-    MapEntry(
-        "src/athena/*/{name}_undo.py",
-        ("tests/test_*undo.py",),
-        "undo handlers, registered by the app and reached over HTTP",
-    ),
-    MapEntry(
-        "src/athena/aegis/dashboard.py",
-        ("tests/test_dashboard.py", "tests/test_access_dashboard.py"),
-        "the dashboard read model, rendered by the web router",
-    ),
-    MapEntry(
-        "src/athena/agent_openapi.py",
-        ("tests/test_agent_openapi.py", "tests/test_access_anonymous_reads.py"),
-        "the agent OpenAPI document, built and served by the app",
-    ),
-    MapEntry(
-        "src/athena/core/provenance.py",
-        ("tests/test_provenance.py", "tests/test_runtime_provenance_check.py"),
-        "build provenance, served by the app",
-    ),
-    MapEntry(
-        "src/athena/web/{name}.py",
-        ("tests/test_{name}*.py", "tests/test_*_{name}*.py", *_WEB_TESTS),
-        "browser routes, reached over HTTP",
-    ),
     MapEntry(
         "src/athena/templates/**",
         (*_WEB_TESTS, "tests/test_template_contracts.py"),
-        "templates, rendered by browser routes",
+        "templates, rendered by browser routes; coverage does not measure them",
     ),
     MapEntry(
         "src/athena/static/**",
@@ -173,31 +122,12 @@ TEST_MAP = (
             "tests/test_static_cache_and_nav_rollup.py",
             "tests/test_csp_no_unsafe_inline.py",
         ),
-        "static assets, served to browser pages",
-    ),
-    MapEntry(
-        "src/athena/mcp/tools_*.py",
-        (
-            "tests/test_mcp_*.py",
-            "tests/test_*_mcp.py",
-            "tests/test_doc_examples.py",
-            "tests/test_agent_api_doc.py",
-        ),
-        "MCP tools, which call the REST API",
-    ),
-    MapEntry(
-        "src/athena/aegis/budget_exhaustion_commands.py",
-        (
-            "tests/test_budget_exhaustion_signals.py",
-            "tests/test_agent_budgets.py",
-            "tests/test_refusal_next.py",
-        ),
-        "called only by the app's handler for a refused budget",
+        "static assets, served to browser pages; coverage does not measure them",
     ),
     MapEntry(
         "src/athena/field_guide/**",
         ("tests/test_field_guide.py",),
-        "field guide pages, read by the guide",
+        "field guide pages, markdown the guide reads; coverage does not measure them",
     ),
     MapEntry(
         "**/*.md",
@@ -205,6 +135,48 @@ TEST_MAP = (
         "a document: tests that read one name it and are selected by reference",
     ),
 )
+
+
+@dataclass(frozen=True)
+class GeneratedMap:
+    """``MAP_FILE``: source path -> test files that ran it through the app."""
+
+    tests: dict[str, tuple[str, ...]]
+    ubiquitous: dict[str, int]  # Left out: run by most recorded test files.
+    recorded: int  # Test files the recorded coverage saw.
+
+
+def load_map(root: Path) -> GeneratedMap:
+    """The committed generated map; an empty one when the file is absent."""
+    path = root / MAP_FILE
+    if not path.exists():
+        return GeneratedMap({}, {}, 0)
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        entries = document["map"]
+        ubiquitous = document["ubiquitous"]
+        recorded = document["recorded_test_files"]
+        if not (
+            isinstance(entries, dict)
+            and all(
+                isinstance(tests, list) and all(isinstance(t, str) for t in tests)
+                for tests in entries.values()
+            )
+            and isinstance(ubiquitous, dict)
+            and all(isinstance(count, int) for count in ubiquitous.values())
+            and isinstance(recorded, int)
+        ):
+            raise ValueError("unexpected shape")
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise SelectionError(
+            f"{MAP_FILE} is unreadable ({error}); regenerate it with "
+            "scripts/generate_test_map.py"
+        ) from error
+    return GeneratedMap(
+        {source: tuple(tests) for source, tests in entries.items()},
+        dict(ubiquitous),
+        recorded,
+    )
 
 
 class SelectionError(Exception):
@@ -409,8 +381,10 @@ def _read_source(text: str, module: str, is_package: bool) -> _Source:
 class Index:
     """The import graph and string references of one checkout."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, with_map: bool = True) -> None:
         self.root = root
+        # The generator builds an index without the map it is about to replace.
+        self.generated = load_map(root) if with_map else GeneratedMap({}, {}, 0)
         files = sorted(
             path.relative_to(root).as_posix()
             for top in _SOURCE_ROOTS
@@ -538,6 +512,13 @@ def everything(root: Path, reason: str) -> Plan:
     return Plan((), tests, len(tests), (reason,), (), ())
 
 
+def named(index: Index, path: str) -> bool:
+    """True when the generated map or a hand entry names tests for ``path``."""
+    return path in index.generated.tests or any(
+        matches(entry.source, path) for entry in TEST_MAP
+    )
+
+
 def select(root: Path, changed: Iterable[str], index: Index | None = None) -> Plan:
     """Select the test files under ``root`` that ``changed`` paths can affect."""
     index = index or Index(root)
@@ -574,6 +555,7 @@ def select(root: Path, changed: Iterable[str], index: Index | None = None) -> Pl
         mapped: set[str] = set()
         for source in [path] + [index.module_paths[m] for m in graph if m != module]:
             if source.startswith("src/"):
+                mapped |= existing.intersection(index.generated.tests.get(source, ()))
                 for entry in TEST_MAP:
                     mapped |= set(map_tests(entry, source, existing) or ())
         found = {
@@ -581,14 +563,26 @@ def select(root: Path, changed: Iterable[str], index: Index | None = None) -> Pl
             "map": mapped,
             "reference": tests_in(referenced),
         }
+        # A module nearly every recorded test runs: any of them can be affected.
+        ubiquitous = index.generated.ubiquitous.get(path)
+        # A module reached only through the app that the recorded coverage never
+        # saw run (new since the map, or never recorded): its tests are unknown.
+        # One the map leaves out as ubiquitous is no such gap when it is merely
+        # reached: the tests that run the changed file are in its own entry.
         unbounded = sorted(
             m
             for m in graph
             if index.module_paths[m].startswith("src/")
             and index.only_roots_import(m)
-            and not any(matches(e.source, index.module_paths[m]) for e in TEST_MAP)
+            and not named(index, index.module_paths[m])
+            and index.module_paths[m] not in index.generated.ubiquitous
         )
-        if unbounded:
+        if ubiquitous is not None:
+            reason = (
+                f"{ubiquitous} of the {index.generated.recorded} recorded test files "
+                "run it, so the map leaves it out"
+            )
+        elif unbounded:
             what = (
                 "only a composition root imports it"
                 if module in unbounded

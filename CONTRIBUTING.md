@@ -75,28 +75,39 @@ condition of done.
   tests that import it. The graph is **not** followed through the composition
   roots `athena.main`, `athena.web` and `athena.web.router`: nearly every test
   builds the app, so following them would select the full suite for any change.
-- **The map.** `TEST_MAP` in the same file names the tests for what is reached
-  without an import: `*_api.py` routers and `web/` modules over HTTP, MCP
-  `tools_*.py`, templates, static assets and field-guide pages. Most entries
-  match tests by file name. It applies to the changed path and to every module
-  the graph reaches. `tests/test_select_tests.py` fails when an entry stops
-  matching real files or a router, web module or tool has no mapped test.
+- **The map.** What a test reaches through the app (a router over HTTP, a
+  page, a helper only the app calls) comes from `scripts/test_map.json`, which
+  `scripts/generate_test_map.py` generates from per-test coverage contexts: for
+  each source file under `src/athena`, the test files that ran it, less those
+  the graph already selects. A file more than half the recorded test files run
+  (the middleware) is left out and listed with its count. Coverage does not
+  measure templates, static assets or field-guide pages, so `TEST_MAP` in
+  `select_tests.py` keeps hand entries for those. Both apply to the changed
+  path and to every module the graph reaches. A scheduled CI job
+  (`.github/workflows/test-map.yml`, weekly and on demand) records the whole
+  suite with contexts and fails, printing the diff and uploading the new map as
+  the `test-map` artifact, when the committed map is stale; it never commits.
+  To regenerate locally, one command (it runs the suite, as long as the product
+  gate): `.venv/bin/python scripts/generate_test_map.py --record`. Then commit
+  `scripts/test_map.json`.
 - **References.** A test whose strings name the changed path, its file name or
   a directory containing it (a path built with `/` or `Path(...)`) is selected.
   That covers documents, fixtures and scripts tests read. A document no test
   names selects no tests, and the receipt says so.
 - **Full suite.** `pyproject.toml`, `constraints/`, any `conftest.py`,
   `core/db.py`, migrations, the composition roots and the gate scripts select
-  the full suite. So does a path no rule maps, and a change that reaches a
-  module only a composition root imports and the map does not name (today
-  `athena.middleware`, which every request runs). The receipt names the path
-  and the reason.
+  the full suite. So does a path no rule maps, a change to a file the map
+  leaves out because most recorded tests run it (`athena.middleware` and
+  `athena.request_log`, which every request runs), and a change that reaches a
+  module only a composition root imports and the map does not name (one added
+  since the map was recorded). The receipt names the path and the reason.
 
 The blind spot: a test that reaches changed code only through the app (it
 imports `athena.main` and nothing that imports the changed module) is selected
-only if the map names it, and the map goes by test file names. A route used as
-setup by tests named for something else is the typical miss. The product
-profile, which runs everything, is what catches it.
+only if the recorded coverage saw it run that code. A test added since the map
+was generated, a change to what a module does at import time, and code a test
+runs in a subprocess are the misses. The product profile, which runs
+everything, is what catches them.
 
 ## Development setup
 

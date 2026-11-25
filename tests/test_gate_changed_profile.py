@@ -45,7 +45,8 @@ RULE = (
     "SELECTION RULE: imports are followed through src/athena except the "
     "composition roots athena.main, athena.web, athena.web.router; a test that "
     "reaches a module only through the app is selected only when the map names "
-    "it, and the map matches test files by name"
+    "it, and the map is generated from recorded per-test coverage "
+    "(scripts/test_map.json)"
 )
 COVERAGE = (
     "COVERAGE: not measured; selected tests run without the coverage floors, "

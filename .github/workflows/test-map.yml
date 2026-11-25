@@ -1,0 +1,115 @@
+name: Test map
+
+# The changed profile (scripts/gate.sh --profile changed) picks the tests that
+# reach changed code only through the app from scripts/test_map.json, a map
+# generated from per-test coverage contexts (G7). This job records those
+# contexts for the whole suite, regenerates the map, and fails with the diff
+# when the committed map is stale. It is read-only: it never pushes and never
+# opens a pull request. A person downloads the test-map artifact (or runs
+# scripts/generate_test_map.py --record) and commits the map.
+on:
+  schedule:
+    - cron: "41 3 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_NO_INPUT: "1"
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    # The CI coverage shards' 30 minutes, plus room for recording contexts.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Create isolated test environment
+        run: python -m venv .venv
+      - name: Install hash-verified package installer
+        run: |
+          .venv/bin/python -I -m pip install \
+            --only-binary :all: \
+            --require-hashes \
+            -r constraints/bootstrap-py312.txt
+      - name: Install test extras (including MCP)
+        run: .venv/bin/python -I -m pip install -c constraints/ci-py312.txt -e ".[dev,mcp]"
+      - name: Verify pinned dependency set
+        run: |
+          .venv/bin/python -I -m pip check
+          .venv/bin/python -I -m pip freeze --exclude-editable | diff -u constraints/ci-py312.txt -
+      # Every assigned test must pass, as in CI's coverage shards: a failing
+      # run's coverage is not the suite's, and the map is never made from one.
+      - name: Run assigned tests with per-test coverage contexts
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: .venv/bin/python scripts/coverage_shards.py run --contexts "$SHARD" "$RUNNER_TEMP/athena-shard"
+      - name: Upload shard coverage contexts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-map-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/athena-shard
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
+  map:
+    needs: [record]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Create isolated test environment
+        run: python -m venv .venv
+      - name: Install hash-verified package installer
+        run: |
+          .venv/bin/python -I -m pip install --only-binary :all: --require-hashes -r constraints/bootstrap-py312.txt
+      - name: Install and verify pinned test extras
+        run: |
+          .venv/bin/python -I -m pip install -c constraints/ci-py312.txt -e ".[dev,mcp]"
+          .venv/bin/python -I -m pip check
+          .venv/bin/python -I -m pip freeze --exclude-editable | diff -u constraints/ci-py312.txt -
+      - name: Download this run's shard contexts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: test-map-shard-*
+          path: ${{ runner.temp }}/athena-shards
+          merge-multiple: false
+          digest-mismatch: error
+      # Prints the unified diff and fails when the committed map is stale.
+      - name: Regenerate the test map and check the committed one
+        run: |
+          .venv/bin/python scripts/generate_test_map.py --check \
+            --output "$RUNNER_TEMP/test-map/test_map.json" \
+            --data "$RUNNER_TEMP/athena-shards/test-map-shard-0/.coverage" \
+            --data "$RUNNER_TEMP/athena-shards/test-map-shard-1/.coverage" \
+            --data "$RUNNER_TEMP/athena-shards/test-map-shard-2/.coverage" \
+            --data "$RUNNER_TEMP/athena-shards/test-map-shard-3/.coverage"
+      - name: Upload the regenerated test map
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-map
+          path: ${{ runner.temp }}/test-map/test_map.json
+          if-no-files-found: warn
+          retention-days: 14

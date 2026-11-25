@@ -203,7 +203,8 @@ CHANGED_RULE = (
     "imports are followed through src/athena except the composition roots "
     + ", ".join(sorted(select_tests.COMPOSITION_ROOTS))
     + "; a test that reaches a module only through the app is selected only "
-    "when the map names it, and the map matches test files by name"
+    "when the map names it, and the map is generated from recorded per-test "
+    f"coverage ({select_tests.MAP_FILE})"
 )
 
 
