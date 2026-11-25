@@ -284,7 +284,9 @@ def project_floor_json(
     user = getattr(request.state, "user", None)
     floor = office.build_floor(conn, project_id=project_id, actor=user, room_slug=room)
     if floor is None:
-        return JSONResponse({"detail": "no such project"}, status_code=404)
+        return JSONResponse(
+            {"detail": "no such project", "code": "not_found"}, status_code=404
+        )
     return floor
 
 

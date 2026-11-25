@@ -328,7 +328,7 @@ def test_palette_unknown_or_clipped_ref_returns_visible_refusal(tmp_path):
                 "/aegis/palette/actions", params={"issue_ref": clipped}
             )
             assert response.status_code == 404, response.text
-            assert response.json() == {"detail": "no such issue"}
+            assert response.json() == {"detail": "no such issue", "code": "not_found"}
 
 
 def test_palette_claim_with_stale_etag_is_refused(tmp_path):
@@ -422,7 +422,7 @@ def test_palette_collapses_private_issue_identity_for_reads_and_writes(tmp_path)
         conn.close()
 
     assert projection.status_code == 404, projection.text
-    assert projection.json() == {"detail": "no such issue"}
+    assert projection.json() == {"detail": "no such issue", "code": "not_found"}
     assert claim.status_code == 404, claim.text
     assert claim.json() == {"detail": "no such issue", "code": "not_found"}
     assert after == before

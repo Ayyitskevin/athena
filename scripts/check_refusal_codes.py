@@ -18,8 +18,12 @@ route table cannot list them; this pass reads the source instead and fails on:
 5. a ``JSONResponse`` or middleware body literal with a ``"detail"`` and no
    ``"code"``.
 
-Rules 1 and 2 cover the whole package. Rules 3 to 5 skip ``web/`` (browser
-adapters answer in HTML) and ``mcp/`` (an HTTP client, not a REST route).
+Rules 1 and 2 cover the whole package. Rules 4 and 5 also cover ``web/``
+(G4): the cockpit answers mostly in HTML, but its JSON routes (the command
+palette, the fleet roster's and a run replay's JSON, a project's floor) answer
+clients too, and their refusals name registered codes like any REST route's.
+Rule 3 skips ``web/``, whose status tables answer in HTML and carry no code.
+Rules 3 to 5 skip ``mcp/`` (an HTTP client, not a REST route).
 
 MCP-side codes (``McpRefusalCode`` entries: failures that never reach Athena)
 have no HTTP status, so they are kept apart: a ``code=`` literal under ``mcp/``
@@ -48,6 +52,16 @@ REGISTRY_PATH = PACKAGE_ROOT / "core" / "refusal_codes.py"
 REFUSAL_MODULE = PACKAGE_ROOT / "core" / "refusals.py"
 # Rules 3-5 do not apply under these package directories.
 _NON_REST_AREAS = ("web", "mcp")
+#: Areas outside REST whose JSON answers are still held to rules 4 and 5 (G4).
+_JSON_ANSWER_AREAS = ("web",)
+
+
+def json_rules_apply(area: str) -> bool:
+    """Whether a module in ``area`` (the first path part under the package) is
+    held to rules 4 and 5: every REST area, and the cockpit's JSON routes."""
+    return area not in _NON_REST_AREAS or area in _JSON_ANSWER_AREAS
+
+
 _JSON_BODY_CALLS = frozenset({"JSONResponse", "_send_json_response"})
 
 
@@ -138,13 +152,17 @@ def check_source(
     *,
     rest: bool = True,
     mcp_codes: frozenset[str] | None = None,
+    json_bodies: bool | None = None,
 ) -> list[Violation]:
-    """Every violation in one module. ``rest`` turns on rules 3 to 5. With
+    """Every violation in one module. ``rest`` turns on rules 3 to 5;
+    ``json_bodies`` turns on rules 4 and 5 alone (default: as ``rest``). With
     ``mcp_codes`` and ``rest`` off (the ``mcp/`` area), a ``code=`` literal may
     also name an MCP-side code; with ``rest`` on, naming one is refused."""
     tree = ast.parse(source)
     found: list[Violation] = []
     mcp_side = mcp_codes or frozenset()
+    if json_bodies is None:
+        json_bodies = rest
 
     def unknown(node: ast.AST, where: str, allowed: frozenset[str] = codes) -> None:
         for literal in _str_literals(node):
@@ -194,7 +212,7 @@ def check_source(
             for keyword in node.keywords:
                 if keyword.arg == "code" and _is_str(keyword.value):
                     unknown(keyword.value, "code=", codes | mcp_codes)
-        elif rest:
+        elif json_bodies:
             for keyword in node.keywords:
                 if keyword.arg == "code" and _is_str(keyword.value):
                     unknown(keyword.value, "code=")
@@ -324,6 +342,7 @@ def check(root: Path = PACKAGE_ROOT) -> list[Violation]:
             codes,
             rest=rest,
             mcp_codes=mcp_codes if (rest or area == "mcp") else None,
+            json_bodies=json_rules_apply(area),
         )
     return found
 

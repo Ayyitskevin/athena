@@ -35,7 +35,7 @@ from athena.aegis import (
     lease_commands,
     leases,
 )
-from athena.aegis.rest_support import issue_command_status
+from athena.aegis.rest_support import issue_command_code, issue_command_status
 from athena.core import access, approvals, approvals_api, identity
 from athena.core.deps import get_conn
 from athena.core.ids import RowIdPath
@@ -51,13 +51,18 @@ _YIELD_REASONS = sorted(lease_commands.CLAIM_YIELD_REASONS)
 
 
 def _signin_required() -> JSONResponse:
-    return JSONResponse({"detail": "sign in required"}, status_code=401)
+    return JSONResponse(
+        {"detail": "sign in required", "code": "unauthenticated"}, status_code=401
+    )
 
 
 def _command_error(exc: issue_commands.IssueCommandError) -> JSONResponse:
-    """The one refusal dialect: the command's kind, mapped at this boundary."""
+    """The one refusal dialect: the command's kind, mapped at this boundary to
+    the registered code a REST write answers with (G4). The kind itself is the
+    command's vocabulary, not a code: ``invalid`` answered where
+    ``validation_error`` belongs."""
     return JSONResponse(
-        {"detail": exc.detail, "code": exc.kind},
+        {"detail": exc.detail, "code": issue_command_code(exc)},
         status_code=issue_command_status(exc),
     )
 
@@ -74,7 +79,9 @@ def _visible_issue_or_404(
     if issue is None or not access.can_see_project_or_backlog(
         conn, actor, issue["project_id"]
     ):
-        return JSONResponse({"detail": "no such issue"}, status_code=404)
+        return JSONResponse(
+            {"detail": "no such issue", "code": "not_found"}, status_code=404
+        )
     return issue
 
 

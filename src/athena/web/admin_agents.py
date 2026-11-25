@@ -575,9 +575,13 @@ def fleet_roster_json(
 ):
     user = getattr(request.state, "user", None)
     if user is None:
-        return JSONResponse({"detail": "sign in required"}, status_code=401)
+        return JSONResponse(
+            {"detail": "sign in required", "code": "unauthenticated"}, status_code=401
+        )
     if user.get("role") != "admin":
-        return JSONResponse({"detail": "admin only"}, status_code=403)
+        return JSONResponse(
+            {"detail": "admin only", "code": "forbidden"}, status_code=403
+        )
     return fleet_roster.build_roster(conn)
 
 
@@ -1119,11 +1123,17 @@ def agent_run_replay_admin(
     if err is not None:
         return err
     if not agents.agent_run_exists(conn, run_id):
-        return JSONResponse({"detail": "no such agent run"}, status_code=404)
+        return JSONResponse(
+            {"detail": "no such agent run", "code": "not_found"}, status_code=404
+        )
     try:
         artifact = run_replay.build_run_replay_artifact(conn, run_id)
     except ValueError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=422)
+        return JSONResponse(
+            {"detail": str(exc), "code": "validation_error"}, status_code=422
+        )
     if artifact is None:
-        return JSONResponse({"detail": "no such agent run"}, status_code=404)
+        return JSONResponse(
+            {"detail": "no such agent run", "code": "not_found"}, status_code=404
+        )
     return JSONResponse(artifact)
