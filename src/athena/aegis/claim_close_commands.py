@@ -41,6 +41,8 @@ def check_offered(
 
 
 def _not_applied(status: str, code: str, detail: str, **extra: object) -> dict:
+    # ``detail`` is built from the refusal's fields, never str() of an
+    # exception, so nothing but these fixed sentences reaches the answer.
     return {
         "status": status,
         "applied": False,
@@ -74,7 +76,7 @@ def close_after_release(
         close = _not_applied(
             status,
             approvals.APPROVAL_REQUIRED_CODE,
-            str(exc),
+            f"{exc.action_kind} requires operator approval",
             approval=asked.public(),
             next=f"once the operator approves, {retry}",
         )
@@ -82,14 +84,14 @@ def close_after_release(
         close = _not_applied(
             status,
             approvals.APPROVAL_REJECTED_CODE,
-            str(exc),
+            f"{exc.request.action_kind} was rejected by the operator",
             approval=exc.request.public(),
         )
     except budgets.BudgetExhausted as exc:
         close = _not_applied(
             status,
             budgets.BUDGET_EXHAUSTED_CODE,
-            str(exc),
+            "the agent budget is exhausted for this window",
             retry_after_seconds=exc.retry_after_seconds,
             next=f"after {exc.retry_after_seconds}s, {retry}",
         )
