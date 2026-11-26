@@ -2,7 +2,7 @@
 
 Date: 2026-11-26. Baseline: `13585e5` (`main` after Wave 10 of
 [the in-use specification](ATHENA_IN_USE_SPEC.md)).
-Status: **specified; decisions accepted by standing instruction; not yet built.**
+Status: **specified; decisions accepted by standing instruction; Wave 11 (AD1) built.**
 Evidence: [reports/agent-day-2026-11-26.md](reports/agent-day-2026-11-26.md).
 Finding IDs such as `DAY-3` refer to that report. Requirement IDs begin `AD`.
 Decision IDs continue the in-use specification's, from D29.
@@ -78,18 +78,24 @@ code or the document.
 
 ## Scorecard
 
-Measured at the demo seed by `tests/test_agent_day.py` once AD1 lands. The
-baseline column is the report's.
+Measured at the demo seed by `tests/test_agent_day.py`, with ceilings in
+`tests/agent_day_ceilings.json`. The baseline column is the test's first run at
+`f1185b2`. It re-encodes answers as compact JSON, as the client receives them,
+so the desk and packet read smaller here than in the report. The scripted seat
+makes 22 calls where the report's hand-driven session made 37, because the
+script never mistypes a shape or looks around.
 
 | Measure | Baseline | Target |
 |---|---|---|
+| Tool-listing bytes, `seat` | 50,540 | ≤ 34,000 |
 | Tool-listing bytes, `seat+knowledge` | 62,758 | ≤ 45,000 |
 | Tool-listing bytes, `conductor` | 67,165 | ≤ 48,000 |
-| Full desk bytes | 7,794 | ≤ 4,300 |
-| Full work-context bytes | 7,545 | ≤ 5,500 |
-| Seat calls for the report's session | 37 | ≤ 29 |
-| Seat calls made only to read a generation | 4 | 0 |
+| Full desk bytes | 7,405 | ≤ 4,300 |
+| Full work-context bytes | 6,980 | ≤ 5,500 |
+| Seat calls for the day | 22 | ≤ 18 |
+| Seat calls made only to read a generation | 2 | 0 |
 | Seat calls to read the answer to its own question | 1 | 0 |
+| Seat calls to read the slice's contract from its parent | 1 | 0 |
 | Conductor calls to find a delegate's question | 1 (the ranking) | 0 (the desk) |
 | Unread conductor notifications after one slice | 9 | ≤ 2 rows, grouped |
 
