@@ -50,3 +50,8 @@ earns = "The project creator can correct a sprint's name, goal or dates on the s
 change = "Agent day, AD11 and AD12: GET /fleet/seats/directory and GET /notifications/grouped"
 routes = 2
 earns = "A conductor that is not an admin can find the seat slug assign-seat takes, and an agent reads its inbox one row per target instead of nine rows on one issue."
+
+[[change]]
+change = "Agent day, AD11: list_fleet_seats on the conductor profile"
+tools = 1
+earns = "A conductor that is not an admin learns the seat slugs assign_issue_to_seat takes instead of guessing and being refused 'unknown seat'."

@@ -130,8 +130,8 @@ REST refusals remain in force.
 `command` is the absolute path of the `athena-mcp` script installed beside the
 Python that runs Athena, so the client needs no activated venv; the path above
 is a placeholder for yours. `ATHENA_MCP_PROFILE` is chosen from the token's
-scopes: `seat+knowledge` for a token with `docs:write`, as here (40 tools for
-this token class, including `record_run_learning`), and `seat` otherwise (28
+scopes: `seat+knowledge` for a token with `docs:write`, as here (42 tools for
+this token class, including `record_run_learning`), and `seat` otherwise (29
 tools for issue work). Onboarding's optional `profile` prints another one. Profiles intersect scopes and never add permission. An
 unset profile still means `full`, and an unknown profile refuses startup. See
 [AGENT_BOOT.md](AGENT_BOOT.md) for the exact sets. Both issue reads accept
@@ -146,7 +146,7 @@ under `identity.last_run` (the run of your newest tagged write). The printed
 config leaves it out on purpose: a run is per process unless you ask.
 
 For a conductor coordinating architect, builder and reviewer accounts, use the
-42-tool `conductor` profile (onboard it with `"profile": "conductor"`) and
+45-tool `conductor` profile (onboard it with `"profile": "conductor"`) and
 [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md).
 It adds assignment, delegation, dependencies and visible project observation to
 `seat`; it does not add admin authority or launch workers. Keep this recipe's

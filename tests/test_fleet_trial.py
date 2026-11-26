@@ -1010,11 +1010,12 @@ def test_c4_a_lapsed_lease_reaches_the_conductor_that_delegated_it(clock, fleet)
             for event in page["events"]
             if event["verb"] == "lease_lapsed" and event["target_id"] == issue_id
         ]
+        # One row per target by default (AD12): the issue's row lists its verbs.
         listed = await conductor.call("list_notifications", unread=True, limit=100)
         notified = [
             row
             for row in listed["items"]
-            if row["verb"] == "lease_lapsed" and row["target_id"] == issue_id
+            if "lease_lapsed" in row["verbs"] and row["target_id"] == issue_id
         ]
         ranking = await conductor.call("get_attention_ranking")
         attention = [

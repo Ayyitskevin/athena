@@ -526,6 +526,7 @@ def _read_arguments(board) -> dict[str, dict]:
         "list_run_events": {"run_id": "slim-run"},
         "list_spaces": {},
         "list_eligible_accounts": {"issue_id": issue_id},
+        "list_fleet_seats": {},
         "list_sprints": {"project_id": project_id},
         "list_subtasks": {"issue_id": issue_id},
         "list_workers": {},

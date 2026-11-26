@@ -40,8 +40,8 @@ WITH_DOCS = ["read", "issue:write", "docs:write"]
 # (token scopes, the profile a printed config must name, its tool count; H6 added
 # get_issue_comment to seat)
 CASES = [
-    pytest.param(ISSUE_ONLY, "seat", 28, id="issue-token"),
-    pytest.param(WITH_DOCS, "seat+knowledge", 40, id="docs-token"),
+    pytest.param(ISSUE_ONLY, "seat", 29, id="issue-token"),
+    pytest.param(WITH_DOCS, "seat+knowledge", 42, id="docs-token"),
 ]
 
 

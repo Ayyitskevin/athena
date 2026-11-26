@@ -271,8 +271,9 @@ def test_queue_is_one_new_read_and_completion_keeps_its_authority():
     }
     name = "get_project_review_queue"
     # F9: list_eligible_accounts; F10: get_issue_prior_text; A11: get_idempotency_key;
-    # H6: get_issue_comment; decision 8: assign_issue_to_seat
-    assert len(tools) == 147
+    # H6: get_issue_comment; decision 8: assign_issue_to_seat; AD11:
+    # list_fleet_seats
+    assert len(tools) == 148
     assert mcp_server.TOOL_SCOPES[name] == mcp_server.READ_ONLY
     assert mcp_server.TOOL_SCOPES["complete_claim"] == "issue:write"
     assert name in mcp_server.PROFILES["conductor"]
@@ -282,11 +283,12 @@ def test_queue_is_one_new_read_and_completion_keeps_its_authority():
     schema = tools[name].inputSchema
     assert schema["required"] == ["project_id"]
     assert set(schema["properties"]) == {"project_id", "limit", "cursor"}
+    # Listed without pydantic's "title" annotation (AD3): what a client
+    # validates is these four keys.
     assert schema["properties"]["limit"] == {
         "default": 5,
         "maximum": 20,
         "minimum": 1,
-        "title": "Limit",
         "type": "integer",
     }
     complete = tools["complete_claim"].inputSchema

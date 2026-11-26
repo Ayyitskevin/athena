@@ -236,6 +236,8 @@ def _plan(world: dict[str, Any], admin: TestClient) -> list[Step]:
     return [
         ("my_desk", lambda s: {}),
         ("current_run", lambda s: {}),
+        # The run it already carries: begin_run answers the identity it set.
+        ("begin_run", lambda s: {"run_id": RUN_ID}),
         ("list_my_delegated_work", lambda s: {}),
         ("search_work", lambda s: {"q": "budget"}),
         ("search", lambda s: {"query": "budget"}),
@@ -259,6 +261,8 @@ def _plan(world: dict[str, Any], admin: TestClient) -> list[Step]:
         ("list_subtasks", lambda s: {"issue_id": big}),
         ("list_notifications", lambda s: {}),
         ("list_projects", lambda s: {}),
+        ("list_fleet_seats", lambda s: {}),
+        ("list_spaces", lambda s: {}),
         ("list_labels", lambda s: {}),
         ("get_page", lambda s: {"page_id": page}),
         ("list_pages", lambda s: {"space_id": world["space"]["id"]}),

@@ -25,7 +25,8 @@ def register_page_tools(tool, mutation_tool, client) -> None:
     # Every page edit is snapshotted into the page's version history, so no page
     # write is destructive.
 
-    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
+    # In the knowledge profile (AD11): list_pages takes a space_id.
+    @tool(scope=READ_ONLY, profiles=KNOWLEDGE)
     def list_spaces() -> ListResult:
         """List Mentor spaces (id, key, name)."""
         return listing(client.list_spaces())
@@ -35,14 +36,11 @@ def register_page_tools(tool, mutation_tool, client) -> None:
     # says how to make one, so a seat that can edit pages can open its own.
     @mutation_tool(scope=tokens.DOCS_WRITE_SCOPE, profiles=KNOWLEDGE, hints=SETS)
     def open_my_notebook() -> dict:
-        """Open your notebook page (an agent's notes kept between sessions),
-        creating it on first use; my_desk shows its first lines. Returns
-        {page, created}. To append at session end, edit the page with
-        update_page and if_match = the page's _etag, so a parallel session
-        cannot clobber it; a 412 means re-read, merge, retry. Visible to you and
-        the operator only. Not a runbook; nothing summarises it. Takes no idempotency key:
-        a repeat returns the same page. A long body is cut to the response
-        budget; get_page with body_offset reads on."""
+        """Open your notebook, notes kept between sessions that only you and
+        the operator see, creating it on first use: {page, created}. Append
+        with update_page and if_match = its _etag. Takes no idempotency key: a
+        repeat returns the same page. get_page with body_offset reads a cut
+        body on."""
         return client.open_my_notebook()
 
     @tool(scope=READ_ONLY, profiles=KNOWLEDGE)
@@ -52,9 +50,8 @@ def register_page_tools(tool, mutation_tool, client) -> None:
         limit: PageListLimit = 50,
         cursor: ListCursor | None = None,
     ) -> ListResult:
-        """List the pages in a space, alphabetical by title, as rows without
-        bodies (get_page reads one). Archived (soft-deleted) pages are hidden by
-        default; pass include_archived=true to see them."""
+        """A space's pages by title, without bodies; archived ones only with
+        include_archived=true."""
 
         def fetch(rows: int) -> results.CursorPage:
             page = client.list_pages(
@@ -66,10 +63,8 @@ def register_page_tools(tool, mutation_tool, client) -> None:
 
     @tool(scope=READ_ONLY, profiles=KNOWLEDGE)
     def get_page(page_id: int, body_offset: BodyOffset = 0) -> dict:
-        """Get one Mentor page (title + Markdown body). The response includes the
-        server's opaque ETag as _etag; copy it exactly into if_match on a guarded
-        update_page to make the edit fail rather than clobber a concurrent change.
-        A long body is cut to the response budget; body_offset reads on from there."""
+        """Get one page. Its `_etag` is the if_match a guarded update_page
+        takes. A long body is cut; body_offset reads on."""
         return results.from_offset(client.get_page(page_id), "body", body_offset)
 
     @tool(scope=READ_ONLY, profiles=FULL_ONLY)
@@ -134,8 +129,8 @@ def register_page_tools(tool, mutation_tool, client) -> None:
         parent_id: int | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Create a Mentor page in a space. Optionally nest it under parent_id (a
-        page in the same space). Bodies support Markdown and cross-links."""
+        """Create a page in a space, under parent_id if given. Bodies take
+        Markdown and cross-links."""
         return client.create_page(
             space_id=space_id,
             title=title,
@@ -153,11 +148,9 @@ def register_page_tools(tool, mutation_tool, client) -> None:
         if_match: str | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Update a page's title and/or body. Each edit is snapshotted into the
-        page's version history automatically. Pass if_match with the page's current
-        ETag (from get_page) for an optimistic-lock edit: if another agent changed the
-        page since you read it, the edit fails with a 412 instead of clobbering their
-        write — the shared-memory-safe way for concurrent agents to edit one page."""
+        """Update a page's title or body; each edit keeps a version. Pass
+        if_match (get_page's `_etag`) so a concurrent edit fails 412 instead of
+        being clobbered."""
         return client.update_page(
             page_id,
             title=title,

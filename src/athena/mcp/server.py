@@ -1110,11 +1110,14 @@ def build_server(
             read_only=declaration.read_only,
             budget=declaration.response_budget,
         )
-        if declaration.retry_pointer:
-            # A write's pointer to the shared retry-key contract, which the
-            # server instructions state once (SERVER_INSTRUCTIONS).
-            shaped.__doc__ = f"{function.__doc__.rstrip()}\n\n{RETRY_POINTER}"
-        return mcp.tool(annotations=_annotations(declaration))(shaped)
+        registered_tool = mcp.tool(
+            description=_listed_description(function, declaration),
+            annotations=_annotations(declaration),
+        )(shaped)
+        listed = mcp._tool_manager.get_tool(name)  # noqa: SLF001
+        assert listed is not None, name
+        listed.parameters = listed_schema(listed.parameters)
+        return registered_tool
 
     _register_all(*_decorators(register), client)
     _answer_refusals_as_one_object(mcp)
@@ -1123,6 +1126,59 @@ def build_server(
     resources.register_resources(mcp)
     _advertise_no_prompts(mcp)
     return mcp
+
+
+# --- what the tool listing carries (AD3) --------------------------------------
+#
+# Every session reads the listing before its first call, so it carries what
+# decides a call and nothing a client cannot use. Both trims happen here, once,
+# for every tool.
+
+
+def _listed_description(
+    function: Callable[..., Any], declaration: ToolDeclaration
+) -> str:
+    """A tool's description as listed: its docstring without the source's
+    indentation, and for a write the one-line pointer to the shared retry-key
+    contract the server instructions state once (SERVER_INSTRUCTIONS)."""
+    description = inspect.cleandoc(function.__doc__ or "")
+    if declaration.retry_pointer:
+        description = f"{description}\n\n{RETRY_POINTER}"
+    return description
+
+
+# JSON Schema keywords whose value is one subschema, a list of them, or a map of
+# names to them. Only these are walked, so a `title` inside a `default`, an
+# `enum` or a property *named* title is never touched.
+_SUBSCHEMA = frozenset({"items", "additionalProperties", "not", "if", "then", "else"})
+_SUBSCHEMA_LISTS = frozenset({"anyOf", "allOf", "oneOf", "prefixItems"})
+_SUBSCHEMA_MAPS = frozenset({"properties", "$defs", "definitions", "patternProperties"})
+
+
+def listed_schema(schema: Any) -> Any:
+    """An input schema as listed: pydantic's schema without its ``title``
+    keywords ("Issue Id" for issue_id, "complete_claimArguments" for the
+    whole) and without ``"default": null`` (an optional argument left out is
+    already null). Both are annotations, not assertions: a client validates
+    exactly what it validated before, and the argument model that checks each
+    call on the server is untouched."""
+    if not isinstance(schema, dict):
+        return schema
+    listed: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key == "title" and isinstance(value, str):
+            continue
+        if key == "default" and value is None:
+            continue
+        if key in _SUBSCHEMA:
+            listed[key] = listed_schema(value)
+        elif key in _SUBSCHEMA_LISTS and isinstance(value, list):
+            listed[key] = [listed_schema(option) for option in value]
+        elif key in _SUBSCHEMA_MAPS and isinstance(value, dict):
+            listed[key] = {name: listed_schema(inner) for name, inner in value.items()}
+        else:
+            listed[key] = value
+    return listed
 
 
 # What a tool may declare for one object (not a list). A bare ``-> dict`` gets no

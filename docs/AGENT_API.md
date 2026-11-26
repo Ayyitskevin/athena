@@ -70,28 +70,28 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 
 | MCP tool | REST call(s) | Hints | Summary |
 |---|---|---|---|
-| `begin_run` | *(client-side)* | read-only | Switch this session's run identity: every write you make afterwards is … |
+| `begin_run` | *(client-side)* | read-only | Tag later writes with run_id: continue my_desk's identity.last_run, … |
 | `count_work` | `GET /issues/query/count` | read-only | How many issues a work query matches, ignoring paging — so a bounded … |
-| `current_run` | *(client-side)* | read-only | Read the run identity this session is currently stamping on writes: |
+| `current_run` | *(client-side)* | read-only | The run identity this session stamps on writes. |
 | `embed_help` | `GET /embeds/help` | read-only | The embed vocabulary as data: every kind, its keys, and the limits. |
 | `find_pages_by_title` | `GET /pages/by-title` | read-only | Find Mentor pages by their TITLE instead of a numeric id — the address you can … |
 | `get_agent_budget` | `GET /users/{user_id}/budget` | read-only | Read a user's durable action budget — how many metered writes it may … |
-| `get_attention_ranking` | `GET /attention/ranking` | read-only | Read the bounded, actor-filtered "Now" queue. Each row cites its … |
+| `get_attention_ranking` | `GET /attention/ranking` | read-only | The bounded "Now" queue you may see: your claim and control rows, … |
 | `get_fleet_metrics` | `GET /fleet/metrics` | read-only | Read bounded issue throughput for this token's visible scope. Dates are … |
 | `get_idempotency_key` | `GET /idempotency/{quote(key, safe='')}` | read-only | After a keyed write timed out or was refused idempotency_in_progress … |
-| `get_issue` | `GET /issues/{ref}` | read-only | Get one issue by issue_id (the number every write tool takes) or by … |
-| `get_issue_comment` | `GET /issues/{issue_id}/comments/{comment_id}` | read-only | Read one comment of an issue whole: the comment a list row cut. A … |
-| `get_issue_history` | `GET /issues/{issue_id}/history` | read-only | Read one issue's bounded operator run narrative. Every item cites … |
-| `get_issue_lease` | `GET /issues/{issue_id}/lease` | read-only | Who holds the exclusive claim on this issue right now — {holder_id, holder_name, … |
-| `get_issue_prior_text` | `GET /issues/{issue_id}/prior-texts/{event_id}` | read-only | Read the title and body one edit of an issue replaced, exactly as they … |
-| `get_issue_runbook` | `GET /issues/{issue_id}/runbook` | read-only | The issue's runbook page — accumulated learnings from earlier runs — or … |
+| `get_issue` | `GET /issues/{ref}` | read-only | Get one issue by issue_id or by ref ('12' or 'ATH-12'); pass one. Its … |
+| `get_issue_comment` | `GET /issues/{issue_id}/comments/{comment_id}` | read-only | One comment whole; a long body is cut and body_offset reads on. |
+| `get_issue_history` | `GET /issues/{issue_id}/history` | read-only | One issue's bounded run narrative; each item cites its source and a … |
+| `get_issue_lease` | `GET /issues/{issue_id}/lease` | read-only | Who holds this issue's lease: {holder_id, holder_name, claimed_at, … |
+| `get_issue_prior_text` | `GET /issues/{issue_id}/prior-texts/{event_id}` | read-only | The title and body one edit replaced, as they were. event_id is the … |
+| `get_issue_runbook` | `GET /issues/{issue_id}/runbook` | read-only | The issue's runbook page of earlier runs' learnings, or {found: |
 | `get_issue_state` | `GET /issues/{issue_id}/state` | read-only | Reconstruct an issue's lifecycle state from the activity log. Pass … |
-| `get_issue_work_context` | `GET /issues/{ref}/work-context` | read-only | Get a bounded, current packet containing one visible issue and its … |
-| `get_page` | `GET /pages/{page_id}` | read-only | Get one Mentor page (title + Markdown body). The response includes the … |
+| `get_issue_work_context` | `GET /issues/{ref}/work-context` | read-only | A bounded, current packet: one visible issue and its … |
+| `get_page` | `GET /pages/{page_id}` | read-only | Get one page. Its `_etag` is the if_match a guarded update_page … |
 | `get_page_version` | `GET /pages/{page_id}/versions/{version}` | read-only | Fetch one historical page revision by its version number (title + body as of … |
-| `get_project_brief` | `GET /projects/{project_id}/brief` | read-only | A compact visible project snapshot: summary, active claims, blocker edges, … |
-| `get_project_floor` | `GET /projects/{project_id}/floor` | read-only | A project's floor: every open issue is a chair. Occupied chairs … |
-| `get_project_review_queue` | `GET /projects/{project_id}/review-queue` | read-only | Read current visible project candidates with their exact-version reports. |
+| `get_project_brief` | `GET /projects/{project_id}/brief` | read-only | A compact project snapshot: summary, active claims, blocker edges, … |
+| `get_project_floor` | `GET /projects/{project_id}/floor` | read-only | A project's floor: each open issue a chair, occupied by an agent … |
+| `get_project_review_queue` | `GET /projects/{project_id}/review-queue` | read-only | A project's current candidates with their exact-version reports; … |
 | `get_run_control` | `GET /run-controls/{control_id}` | read-only | One run control, for an admin or the agent it is addressed to. |
 | `get_run_fork_contract` | `GET /activity/runs/{run_id}/fork` | read-only | Validate a fork point inside a parent run and return the child-run … |
 | `get_run_lineage` | `GET /activity/runs/{run_id}/lineage` | read-only | Read a tagged run's causal tree: ancestors, the focal run's replayable … |
@@ -101,24 +101,25 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `link_graph` | `GET /{base}/{node_id}/graph` | read-only | The link neighbourhood around an issue or page, as you can see it. |
 | `list_activity_runs` | `GET /activity/runs` | read-only | Reconstruct one actor's recent activity into runs. Explicit X-Athena-Run … |
 | `list_dispatches` | `GET /dispatches` | read-only | What Athena has handed to the executor, newest first. Filter by … |
-| `list_eligible_accounts` | `GET /issues/{issue_id}/eligible-accounts` | read-only | List the accounts that can see and work this issue. |
-| `list_issue_comments` | `GET /issues/{issue_id}/comments` | read-only | Read one issue's comment thread, oldest first — the discussion a … |
+| `list_eligible_accounts` | `GET /issues/{issue_id}/eligible-accounts` | read-only | The accounts that can see and work this issue, by id: {accounts: |
+| `list_fleet_seats` | `GET /fleet/seats/directory` | read-only | The agent seats assign_issue_to_seat takes: slug, name and … |
+| `list_issue_comments` | `GET /issues/{issue_id}/comments` | read-only | One issue's comments, oldest first, each an excerpt; … |
 | `list_issue_links` | `GET /issues/{issue_id}/links` | read-only | Read an issue's dependency links — what it blocks, what blocks it, and … |
 | `list_issues` | `GET /issues` | read-only | List Aegis issues, optionally filtered by a project-configured status, … |
 | `list_labels` | `GET /labels` | read-only | List the shared label vocabulary (id, name, color). |
-| `list_my_delegated_work` | `GET /delegations/me` | read-only | List issues delegated to the authenticated contributor. By default this … |
-| `list_notifications` | `GET /notifications` | read-only | Read YOUR notification inbox — mentions, watched-issue changes, work … |
+| `list_my_delegated_work` | `GET /delegations/me` | read-only | Issues delegated to you, without archived or done work unless … |
+| `list_notifications` | `GET /notifications/grouped`<br>`GET /notifications` | read-only | Your notifications (mentions, watched changes, delegations, lapsed … |
 | `list_page_versions` | `GET /pages/{page_id}/versions` | read-only | The page's superseded revisions, newest first (the live page is NOT one of … |
-| `list_pages` | `GET /spaces/{space_id}/pages` | read-only | List the pages in a space, alphabetical by title, as rows without … |
+| `list_pages` | `GET /spaces/{space_id}/pages` | read-only | A space's pages by title, without bodies; archived ones only with … |
 | `list_priority_notifications` | `GET /notifications/priority` | read-only | Read YOUR inbox as a priority/mute/digest projection. Priority is an … |
 | `list_projects` | `GET /projects` | read-only | List Aegis projects (id, key, name). |
-| `list_run_controls` | `GET /run-controls` | read-only | Run controls — operator requests on live runs and how their agents … |
+| `list_run_controls` | `GET /run-controls` | read-only | Operator requests on runs addressed to you, and your answers. |
 | `list_run_events` | `GET /activity` | read-only | Replay one run: exactly the activity events tagged with this run id, … |
 | `list_spaces` | `GET /spaces` | read-only | List Mentor spaces (id, key, name). |
 | `list_sprints` | `GET /projects/{project_id}/sprints` | read-only | List a project's sprints, optionally filtered by state … |
 | `list_subtasks` | `GET /issues/{issue_id}/children` | read-only | List the direct child issues (sub-tasks) nested under this issue. |
 | `list_workers` | `GET /workers` | read-only | The worker registry — which agent processes are reporting, on what node, … |
-| `my_desk` | `GET /desk` | read-only | START HERE. Your desk: who you are, what is asked of you, what you … |
+| `my_desk` | `GET /desk` | read-only | START HERE. Your desk in one bounded read: `identity` (role, … |
 | `my_office` | `GET /office` | read-only | Your cubicle: active leases, declared paths, and a checkout branch hint. |
 | `notification_priority_summary` | `GET /notifications/priority/summary` | read-only | Count YOUR visible notifications by resolved priority and mute state. |
 | `page_backlinks` | `GET /pages/{page_id}/backlinks` | read-only | What references this page — the INCOMING edges of the knowledge graph. Each … |
@@ -129,11 +130,11 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `recent_events` | `GET /events` | read-only | Read the audit/event feed in ascending event-id order, with REST filters. |
 | `related_items` | `GET /{base}/{node_id}/related` | read-only | What cites what this cites, but is NOT linked to it yet. |
 | `resolve_embeds` | `POST /embeds/resolve` | read-only | Resolve embed directives in arbitrary text, as you. |
-| `search` | `GET /search` | read-only | Full-text search across Aegis issues and Mentor pages. Optionally narrow … |
-| `search_work` | `GET /issues` | read-only | Find issues with a work query — the precise way to ask for work. |
+| `search` | `GET /search` | read-only | Full-text search of issues and pages (kind='issue' or 'page' narrows): |
+| `search_work` | `GET /issues` | read-only | Find issues with a work query: `field:value` atoms joined by AND, `-` … |
 | `search_workspace` | `GET /search/workspace` | read-only | One ask across issues, pages, AND comments — use this when you do not … |
 | `unlinked_mentions` | `GET /{base}/{node_id}/unlinked-mentions` | read-only | Documents whose text NAMES this issue/page without linking to it. |
-| `wait_for_events` | `GET /events` | read-only | The event feed after `after`, in ascending id order, parked instead of … |
+| `wait_for_events` | `GET /events` | read-only | Events you may read after `after`, ascending, in place of a sleep … |
 | `whoami` | `GET /users/me` | read-only | Who am I? Your identity (id, email, role, agent flag), the acting … |
 
 ## Aegis write tools — scope: `issue:write`
@@ -142,62 +143,62 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 |---|---|---|---|
 | `archive_issue` | `POST /issues/{issue_id}/archive` | idempotent | Archive (soft-delete) an issue: it's hidden from the default lists but the … |
 | `assign_issue` | `PUT /issues/{issue_id}/assignee` | idempotent | Assign an issue to a user id, or pass no assignee_id to unassign it. |
-| `assign_issue_to_seat` | `POST /issues/{issue_id}/assign-seat` | additive | Hand an issue to a declared fleet seat by its slug: the seat's agent … |
-| `attach_label` | `POST /issues/{issue_id}/labels` | idempotent | Attach an existing label (by id — see list_labels) to an issue. |
+| `assign_issue_to_seat` | `POST /issues/{issue_id}/assign-seat` | additive | Hand an issue to a fleet seat by slug: its agent is delegated the … |
+| `attach_label` | `POST /issues/{issue_id}/labels` | idempotent | Attach a label (id from list_labels) to an issue. Returns the issue. |
 | `bulk_update_issues` | `POST /issues/bulk` | idempotent | Apply the same change to MANY issues at once (one call instead of N). |
-| `claim_issue` | `POST /issues/{issue_id}/claim` | additive | Claim or renew an issue. To acquire, omit generation and pass the … |
-| `claim_next_ready` | `POST /issues/claim-next` | additive | Atomically select and claim ready work: delegated first, then priority, … |
+| `claim_issue` | `POST /issues/{issue_id}/claim` | additive | Claim or renew an issue's lease (30 minutes unless lease_seconds). |
+| `claim_next_ready` | `POST /issues/claim-next` | additive | Atomically claim the next ready issue: delegated first, then … |
 | `comment_on_issue` | `POST /issues/{issue_id}/comments` | additive | Add a comment to an issue, authored by the token's user. |
-| `complete_claim` | `POST /issues/{issue_id}/complete` | idempotent | Release your lease. This does NOT close the issue; update_issue does. |
+| `complete_claim` | `POST /issues/{issue_id}/complete` | idempotent | Release your lease; NOT a close unless close_status (update_issue's … |
 | `complete_sprint` | `POST /sprints/{sprint_id}/complete` | idempotent | Move an active sprint to completed. Athena supplies today's date when … |
-| `create_issue` | `POST /issues` | additive | Create an Aegis issue. Omit status to use the target project's default; … |
+| `create_issue` | `POST /issues` | additive | Create an issue. status defaults to the project's own; priority is … |
 | `create_label` | `POST /labels` | idempotent | Create a label in the shared vocabulary. color is a #RRGGBB hex string. |
 | `create_sprint` | `POST /projects/{project_id}/sprints` | additive | Create a planned sprint in a project you created. Optional dates are … |
-| `decline_delegation` | `POST /issues/{issue_id}/decline` | idempotent | Decline an issue delegated to you (decline) — remove yourself from its … |
-| `delegate_issue` | `POST /issues/{issue_id}/delegate` | idempotent | Delegate an issue to an agent user. The human assignee remains accountable; … |
+| `decline_delegation` | `POST /issues/{issue_id}/decline` | idempotent | Decline an issue delegated to you: leave its contributors, visibly, … |
+| `delegate_issue` | `POST /issues/{issue_id}/delegate` | idempotent | Delegate an issue to an agent, added as a contributor; the assignee … |
 | `delete_sprint` | `DELETE /sprints/{sprint_id}` | destructive, idempotent | Permanently delete an empty sprint. Set confirm_permanent=true after … |
 | `detach_label` | `DELETE /issues/{issue_id}/labels/{label_id}` | idempotent | Remove a label from an issue. Returns the updated issue. |
 | `dispatch_to_icarus` | `POST /issues/{issue_id}/dispatch` | additive | Hand an issue to the external execution fleet. |
-| `link_issues` | `POST /issues/{issue_id}/links` | idempotent | Declare a dependency FROM this issue to another (by id or key, e.g. |
-| `request_candidate_review` | `POST /issues/{review_issue_id}/review-requests` | idempotent | Ask a named reviewer to review an exact candidate on an existing review issue. |
-| `resume_claim_handoff` | `POST /issues/{issue_id}/claim-handoffs/{handoff_token}/resume` | idempotent | Explicitly acknowledge an open claim handoff as the exact current … |
-| `set_issue_parent` | `PUT /issues/{issue_id}/parent` | idempotent | Nest an issue under a parent issue (making it a sub-task), or pass no … |
+| `link_issues` | `POST /issues/{issue_id}/links` | idempotent | Link this issue to another (id or key, 'ATH-15'): relation is … |
+| `request_candidate_review` | `POST /issues/{review_issue_id}/review-requests` | idempotent | Ask a reviewer, already assigned or delegated on the review issue … |
+| `resume_claim_handoff` | `POST /issues/{issue_id}/claim-handoffs/{handoff_token}/resume` | idempotent | Acknowledge an open claim handoff as its current leaseholder, after … |
+| `set_issue_parent` | `PUT /issues/{issue_id}/parent` | idempotent | Nest an issue under a parent (no cycles), or omit parent_id to move … |
 | `set_issue_placement` | `PATCH /issues/{issue_id}` | idempotent | Atomically set an issue's project and sprint. Always provide BOTH … |
 | `set_issue_sprint` | `PUT /issues/{issue_id}/sprint` | idempotent | Put an issue into a sprint (which must belong to the issue's own … |
 | `start_playbook` | `POST /pages/{page_id}/start-playbook` | additive | Turn a playbook page's checklist into REAL WORK: one parent issue … |
 | `start_sprint` | `POST /sprints/{sprint_id}/start` | idempotent | Move a planned sprint to active. A project may have only one active … |
 | `unarchive_issue` | `POST /issues/{issue_id}/unarchive` | idempotent | Restore a previously archived issue to the active lists. Returns the issue. |
 | `unlink_issues` | `DELETE /issues/{issue_id}/links/{relation}/{target_id}` | idempotent | Remove a dependency from this issue: the same relation used to add it … |
-| `update_issue` | `PATCH /issues/{issue_id}` | idempotent | Update an issue. Send only the fields to change. status must be a name … |
+| `update_issue` | `PATCH /issues/{issue_id}` | idempotent | Update an issue; send only the fields to change. status is one of its … |
 | `update_sprint` | `PATCH /sprints/{sprint_id}` | destructive, idempotent | Update a sprint's name, goal, or dates without changing its state. |
-| `yield_claim` | `POST /issues/{issue_id}/yield` | idempotent | Honestly release your exact active claim with a structured continuation … |
+| `yield_claim` | `POST /issues/{issue_id}/yield` | idempotent | Release your active claim with a handoff for whoever resumes it: what … |
 
 ## Mentor write tools — scope: `docs:write`
 
 | MCP tool | REST call(s) | Hints | Summary |
 |---|---|---|---|
 | `archive_page` | `POST /pages/{page_id}/archive` | idempotent | Archive (soft-delete) a page: it's hidden from the space tree, navigation, … |
-| `create_page` | `POST /spaces/{space_id}/pages` | additive | Create a Mentor page in a space. Optionally nest it under parent_id (a … |
+| `create_page` | `POST /spaces/{space_id}/pages` | additive | Create a page in a space, under parent_id if given. Bodies take … |
 | `label_page` | `POST /pages/{page_id}/labels` | idempotent | Attach an existing label (by id — see list_labels) to a Mentor page. |
-| `open_my_notebook` | `POST /desk/notebook` | idempotent | Open your notebook page (an agent's notes kept between sessions), … |
-| `record_run_learning` | `POST /issues/{issue_id}/learnings` | additive | Write down what you learned, so the NEXT run starts knowing it. |
+| `open_my_notebook` | `POST /desk/notebook` | idempotent | Open your notebook, notes kept between sessions that only you and … |
+| `record_run_learning` | `POST /issues/{issue_id}/learnings` | additive | Write down what you learned, so the NEXT run starts knowing it: what … |
 | `restore_page_version` | `POST /pages/{page_id}/versions/{version}/restore` | idempotent | Restore a page's content to a prior version. Non-destructive: the current … |
 | `unarchive_page` | `POST /pages/{page_id}/unarchive` | idempotent | Restore a previously archived page to the active tree/nav/search. Returns … |
 | `unlabel_page` | `DELETE /pages/{page_id}/labels/{label_id}` | idempotent | Remove a label from a Mentor page. Returns the page. |
-| `update_page` | `PATCH /pages/{page_id}` | additive | Update a page's title and/or body. Each edit is snapshotted into the … |
+| `update_page` | `PATCH /pages/{page_id}` | additive | Update a page's title or body; each edit keeps a version. Pass … |
 
 ## Cross-module write tools — scope: any write scope
 
 | MCP tool | REST call(s) | Hints | Summary |
 |---|---|---|---|
-| `acknowledge_run_control` | `POST /run-controls/{control_id}/acknowledge` | idempotent | Record that YOU read a control addressed to your run. |
-| `advance_desk_cursor` | `POST /desk/cursor` | idempotent | Record that you have handled every visible event up to `after_id`. |
+| `acknowledge_run_control` | `POST /run-controls/{control_id}/acknowledge` | idempotent | Record that you read a control addressed to your run: a receipt … |
+| `advance_desk_cursor` | `POST /desk/cursor` | idempotent | Record that you have handled every visible event up to `after_id`: |
 | `clear_watch_preference` | `DELETE /watches/{target_kind}/{target_id}/preference` | destructive, idempotent | Delete YOUR preference for a watch, restoring target/default priority. |
-| `complete_run_control` | `POST /run-controls/{control_id}/complete` | idempotent | Complete a control addressed to your run. |
+| `complete_run_control` | `POST /run-controls/{control_id}/complete` | idempotent | Complete a control addressed to your run: for steer and … |
 | `decline_run_control` | `POST /run-controls/{control_id}/decline` | idempotent | Decline a control addressed to your run, with the reason the operator … |
-| `heartbeat_agent_run` | `PUT /agent-runs/heartbeat` | additive | Report that this authenticated agent is still working on this … |
+| `heartbeat_agent_run` | `PUT /agent-runs/heartbeat` | additive | Say you are still working on this session's run (omit run_id); call … |
 | `link_mention` | `POST /{base}/{source_id}/link-mention` | additive | Rewrite the SOURCE document so its first unlinked mention of the target … |
-| `mark_notification_read` | `POST /notifications/read_all`<br>`POST /notifications/{notification_id}/read` | idempotent | Mark notifications in YOUR inbox as read, after handling them. Pass … |
+| `mark_notification_read` | `POST /notifications/read_all`<br>`POST /notifications/{notification_id}/read` | idempotent | Mark your notifications read, after handling them. Pass exactly one: |
 | `mark_notifications_read` | `POST /notifications/read_all` | additive | Mark ALL unread notifications in YOUR inbox as read, including rows not shown … |
 | `set_watch_preference` | `PUT /watches/{target_kind}/{target_id}/preference` | destructive, idempotent | Replace YOUR preference for an active watch. Omit or pass null for a … |
 | `undo_action` | `POST /activity/{event_id}/undo` | idempotent | Undo one activity event by applying its registered inverse. |
@@ -318,4 +319,4 @@ with `isError` true and `status_code` null.
 
 ---
 
-*147 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*148 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

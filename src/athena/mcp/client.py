@@ -721,9 +721,10 @@ class AthenaClient:
         usage: dict | None = None,
         candidate_submission: dict | None = None,
         review_candidate_id: int | None = None,
+        close_status: str | None = None,
     ) -> Any:
         """Release the lease you hold by completing the claimed work (complete) —
-        or clear your own lapsed lease."""
+        or clear your own lapsed lease; with ``close_status``, then set it."""
         return self._mutate(
             self._client.post,
             f"/issues/{issue_id}/complete",
@@ -738,6 +739,7 @@ class AthenaClient:
                 usage=usage,
                 candidate_submission=candidate_submission,
                 review_candidate_id=review_candidate_id,
+                close_status=close_status,
             ),
             idempotency_key=idempotency_key,
         )
@@ -1040,6 +1042,10 @@ class AthenaClient:
 
     def list_projects(self) -> Any:
         return self._result(self._client.get("/projects"))
+
+    def list_fleet_seats(self) -> Any:
+        """The agent seats an issue can be assigned to (AD11)."""
+        return self._result(self._client.get("/fleet/seats/directory"))
 
     def list_users(self) -> Any:
         return self._result(self._client.get("/users"))
@@ -1403,6 +1409,13 @@ class AthenaClient:
         if unread:
             params["unread"] = True
         return self._result(self._client.get("/notifications", params=params))
+
+    def list_notification_groups(self, *, unread: bool = False, limit: int = 50) -> Any:
+        """The inbox one row per target (AD12): ``GET /notifications/grouped``."""
+        params: dict[str, Any] = {"limit": limit}
+        if unread:
+            params["unread"] = True
+        return self._result(self._client.get("/notifications/grouped", params=params))
 
     def list_priority_notifications(
         self,

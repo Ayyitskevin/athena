@@ -207,16 +207,22 @@ def play(day: Day, scene) -> dict[str, DayAgent]:
     return run_agents(_play(day, scene))
 
 
-async def seat_listing_size(day: Day) -> int:
-    """The plain ``seat`` profile's listing, which nobody in the day carries."""
+async def listing_size(day: Day, role: str, profile: str) -> int:
+    """The bytes of the tool listing ``role``'s account reads on ``profile``
+    before its first call, measured as the day measures it."""
     server = mcp_server_for(
-        day.app, day.accounts["seat"], run_id="day-size", profile="seat"
+        day.app, day.accounts[role], run_id="day-size", profile=profile
     )
     async with mcp_sessions(server) as (session,):
         listed = (await session.list_tools()).tools
         return len(
             json.dumps([tool.model_dump(mode="json") for tool in listed]).encode()
         )
+
+
+async def seat_listing_size(day: Day) -> int:
+    """The plain ``seat`` profile's listing, which nobody in the day carries."""
+    return await listing_size(day, "seat", "seat")
 
 
 def size(answer: Any) -> int:
@@ -532,6 +538,32 @@ def test_the_ceilings_file_says_how_it_may_change():
     assert set(ceilings["sizes"]) == set(SIZE_MEASURES)
     for group in (*ROLES, "sizes"):
         assert all(isinstance(value, int) for value in ceilings[group].values())
+
+
+# --- the requirements the day has met -----------------------------------------------
+
+# AD3: the most tool-listing bytes each profile may cost before its first call,
+# docs/plans/AGENT_DAY_SPEC.md's targets. The ceilings file holds the measured
+# values, which may only go down; these hold the requirement itself, so a
+# ceiling raised with a stated reason still cannot pass a target.
+AD3_LISTING_TARGETS = {
+    ("seat", "seat"): 34_000,
+    ("seat", "seat+knowledge"): 45_000,
+    ("conductor", "conductor"): 48_000,
+}
+
+
+def test_ad3_each_profiles_listing_is_within_its_target(day):
+    measured = {
+        profile: (run_agents(listing_size(day, role, profile)), target)
+        for (role, profile), target in AD3_LISTING_TARGETS.items()
+    }
+    over = {
+        profile: f"{size} > {target}"
+        for profile, (size, target) in measured.items()
+        if size > target
+    }
+    assert over == {}, measured
 
 
 # --- the requirements the day is waiting on -----------------------------------------
