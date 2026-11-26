@@ -369,3 +369,32 @@ def test_the_command_answers_a_hidden_and_a_missing_issue_alike(tmp_path):
         assert missing.value.detail == "no such issue"
     finally:
         conn.close()
+
+
+def test_a_conductor_reads_the_seat_directory_without_the_roster(tmp_path):
+    """AD11, D33: a member with issue:write reads each agent seat's slug, name
+    and whether it has an agent account; no email, key or unit, and the
+    operator's seat is not listed. A read-only token is refused as before."""
+    app, _ = make_app(tmp_path)
+    with TestClient(app) as client:
+        world = _world(client)
+        declare_seat(client, "kevin", email=None, kind="operator")
+        declare_seat(client, "dark", email="dark@agents.local")
+        read = client.get("/fleet/seats/directory", headers=bearer(world["conductor"]))
+        assert read.status_code == 200, read.text
+        assert read.json() == {
+            "items": [
+                {"slug": "grok", "name": "Grok", "has_agent_account": True},
+                {"slug": "dark", "name": "Dark", "has_agent_account": False},
+            ]
+        }
+        read_only = mint_token(client, scopes=["read"])
+        refused = client.get("/fleet/seats/directory", headers=bearer(read_only))
+        assert refused.status_code == 403
+        # The full roster stays admin only.
+        roster = client.get("/fleet/seats", headers=bearer(world["conductor"]))
+        assert roster.status_code == 403
+        # The unknown-seat refusal names the directory.
+        issue = _issue(client, ADMIN)
+        unknown = _assign(client, issue["id"], ADMIN, seat_slug="nope")
+        assert "/fleet/seats/directory" in unknown.json()["detail"]

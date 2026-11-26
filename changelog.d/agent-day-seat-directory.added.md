@@ -1,0 +1,1 @@
+`GET /fleet/seats/directory` lists each agent seat's slug, name and whether it has an agent account to any member holding `issue:write` (AD11, D33), so a conductor that is not an admin can find the slug `assign-seat` takes. No emails, keys or units; the full roster stays admin only. The unknown-seat refusal names the directory.

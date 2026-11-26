@@ -42,7 +42,11 @@ def assign_issue_to_seat(
 ) -> dict:
     spec = fleet_roster.find_declared_seat(conn, seat_slug)
     if spec is None:
-        raise AssignError("invalid", f"unknown seat {seat_slug!r}")
+        raise AssignError(
+            "invalid",
+            f"unknown seat {seat_slug!r}; GET /fleet/seats/directory "
+            "(MCP: list_fleet_seats) lists the seat slugs",
+        )
     if spec.get("kind") == "operator":
         raise AssignError("invalid", "assign work to an agent seat, not the operator")
     email = spec.get("email")
