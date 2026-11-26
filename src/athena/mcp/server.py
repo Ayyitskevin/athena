@@ -36,7 +36,7 @@ from mcp.types import (
     TextContent,
     ToolAnnotations,
 )
-from pydantic import AfterValidator, Field, ValidationError
+from pydantic import AfterValidator, Field, ValidationError, WithJsonSchema
 
 from athena.aegis import (
     automation,
@@ -56,6 +56,7 @@ from athena.core import (
     idempotency,
     list_cursor,
     notifications,
+    refusal_codes,
     run_context,
     run_control_commands,
     run_controls,
@@ -94,9 +95,27 @@ HandoffEvidenceItem = Annotated[
         max_length=lease_commands.MAX_HANDOFF_EVIDENCE_ITEM_CHARS,
     ),
 ]
+# A string, or (AD9, D31) a completion evidence object, which the command
+# checks by the completion report's grammar and stores as one line.
 HandoffEvidence = Annotated[
-    list[HandoffEvidenceItem],
+    list[HandoffEvidenceItem | dict],
     Field(max_length=lease_commands.MAX_HANDOFF_EVIDENCE_ITEMS),
+    WithJsonSchema(
+        {
+            "type": "array",
+            "maxItems": lease_commands.MAX_HANDOFF_EVIDENCE_ITEMS,
+            "items": {
+                "anyOf": [
+                    {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": lease_commands.MAX_HANDOFF_EVIDENCE_ITEM_CHARS,
+                    },
+                    *lease_commands.report_item_schemas()["evidence"]["anyOf"],
+                ]
+            },
+        }
+    ),
 ]
 HandoffBlockingQuestion = Annotated[
     str,
@@ -1159,9 +1178,9 @@ def listed_schema(schema: Any) -> Any:
     """An input schema as listed: pydantic's schema without its ``title``
     keywords ("Issue Id" for issue_id, "complete_claimArguments" for the
     whole) and without ``"default": null`` (an optional argument left out is
-    already null). Both are annotations, not assertions: a client validates
-    exactly what it validated before, and the argument model that checks each
-    call on the server is untouched."""
+    already null), with a nullable plain type written ``type: [X, "null"]``.
+    None of it changes what a client validates, and the argument model that
+    checks each call on the server is untouched."""
     if not isinstance(schema, dict):
         return schema
     listed: dict[str, Any] = {}
@@ -1178,7 +1197,35 @@ def listed_schema(schema: Any) -> Any:
             listed[key] = {name: listed_schema(inner) for name, inner in value.items()}
         else:
             listed[key] = value
-    return listed
+    return _nullable_as_type(listed)
+
+
+# Keywords whose meaning would change if a branch were merged beside "null".
+_UNMERGEABLE = frozenset({"anyOf", "allOf", "oneOf", "$ref", "enum", "const", "not"})
+
+
+def _nullable_as_type(schema: dict[str, Any]) -> dict[str, Any]:
+    """``anyOf: [{type: X, ...constraints}, {type: null}]`` as ``type: [X, null]``
+    with the same constraints (AD9's listing room): the same set of values,
+    since a constraint of one type does not apply to null. Left alone when
+    the branch is anything but one plain type."""
+    options = schema.get("anyOf")
+    if not (isinstance(options, list) and len(options) == 2):
+        return schema
+    if {"type": "null"} not in options:
+        return schema
+    (branch,) = [option for option in options if option != {"type": "null"}]
+    if (
+        not isinstance(branch, dict)
+        or not isinstance(branch.get("type"), str)
+        or _UNMERGEABLE & set(branch)
+        or set(branch) & (set(schema) - {"anyOf"})
+    ):
+        return schema
+    merged = {key: value for key, value in schema.items() if key != "anyOf"}
+    merged.update(branch)
+    merged["type"] = [branch["type"], "null"]
+    return merged
 
 
 # What a tool may declare for one object (not a list). A bare ``-> dict`` gets no
@@ -1279,14 +1326,20 @@ def tool_failure(exc: BaseException) -> dict[str, Any]:
         return refused.refusal()
     cause = _root_cause(exc)
     if isinstance(cause, ValidationError):
-        problems = "; ".join(
-            f"{'.'.join(str(part) for part in error['loc']) or 'arguments'}: "
-            f"{error['msg']}"
+        violations = [
+            {
+                "path": ".".join(str(part) for part in error["loc"]) or "arguments",
+                "message": error["msg"],
+            }
             for error in cause.errors(include_url=False, include_input=False)
-        )
-        return _client_side(
-            code="invalid_arguments", detail=f"invalid arguments: {problems}"
-        )
+        ]
+        problems = "; ".join(f"{v['path']}: {v['message']}" for v in violations)
+        return {
+            **_client_side(
+                code="invalid_arguments", detail=f"invalid arguments: {problems}"
+            ),
+            "violations": violations,
+        }
     if isinstance(cause, ValueError) and not isinstance(cause, json.JSONDecodeError):
         return _client_side(code="invalid_arguments", detail=str(cause))
     if isinstance(cause, httpx.TransportError):
@@ -1297,6 +1350,92 @@ def tool_failure(exc: BaseException) -> dict[str, Any]:
     if cause is exc and str(exc).startswith("Unknown tool: "):
         return _client_side(code="unknown_tool", detail=str(exc))
     return _client_side(code="tool_failed", detail=str(cause) or type(cause).__name__)
+
+
+#: Argument examples a schema alone cannot write well: the report lists and
+#: yield's evidence, whose items carry closed words a reader should see used.
+_ARGUMENT_EXAMPLES: Mapping[tuple[str, str], Any] = MappingProxyType(
+    {
+        ("complete_claim", "results"): [lease_commands.REPORT_ITEM_EXAMPLES["results"]],
+        ("complete_claim", "evidence"): [
+            lease_commands.REPORT_ITEM_EXAMPLES["evidence"]
+        ],
+        ("complete_claim", "findings"): {"P1": 0, "P2": 1},
+        ("yield_claim", "evidence"): [
+            "pytest -q: 2 failed",
+            lease_commands.REPORT_ITEM_EXAMPLES["evidence"],
+        ],
+    }
+)
+
+
+def example_value(schema: Any, defs: Mapping[str, Any] | None = None) -> Any:
+    """A small value of the shape ``schema`` describes, for a refusal to show
+    (AD9). Best effort for a pattern: the value says what it must match."""
+    if not isinstance(schema, dict):
+        return None
+    defs = defs if defs is not None else schema.get("$defs", {})
+    if "$ref" in schema:
+        return example_value(defs.get(schema["$ref"].rsplit("/", 1)[-1], {}), defs)
+    if "const" in schema:
+        return schema["const"]
+    if "enum" in schema:
+        return schema["enum"][0]
+    for key in ("anyOf", "oneOf"):
+        if key in schema:
+            options = [o for o in schema[key] if o != {"type": "null"}]
+            return example_value(options[0], defs) if options else None
+    kind = schema.get("type")
+    if isinstance(kind, list):
+        kind = next((k for k in kind if k != "null"), None)
+    if kind == "object":
+        return {
+            name: example_value(inner, defs)
+            for name, inner in schema.get("properties", {}).items()
+            if name in schema.get("required", [])
+        }
+    if kind == "array":
+        return [example_value(schema.get("items", {}), defs)]
+    if kind == "integer":
+        return max(1, schema.get("minimum", 1))
+    if kind == "number":
+        return 1
+    if kind == "boolean":
+        return False
+    if "pattern" in schema:
+        return f"<matching {schema['pattern']}>"
+    return "text"
+
+
+def tool_failure_for(mcp: FastMCP, name: str, exc: BaseException) -> dict[str, Any]:
+    """``tool_failure`` for a call of the tool ``name``: what the wire carries.
+    An argument refusal also gets its examples and ``next`` (AD9)."""
+    failure = tool_failure(exc)
+    if failure.get("code") == "invalid_arguments":
+        registered = mcp._tool_manager.get_tool(name)  # noqa: SLF001
+        if registered is not None:
+            failure = with_examples(failure, name, registered.parameters)
+    return failure
+
+
+def with_examples(failure: dict[str, Any], tool: str, schema: Any) -> dict[str, Any]:
+    """An invalid_arguments refusal with what to send instead (AD9): for each
+    argument a violation names, an example of its shape, and ``next`` naming
+    the same tool. The rejected values are never repeated."""
+    properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+    names = [str(v["path"]).split(".", 1)[0] for v in failure.get("violations", [])]
+    examples = {
+        name: _ARGUMENT_EXAMPLES.get(
+            (tool, name), example_value(properties[name], schema.get("$defs", {}))
+        )
+        for name in dict.fromkeys(names)
+        if name in properties
+    }
+    answer = dict(failure)
+    if examples:
+        answer["examples"] = examples
+    answer["next"] = refusal_codes.next_call("invalid_arguments", tool=tool)
+    return answer
 
 
 def _answer_refusals_as_one_object(mcp: FastMCP) -> None:
@@ -1317,15 +1456,15 @@ def _answer_refusals_as_one_object(mcp: FastMCP) -> None:
     This replaces only the protocol handler. ``FastMCP.call_tool``, which
     embedding callers and tests use in-process, still answers the SDK's own
     ``(content, structured)`` pair, its text indented, and still raises
-    ``ToolError`` (the SDK's in-process failure signal); ``tool_failure`` gives
-    such a caller the same object the wire carries, and ``results.answer_text``
+    ``ToolError`` (the SDK's in-process failure signal); ``tool_failure_for``
+    gives such a caller the same object the wire carries, and ``results.answer_text``
     the text."""
 
     async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         try:
             _indented, structured = await mcp.call_tool(name, arguments)
         except Exception as exc:  # noqa: BLE001 — every failure is one object
-            text = results.answer_text(tool_failure(exc))
+            text = results.answer_text(tool_failure_for(mcp, name, exc))
             return CallToolResult(
                 content=[TextContent(type="text", text=text)], isError=True
             )

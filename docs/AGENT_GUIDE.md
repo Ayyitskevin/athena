@@ -70,7 +70,10 @@ with the token scope the operation needs (`admin` holds every scope),
 `Idempotency-Key`, `If-Match` and `ETag`, the run headers, this refusal body, and
 404 and 428 where the operation can answer them.
 A failure that never reached Athena (a bad argument, say) is the same object, with
-`status_code` null and an MCP-side code such as `invalid_arguments`.
+`status_code` null and an MCP-side code such as `invalid_arguments`. That refusal
+lists each bad argument by path under `violations`, shows an example of each
+one's shape under `examples` (never the value you sent), and names the same tool
+in `next`.
 JSON write bodies refuse a field they do not declare (422 `validation_error`), so
 a misspelt field is never silently dropped. A filter whose values are a closed set
 (`kind` on search, `priority` on the issue list, `state` on dispatches) refuses an

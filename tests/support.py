@@ -494,7 +494,10 @@ def assert_registered_refusal(answer: Mapping[str, Any]) -> None:
     else:
         assert code in refusal_codes.REFUSAL_CODES, answer
         assert status in refusal_codes.REFUSAL_CODES[code].statuses, answer
-    assert answer.get("next") == refusal_codes.next_call(code), answer
+    named = answer.get("next")
+    # An argument refusal's next is the refused tool itself (AD9).
+    same = named.get("tool") if isinstance(named, dict) else None
+    assert named == refusal_codes.next_call(code, tool=same), answer
 
 
 class McpAgent:

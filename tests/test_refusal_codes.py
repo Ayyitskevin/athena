@@ -780,6 +780,11 @@ def test_a_failure_before_any_request_is_one_object_with_an_mcp_side_code(world)
         "detail": "invalid arguments: ref: Input should be a valid string",
         "code": "invalid_arguments",
         "status_code": None,
+        # AD9: each bad argument by path, an example of its shape, and the same
+        # tool as next. The rejected value (5) is not repeated.
+        "violations": [{"path": "ref", "message": "Input should be a valid string"}],
+        "examples": {"ref": "text"},
+        "next": refusal_codes.next_call("invalid_arguments", tool="get_issue"),
     }
     assert failure["code"] in refusal_codes.MCP_REFUSAL_CODES
     assert failure["code"] not in REFUSAL_CODES
@@ -833,7 +838,10 @@ def test_mcp_side_codes_have_no_http_status_and_never_collide():
         assert not hasattr(entry, "statuses"), code
         assert entry.meaning.strip() and "\n" not in entry.meaning, code
         if entry.next is not None:
-            assert entry.next.tool in mcp_server.SEAT_PROFILE, code
+            assert (
+                entry.next.tool in mcp_server.SEAT_PROFILE
+                or entry.next.tool == refusal_codes.SAME_TOOL
+            ), code
     assert refusal_codes.next_call("coordination_root_unconfirmed") == {
         "tool": "get_issue_lease",
         "hint": "issue_id; do not retry the claim without its root",

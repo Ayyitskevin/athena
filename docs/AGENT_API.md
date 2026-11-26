@@ -311,7 +311,7 @@ with `isError` true and `status_code` null.
 
 | Code | Status | Meaning | Next |
 |---|---|---|---|
-| `invalid_arguments` | none | The tool's arguments failed its own checks, so no request was sent; the detail names each argument and the rule it broke. |  |
+| `invalid_arguments` | none | The tool's arguments failed its own checks, so no request was sent; the detail names each argument and the rule it broke, `violations` lists them by path and `examples` shows each one's shape. | `(the tool called)`: call it again with each named argument in the shape `examples` shows |
 | `unknown_tool` | none | No tool of that name is registered in this session's profile. |  |
 | `coordination_root_unconfirmed` | none | The claim's answer did not confirm the coordination root you sent; the claim may already exist. Read the lease before acting. | `get_issue_lease`: issue_id; do not retry the claim without its root |
 | `athena_no_response` | none | Athena did not answer (refused, reset or timed out); whether a write applied is unknown. Read the target's state before retrying. |  |

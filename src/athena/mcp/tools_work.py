@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import Field, SkipValidation, ValidationError
+from pydantic import Field, SkipValidation, ValidationError, WithJsonSchema
 
 from athena.aegis import issue_commands, lease_commands
 from athena.aegis.review_models import CandidateSubmission, ReviewCandidateId
@@ -49,9 +49,29 @@ from athena.mcp.server import (
 # schema from the command's own constants. Descriptions only: the command
 # validates, and refuses every problem at once by field path.
 _REPORT_DOCS = lease_commands.report_field_docs()
-ReportResults = Annotated[list[dict] | None, Field(description=_REPORT_DOCS["results"])]
+# The two report lists publish their item shape (AD9) from the command's own
+# constants; validation stays the command's, which refuses by path.
+_REPORT_ITEMS = lease_commands.report_item_schemas()
+
+
+def _report_list(name: str, maximum: int) -> WithJsonSchema:
+    return WithJsonSchema(
+        {
+            "anyOf": [
+                {"type": "array", "items": _REPORT_ITEMS[name], "maxItems": maximum},
+                {"type": "null"},
+            ]
+        }
+    )
+
+
+ReportResults = Annotated[
+    list[dict] | None,
+    _report_list("results", lease_commands.MAX_COMPLETION_RESULTS),
+]
 ReportEvidence = Annotated[
-    list[dict] | None, Field(description=_REPORT_DOCS["evidence"])
+    list[dict] | None,
+    _report_list("evidence", lease_commands.MAX_HANDOFF_EVIDENCE_ITEMS),
 ]
 ReportVerdict = Annotated[str | None, Field(description=_REPORT_DOCS["verdict"])]
 ReportFindings = Annotated[

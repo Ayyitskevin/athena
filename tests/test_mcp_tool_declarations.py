@@ -177,21 +177,45 @@ def test_the_surface_sizes_are_unchanged():
 
 def _without_titles(schema):
     """Pydantic's schema minus every ``title`` keyword and every null
-    ``default``, by a walk of its own: a property *named* title is kept."""
+    ``default``, nullable plain types as type arrays, by a walk of its own: a
+    property *named* title is kept."""
     if isinstance(schema, list):
         return [_without_titles(item) for item in schema]
     if not isinstance(schema, dict):
         return schema
-    return {
-        key: (
-            {name: _without_titles(inner) for name, inner in value.items()}
-            if key in {"properties", "$defs"}
-            else _without_titles(value)
-        )
-        for key, value in schema.items()
-        if not (key == "title" and isinstance(value, str))
-        and not (key == "default" and value is None)
-    }
+    return _nullable_as_type(
+        {
+            key: (
+                {name: _without_titles(inner) for name, inner in value.items()}
+                if key in {"properties", "$defs"}
+                else _without_titles(value)
+            )
+            for key, value in schema.items()
+            if not (key == "title" and isinstance(value, str))
+            and not (key == "default" and value is None)
+        }
+    )
+
+
+def _nullable_as_type(schema):
+    """The listing's ``type: [X, "null"]`` for a nullable plain type, by a rule
+    of this test's own: the non-null option merged beside the anyOf's other
+    keys, its type widened by null."""
+    options = schema.get("anyOf") if isinstance(schema, dict) else None
+    if not (isinstance(options, list) and len(options) == 2):
+        return schema
+    if {"type": "null"} not in options:
+        return schema
+    (branch,) = [option for option in options if option != {"type": "null"}]
+    plain = isinstance(branch.get("type"), str) and not (
+        {"anyOf", "allOf", "oneOf", "$ref", "enum", "const", "not"} & set(branch)
+    )
+    if not plain or set(branch) & (set(schema) - {"anyOf"}):
+        return schema
+    merged = {key: value for key, value in schema.items() if key != "anyOf"}
+    merged.update(branch)
+    merged["type"] = [branch["type"], "null"]
+    return merged
 
 
 def test_the_listing_drops_only_titles_and_indentation():

@@ -103,9 +103,16 @@ COMPLETION_EVIDENCE_KINDS = (
     "manifest",
     "attachment",
     "forge_event",
+    # AD9 (D31): a command the reporter ran and what it printed, the most
+    # common evidence a builder has. Its keys are its own (below).
+    "command",
 )
 COMPLETION_ID_REF_KINDS = frozenset({"attachment", "forge_event"})
 COMPLETION_EVIDENCE_KEYS = ("kind", "source", "ref", "scope")
+#: The ``command`` kind's keys: what was run, what it printed (in the
+#: reporter's words) and the scope that run had. No optional keys.
+COMPLETION_COMMAND_EVIDENCE_KEYS = ("kind", "command", "outcome", "scope")
+MAX_COMPLETION_COMMAND_CHARS = 1_000
 COMPLETION_EVIDENCE_OPTIONAL = ("digest", "bytes", "locator")
 MAX_COMPLETION_SUBJECTS = 10
 MAX_COMPLETION_SUBJECT_CHARS = 200
@@ -770,6 +777,41 @@ def _normalize_handoff_evidence(evidence: object) -> list[str]:
     return normalized
 
 
+def _handoff_evidence_texts(evidence: object) -> object:
+    """A yield's evidence with each object item written as one line (AD9, D31).
+
+    A handoff's evidence is stored as text, so an object item, a completion
+    evidence object such as ``{kind: command, command, outcome, scope}``, is
+    checked by the completion report's grammar and then rendered; a string item
+    passes unchanged. Anything else is left for the text rules to refuse."""
+    if not isinstance(evidence, list) or not any(isinstance(i, dict) for i in evidence):
+        return evidence
+    problems = _Problems()
+    for index, item in enumerate(evidence):
+        if not isinstance(item, dict):
+            continue
+        keys, optional = _evidence_keys(item)
+        label = f"evidence[{index}]"
+        if not (set(keys) <= set(item) <= set(keys) | set(optional)):
+            problems.add(label, _keys_rule(keys, optional))
+        _evidence_problems(problems, label, item)
+    problems.raise_any()
+    return [
+        _evidence_line(item) if isinstance(item, dict) else item for item in evidence
+    ]
+
+
+def _evidence_line(item: dict) -> str:
+    """One evidence object as the line a handoff stores."""
+    if item["kind"] == "command":
+        return f"command ({item['scope']}): {item['command']} => {item['outcome']}"
+    line = f"{item['kind']} ({item['scope']}) {item['source']}: {item['ref']}"
+    extras = [
+        f"{key} {item[key]}" for key in COMPLETION_EVIDENCE_OPTIONAL if key in item
+    ]
+    return line + (f" [{'; '.join(extras)}]" if extras else "")
+
+
 def _normalize_handoff_token(handoff_token: object) -> str:
     if not claim_handoffs.is_valid_handoff_token(handoff_token):
         raise IssueCommandError(
@@ -828,11 +870,77 @@ def report_field_docs() -> dict[str, str]:
         "evidence": (
             f"Up to {MAX_HANDOFF_EVIDENCE_ITEMS} objects with keys "
             f"{', '.join(COMPLETION_EVIDENCE_KEYS)} (optional "
-            f"{', '.join(COMPLETION_EVIDENCE_OPTIONAL)}); kind is "
+            f"{', '.join(COMPLETION_EVIDENCE_OPTIONAL)}), or for kind command "
+            f"{', '.join(COMPLETION_COMMAND_EVIDENCE_KEYS)}; kind is "
             f"{_one_of(COMPLETION_EVIDENCE_KINDS)}; scope is "
             f"{_one_of(COMPLETION_EVIDENCE_SCOPES)}."
         ),
     }
+
+
+def report_item_schemas() -> dict[str, dict]:
+    """The item shapes of complete_claim's ``results`` and ``evidence`` as JSON
+    Schema (AD9), from the same constants the command checks. The MCP listing
+    and the REST OpenAPI publish these; the command stays the validator, so a
+    shape refused here is refused by path in ``violations``."""
+    text: dict = {"type": "string"}
+    scope = {"enum": list(COMPLETION_EVIDENCE_SCOPES)}
+    record_kinds = [kind for kind in COMPLETION_EVIDENCE_KINDS if kind != "command"]
+    return {
+        "results": {
+            "type": "object",
+            "properties": {
+                "condition": text,
+                "state": {"enum": list(COMPLETION_RESULT_STATES)},
+                "note": text,
+                "subject": {"type": "array", "items": text},
+            },
+            "required": list(COMPLETION_RESULT_KEYS),
+            "additionalProperties": False,
+        },
+        "evidence": {
+            "anyOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"enum": record_kinds},
+                        "source": text,
+                        "ref": text,
+                        "scope": scope,
+                        "digest": text,
+                        "bytes": {"type": "integer"},
+                        "locator": text,
+                    },
+                    "required": list(COMPLETION_EVIDENCE_KEYS),
+                    "additionalProperties": False,
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"const": "command"},
+                        "command": text,
+                        "outcome": text,
+                        "scope": scope,
+                    },
+                    "required": list(COMPLETION_COMMAND_EVIDENCE_KEYS),
+                    "additionalProperties": False,
+                },
+            ]
+        },
+    }
+
+
+#: A minimal valid item of each report list, which a refusal of a wrong shape
+#: carries as its example (AD9).
+REPORT_ITEM_EXAMPLES: dict[str, dict] = {
+    "results": {"condition": "tests pass", "state": "met", "note": "pytest -q"},
+    "evidence": {
+        "kind": "command",
+        "command": "pytest -q",
+        "outcome": "12 passed",
+        "scope": "actual-run",
+    },
+}
 
 
 class _Problems:
@@ -908,8 +1016,23 @@ def _result_problems(problems: _Problems, label: str, item: dict) -> None:
                 )
 
 
+def _evidence_keys(item: object) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The required and optional keys of one evidence item, by its kind."""
+    if isinstance(item, dict) and item.get("kind") == "command":
+        return COMPLETION_COMMAND_EVIDENCE_KEYS, ()
+    return COMPLETION_EVIDENCE_KEYS, COMPLETION_EVIDENCE_OPTIONAL
+
+
 def _evidence_problems(problems: _Problems, label: str, item: dict) -> None:
     kind = item.get("kind")
+    if "command" in item:
+        problems.text(
+            item["command"], f"{label}.command", maximum=MAX_COMPLETION_COMMAND_CHARS
+        )
+    if "outcome" in item:
+        problems.text(
+            item["outcome"], f"{label}.outcome", maximum=MAX_COMPLETION_TEXT_CHARS
+        )
     if "kind" in item and (
         not isinstance(kind, str) or kind not in COMPLETION_EVIDENCE_KINDS
     ):
@@ -1004,7 +1127,7 @@ def _normalize_completion_report(
             keys, optional = (
                 (COMPLETION_RESULT_KEYS, COMPLETION_RESULT_OPTIONAL)
                 if name == "results"
-                else (COMPLETION_EVIDENCE_KEYS, COMPLETION_EVIDENCE_OPTIONAL)
+                else _evidence_keys(item)
             )
             if not isinstance(item, dict):
                 problems.add(label, _keys_rule(keys, optional))
@@ -1016,11 +1139,12 @@ def _normalize_completion_report(
             else:
                 _evidence_problems(problems, label, item)
     problems.raise_any()
-    if isinstance(evidence, list) and evidence:
+    refs = [item["ref"] for item in evidence or [] if "ref" in item]
+    if refs:
         # The same item-count, text/control and encoded-ref envelope as yield.
         # Validation trims there; retain the original bytes in this report.
         try:
-            _normalize_handoff_evidence([item["ref"] for item in evidence])
+            _normalize_handoff_evidence(refs)
         except IssueCommandError:
             # Every item passed above, so only the encoded size can fail here.
             problems.add(
@@ -1044,15 +1168,14 @@ def _normalize_completion_report(
         if name in {"unfinished", "uncertainty"}:
             report[name] = list(raw)
             continue
-        fields = (
-            COMPLETION_RESULT_KEYS + COMPLETION_RESULT_OPTIONAL
-            if name == "results"
-            else COMPLETION_EVIDENCE_KEYS + COMPLETION_EVIDENCE_OPTIONAL
-        )
         report[name] = [
             {
                 field: list(item[field]) if field == "subject" else item[field]
-                for field in fields
+                for field in (
+                    COMPLETION_RESULT_KEYS + COMPLETION_RESULT_OPTIONAL
+                    if name == "results"
+                    else sum(_evidence_keys(item), ())
+                )
                 if field in item
             }
             for item in raw
@@ -1142,7 +1265,7 @@ def yield_claim(
         maximum=MAX_HANDOFF_ATTEMPTED_WORK_CHARS,
         required=True,
     )
-    normalized_evidence = _normalize_handoff_evidence(evidence)
+    normalized_evidence = _normalize_handoff_evidence(_handoff_evidence_texts(evidence))
     for index, text in enumerate(normalized_evidence):
         kind = report_credentials.credential_kind(text)
         if kind is not None:

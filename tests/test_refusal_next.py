@@ -52,6 +52,12 @@ from athena.mcp.client import AthenaClient, AthenaError
 
 #: Codes whose `next` this test cannot follow from a built state, with the reason.
 UNBUILDABLE = {
+    "invalid_arguments": (
+        "its next is the refused tool itself, called again with the arguments in "
+        "the shape `examples` shows; tests/test_argument_shapes.py makes the "
+        "wrong-shape call for every list-of-object argument and validates the "
+        "example against the published schema"
+    ),
     "coordination_root_unconfirmed": (
         "the MCP client answers it when Athena's claim answer omits the root the "
         "agent sent; this server always echoes the root it stored, so only an "

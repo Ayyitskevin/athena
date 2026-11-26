@@ -19,7 +19,14 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, SkipValidation
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SkipValidation,
+    StrictBool,
+    WithJsonSchema,
+)
 
 from athena.core import authorship
 from athena.core.authorship import AuthoredBy
@@ -1705,6 +1712,22 @@ class LeaseGenerationIn(BaseModel):
 
 
 _REPORT_DOCS = lease_commands.report_field_docs()
+_REPORT_ITEMS = lease_commands.report_item_schemas()
+
+
+def _report_list(name: str, maximum: str) -> dict:
+    """A report list's published shape (AD9): its typed items, or null. The
+    command still validates; this only documents."""
+    return {
+        "anyOf": [
+            {
+                "type": "array",
+                "items": _REPORT_ITEMS[name],
+                "maxItems": getattr(lease_commands, maximum),
+            },
+            {"type": "null"},
+        ]
+    }
 
 
 class CompleteClaimIn(LeaseGenerationIn):
@@ -1714,10 +1737,15 @@ class CompleteClaimIn(LeaseGenerationIn):
     # nothing, so the fields stay `object` and FastAPI never echoes a value.
     verdict: object | None = Field(default=None, description=_REPORT_DOCS["verdict"])
     findings: object | None = Field(default=None, description=_REPORT_DOCS["findings"])
-    results: object | None = Field(default=None, description=_REPORT_DOCS["results"])
+    results: Annotated[
+        object | None, WithJsonSchema(_report_list("results", "MAX_COMPLETION_RESULTS"))
+    ] = Field(default=None, description=_REPORT_DOCS["results"])
     unfinished: object | None = None
     uncertainty: object | None = None
-    evidence: object | None = Field(default=None, description=_REPORT_DOCS["evidence"])
+    evidence: Annotated[
+        object | None,
+        WithJsonSchema(_report_list("evidence", "MAX_HANDOFF_EVIDENCE_ITEMS")),
+    ] = Field(default=None, description=_REPORT_DOCS["evidence"])
     usage: object | None = None
     # Keep the shared OpenAPI shapes, but let the command validate raw input.
     # FastAPI's default validation errors echo rejected input (including secrets

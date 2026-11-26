@@ -505,7 +505,12 @@ def test_a_seat_plays_the_documented_loop_and_every_failure_branch(board):
     unresolved = [
         (refusal.agent, refusal.tool, refusal.answer["code"])
         for refusal in meter.refusals
-        if refusal.answer.get("next") and not refusal.followed
+        if refusal.answer.get("next")
+        and not refusal.followed
+        # An argument refusal's next is the refused call itself (AD9): the
+        # agent resolves it by correcting the arguments, which this script
+        # already knows how to do.
+        and refusal.answer["next"]["tool"] != refusal.tool
     ]
     assert unresolved == []
     assert meter.over_budget == []
