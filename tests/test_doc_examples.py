@@ -501,7 +501,7 @@ then watch the loop close
 Decline what you will not do with `decline_run_control(control_id=..., ...)`,
 which shows no reason, so it is checked and not sent.
 
-Then switch runs with `begin_run(run_id="x")`.
+Then watch it with `watch(target_kind="issue", target_id=1)`.
 """
 
 
@@ -522,7 +522,7 @@ def test_a_prompt_step_that_no_longer_runs_fails(workspace, schemas):
     assert "claim_issue(issue_id=<id>" in failures
     assert "lease_generation_required" in failures
     assert "a ``` block whose lines are not each one tool call" in failures
-    assert "begin_run is not in the document's `seat` profile" in failures
+    assert "watch is not in the document's `seat` profile" in failures
     assert len(report.failures) == 3, failures
     assert any("decline_run_control" in call for call in report.calls_validated)
     assert any("my_desk()" in call for call in report.calls_run)

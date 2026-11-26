@@ -117,9 +117,9 @@ names a smaller set:
 | Value | Tools | For |
 |---|---|---|
 | `full` (the default; unset or empty means the same) | everything the token can use | operators, embedding callers, anything that is not a seat |
-| `seat` | the core loop: `my_desk`, `advance_desk_cursor`, `list_my_delegated_work`, `search_work`, `get_issue`, `get_issue_work_context`, `list_issue_comments`, `get_issue_comment`, `get_issue_lease`, `claim_issue`, `yield_claim`, `resume_claim_handoff`, `complete_claim`, `decline_delegation`, `update_issue`, `comment_on_issue`, `create_issue`, `heartbeat_agent_run`, `current_run`, `list_notifications`, `mark_notification_read`, `list_run_controls`, `acknowledge_run_control`, `complete_run_control`, `decline_run_control`, `get_idempotency_key` | a seat working issues |
-| `seat+knowledge` | the above plus `search`, `get_page`, `list_pages`, `create_page`, `update_page`, `record_run_learning`, `get_issue_runbook`, `list_projects`, `attach_label`, `list_labels`, `link_issues`, `open_my_notebook` | a seat that also reads and writes pages |
-| `conductor` | `seat` plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`, `get_issue_prior_text`, `assign_issue`, `assign_issue_to_seat`, `delegate_issue`, `list_eligible_accounts`, `request_candidate_review`, `set_issue_parent`, `list_subtasks`, `link_issues` | a member agent coordinating role accounts; see [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md) |
+| `seat` | the core loop: `my_desk`, `advance_desk_cursor`, `list_my_delegated_work`, `search_work`, `get_issue`, `get_issue_work_context`, `list_issue_comments`, `get_issue_comment`, `get_issue_lease`, `claim_issue`, `yield_claim`, `resume_claim_handoff`, `complete_claim`, `decline_delegation`, `update_issue`, `comment_on_issue`, `create_issue`, `heartbeat_agent_run`, `current_run`, `begin_run`, `list_notifications`, `mark_notification_read`, `list_run_controls`, `acknowledge_run_control`, `complete_run_control`, `decline_run_control`, `get_idempotency_key` | a seat working issues |
+| `seat+knowledge` | the above plus `search`, `get_page`, `list_pages`, `create_page`, `update_page`, `record_run_learning`, `get_issue_runbook`, `list_projects`, `attach_label`, `list_labels`, `link_issues`, `open_my_notebook`, `list_spaces` | a seat that also reads and writes pages |
+| `conductor` | `seat` plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`, `get_issue_prior_text`, `assign_issue`, `assign_issue_to_seat`, `delegate_issue`, `list_eligible_accounts`, `request_candidate_review`, `set_issue_parent`, `list_subtasks`, `link_issues`, `list_projects`, `list_fleet_seats` | a member agent coordinating role accounts; see [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md) |
 
 Every config Athena prints names a profile: the one onboarding was asked for in
 `profile` (`seat`, `seat+knowledge` or `conductor`; `POST /users/onboard_agent`,
@@ -137,8 +137,8 @@ No seat profile carries `mark_notifications_read`: bulk acknowledgement is never
 a seat's move. An unknown value stops the server with a message naming the
 four profiles; it never falls back to `full` by accident. A seat that needs a hidden
 tool for one task starts that session with `ATHENA_MCP_PROFILE=full`. The seat
-profile also includes `claim_next_ready`, `wait_for_events` and `begin_run`: 29
-tools for a normal seat, 42 with knowledge, or 45 for a conductor, before any narrower token
+profile also includes `claim_next_ready` and `wait_for_events`: 29 tools for a
+normal seat, 42 with knowledge, or 45 for a conductor, before any narrower token
 scope removes more. The conductor profile adds no admin tools or permission.
 `get_project_brief(project_id=..., limit=5)` provides a bounded project snapshot;
 it does not replace desk boot or full issue work context for claims and recovery.
