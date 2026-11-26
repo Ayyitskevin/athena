@@ -34,9 +34,7 @@ SECRET = "token: ath_live_do_not_keep"
 
 
 def _issue(client: TestClient, body: str = SECRET) -> int:
-    made = client.post(
-        "/issues", json={"title": "Leaky", "body": body}, headers=ADMIN
-    )
+    made = client.post("/issues", json={"title": "Leaky", "body": body}, headers=ADMIN)
     assert made.status_code == 201, made.text
     return made.json()["id"]
 
@@ -82,9 +80,12 @@ def test_an_administrator_removes_a_kept_text_with_its_event(tmp_path):
         bootstrap(client)
         issue_id = _issue(client)
         edit_id = _edit_out(client, issue_id)
-        assert client.get(
-            f"/issues/{issue_id}/prior-texts/{edit_id}", headers=ADMIN
-        ).json()["prior_body"] == SECRET
+        assert (
+            client.get(
+                f"/issues/{issue_id}/prior-texts/{edit_id}", headers=ADMIN
+            ).json()["prior_body"]
+            == SECRET
+        )
 
         removed = client.delete(
             f"/issues/{issue_id}/prior-texts/{edit_id}", headers=ADMIN
@@ -134,9 +135,12 @@ def test_only_an_administrator_may_remove(tmp_path):
         refused = seat_http.delete(f"/issues/{issue_id}/prior-texts/{edit_id}")
         assert refused.status_code == 403
         assert refused.json()["code"] == "forbidden"
-        assert client.get(
-            f"/issues/{issue_id}/prior-texts/{edit_id}", headers=ADMIN
-        ).status_code == 200
+        assert (
+            client.get(
+                f"/issues/{issue_id}/prior-texts/{edit_id}", headers=ADMIN
+            ).status_code
+            == 200
+        )
     assert _removals(db_file) == []
 
 
@@ -174,9 +178,7 @@ def test_the_database_refuses_a_delete_without_its_removal_event(tmp_path):
     conn = db.connect(db_file)
     try:
         with pytest.raises(sqlite3.IntegrityError, match="removal event"):
-            conn.execute(
-                "DELETE FROM issue_prior_texts WHERE event_id = ?", (edit_id,)
-            )
+            conn.execute("DELETE FROM issue_prior_texts WHERE event_id = ?", (edit_id,))
         # An event naming another edit, or another issue, does not open it.
         conn.execute(
             "INSERT INTO activity (actor_id, verb, target_kind, target_id, detail) "
@@ -184,9 +186,7 @@ def test_the_database_refuses_a_delete_without_its_removal_event(tmp_path):
             (other_id, f"edit {edit_id}"),
         )
         with pytest.raises(sqlite3.IntegrityError, match="removal event"):
-            conn.execute(
-                "DELETE FROM issue_prior_texts WHERE event_id = ?", (edit_id,)
-            )
+            conn.execute("DELETE FROM issue_prior_texts WHERE event_id = ?", (edit_id,))
     finally:
         conn.rollback()
         conn.close()

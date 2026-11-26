@@ -403,9 +403,7 @@ def create_token(
         scope_read, scope_issue_write, scope_docs_write, scope_admin
     )
     try:
-        created = token_commands.mint_token(
-            conn, actor=user, name=name, scopes=scopes
-        )
+        created = token_commands.mint_token(conn, actor=user, name=name, scopes=scopes)
     except token_commands.TokenCommandError as exc:
         return templates.TemplateResponse(
             request=request,

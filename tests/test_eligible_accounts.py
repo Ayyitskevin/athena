@@ -303,9 +303,7 @@ def test_on_a_private_issue_only_who_can_see_it_is_listed(tmp_path):
         human = _user_id(cast["human"])
         assert human not in listed
         target = private_issue()["id"]
-        blind = conductor.put(
-            f"/issues/{target}/assignee", json={"assignee_id": human}
-        )
+        blind = conductor.put(f"/issues/{target}/assignee", json={"assignee_id": human})
         missing = conductor.put(
             f"/issues/{target}/assignee", json={"assignee_id": 10**6}
         )
