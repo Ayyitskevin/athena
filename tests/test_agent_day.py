@@ -631,7 +631,6 @@ def test_ad2_explain_answers_the_full_answer_and_the_default_is_its_lean_shape(d
 # --- the requirements the day is waiting on -----------------------------------------
 
 
-@unmet("AD4", "the desk lists every lane and names no first move")
 def test_ad4_the_desk_names_the_first_move(day):
     play(day, the_day)
     first = (day.facts["first_desk"].get("next") or [None])[0]

@@ -239,6 +239,10 @@ NOT_PEER_WRITTEN: dict[str, tuple[str, str]] = {
         "the server's liveness classification",
     ),
     "desk:.asks.claim_handoffs.meaning": (SERVER, "fixed lane text"),
+    "desk:.next[].why": (SERVER, "fixed words, ids and closed vocabulary (AD4)"),
+    "desk:.next[].tool": (SERVER, "the tool a first move names (AD4)"),
+    "desk:.next[].arguments.generation": (ID, "a lease generation the server minted"),
+    "desk:.next[].arguments.handoff_token": (ID, "a handoff token the server minted"),
     "desk:.asks.questions.items[].asked_by.name": (
         NAME,
         "the display name of the asker; the question carries authored_by",

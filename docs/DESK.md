@@ -78,6 +78,28 @@ the value the command recorded, and the prose `detail` names the same values for
 person. An event with none of them has none of the keys, and an event recorded
 before migration 0086 has them only in its `detail`.
 
+## The first moves
+
+The desk opens with `next` (AD4): at most five moves from the same snapshot as
+the lanes, each `{why, tool, arguments}`. The order is fixed:
+
+1. a worker the operator asked to stop (no tool: Athena cannot signal a
+   process, so stopping it is yours to do);
+2. an unanswered run control: `acknowledge_run_control(control_id)`;
+3. a handoff to resume on an issue you hold: `resume_claim_handoff`;
+4. your lease expiring within 10 minutes: renew with
+   `claim_issue(issue_id, generation)`; or already lapsed: clear it with
+   `complete_claim(issue_id, generation)`;
+5. a question asked of you (`asks.questions`): `comment_on_issue(issue_id)`;
+6. a review requested of you: `get_issue_work_context(issue_id)` on the review
+   issue;
+7. an issue you could claim now: `claim_next_ready()`.
+
+A desk with none of these names `wait_for_events`. `why` holds fixed words, ids
+and closed vocabulary only, never a peer's text. A move is advice from a
+snapshot, not a reservation: each call makes its own checks, and some need an
+argument the move cannot supply (a comment's `body`).
+
 ## The lanes
 
 | Lane | Holds | Bound |
