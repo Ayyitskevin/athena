@@ -64,8 +64,9 @@ def test_the_printed_mcp_config_launches_lists_its_profile_and_answers_my_desk()
     )
     assert "MCP LAUNCH SMOKE PASSED" in stdout
     # H6 added get_issue_comment to seat (28); G8 the notebook tool to
-    # seat+knowledge (40).
-    assert "seat: pid" in stdout and "28 tools" in stdout
-    assert "seat+knowledge: pid" in stdout and "40 tools" in stdout
+    # seat+knowledge (40); AD10 begin_run to both and AD11 list_spaces to
+    # seat+knowledge (29 and 42).
+    assert "seat: pid" in stdout and "29 tools" in stdout
+    assert "seat+knowledge: pid" in stdout and "42 tools" in stdout
     assert len(launched) == 3, stdout  # athena-serve and two athena-mcp
     assert survivors == [], f"processes outlived the smoke check: {survivors}"

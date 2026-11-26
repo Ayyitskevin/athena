@@ -88,6 +88,11 @@ PACKET_READS: dict[str, tuple[str, str]] = {
     # No timestamp in it; the first read to page in D2's vocabulary.
     "list_eligible_accounts": ("GET", "/issues/{issue_id}/eligible-accounts"),
 }
+#: A packet read's other route, when an argument picks between two shapes.
+ALSO_READS: dict[str, tuple[tuple[str, str], ...]] = {
+    # AD12: one row per target by default; group="none" reads the rows.
+    "list_notifications": (("GET", "/notifications/grouped"),),
+}
 #: The narrow profiles' reads that answer a resource's own representation.
 RESOURCE_READS: dict[str, str] = {
     "get_idempotency_key": "one key's state; it carries no time and no expiry",
@@ -103,9 +108,12 @@ RESOURCE_READS: dict[str, str] = {
     "list_labels": "labels",
     "list_projects": "projects",
     "search": "search hits",
+    # AD11: the spaces list_pages takes, and the seat slugs an assignment takes.
+    "list_spaces": "spaces",
+    "list_fleet_seats": "agent seats: slug, name and whether an account answers",
 }
 #: Read tools with no REST call.
-CLIENT_SIDE = frozenset({"current_run"})
+CLIENT_SIDE = frozenset({"current_run", "begin_run"})
 
 # --- paging: the styles that exist, by name, and who uses each -----------------
 #
@@ -616,7 +624,11 @@ def undeclared_packet_timestamps(document: dict[str, Any]) -> tuple[list[str], i
     """Timestamp properties an agent packet's answer reaches that do not declare
     exactly the one format, and how many were checked."""
     names: set[str] = set()
-    for method, path in PACKET_READS.values():
+    routes = [
+        *PACKET_READS.values(),
+        *(r for also in ALSO_READS.values() for r in also),
+    ]
+    for method, path in routes:
         _reachable(document, _ok_schema(document["paths"][path][method.lower()]), names)
     wrong, checked = [], 0
     for where, prop in _properties(document, names):
@@ -690,7 +702,8 @@ def test_the_packet_scope_is_the_profiles_reads():
     assert named - reads == set(), "these are no longer narrow-profile reads"
     for tool, (method, path) in PACKET_READS.items():
         rest = sorted({call for m in methods[tool] for call in calls[m]})
-        assert rest == [f"{method} {path}"], (tool, rest)
+        also = sorted(f"{m} {p}" for m, p in ALSO_READS.get(tool, ()))
+        assert rest == sorted([f"{method} {path}", *also]), (tool, rest)
 
 
 def paging_styles(document: dict[str, Any]) -> dict[str, tuple[frozenset, frozenset]]:

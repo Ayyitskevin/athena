@@ -62,7 +62,9 @@ def test_targeted_ack_preserves_unshown_and_racing_arrival(desk, arrival):
     before = client.my_desk()
     assert before["signals"]["unread_notifications"] == 18
     shown = json.loads(
-        call(server, "list_notifications", unread=True, limit=10)[0][0].text
+        call(server, "list_notifications", unread=True, limit=10, group="none")[0][
+            0
+        ].text
     )["items"]
     assert len(shown) == 10
     if arrival:
