@@ -15,6 +15,7 @@ import re
 import secrets
 import sqlite3
 import stat
+import sys
 import tempfile
 from typing import Callable, Iterator, NoReturn, TypeVar
 
@@ -2362,6 +2363,26 @@ def _require_directory_identity_at(
             raise RecoveryRaceError(f"{label} was replaced during processing")
     finally:
         os.close(descriptor)
+
+
+def recovery_platform_problem() -> str | None:
+    """Why recovery bundles cannot run here, or None where they can.
+
+    Recovery is Linux-only by decision (docs/OPERATIONS.md, "Supported
+    platform"): capture and materialization need mounted procfs and
+    renameat2(RENAME_NOREPLACE), and no portable primitive publishes a
+    directory atomically without clobbering. The doctor reports this at
+    install time rather than letting a restore discover it.
+    """
+    if not sys.platform.startswith("linux"):
+        return f"this platform is {sys.platform}, not Linux"
+    if not Path("/proc/self/fd").is_dir():
+        return "procfs is not mounted at /proc"
+    try:
+        ctypes.CDLL(None, use_errno=True).renameat2
+    except (AttributeError, OSError):
+        return "the C library has no renameat2"
+    return None
 
 
 def _rename_no_replace_at(

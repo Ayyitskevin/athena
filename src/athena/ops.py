@@ -44,6 +44,7 @@ from athena.core.recovery import (
     create_recovery_bundle,
     materialize_recovery_bundle,
     recovery_bundle_root_for_database,
+    recovery_platform_problem,
     validate_current_database,
     verify_recovery_bundle,
 )
@@ -1952,6 +1953,16 @@ def doctor_main(argv: list[str] | None = None) -> int:
     global _START_ARGUMENTS
     _START_ARGUMENTS = None  # the doctor knows no listener to start again
     _warn_undeclared_variables("athena-doctor")
+    platform_problem = recovery_platform_problem()
+    if platform_problem is not None:
+        print(
+            _printable(
+                "athena-doctor: warning: backup bundles and restore are supported "
+                f"on Linux only ({platform_problem}); see the supported-platform "
+                "note under Backup and Restore in docs/OPERATIONS.md"
+            ),
+            file=sys.stderr,
+        )
     if not args.recovery_bundle:
         attach_dir = args.attach_dir
         if attach_dir is None:
@@ -2617,7 +2628,7 @@ def mint_host_token(db_path: Path, email: str, *, name: str, scopes: list[str]) 
         try:
             return token_commands.mint_token(
                 conn,
-                actor_id=int(account["id"]),
+                actor=account,
                 name=name,
                 scopes=scopes,
                 via="athena-token on the host",

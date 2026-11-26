@@ -15,9 +15,14 @@ add something; it is not enough to keep it forever. So this is a standing review
 rather than a one-time audit: once a quarter, each subsystem answers the same
 question, and answering "no idea" three times in a row is itself the finding.
 
-**This first ledger is a draft for the release owner.** Every verdict below is
-deliberately unset. Filling them in is not a job an agent should do — a cut is a
-promise to users, and parking a subsystem is a judgement about what Athena is for.
+**The first verdicts were set on 2026-11-26, all keep, by the release owner's
+delegation** ([`decisions/2026-11-26-owner-decisions.md`](decisions/2026-11-26-owner-decisions.md)).
+Keep is the one verdict that changes nothing and costs nothing to reverse, which
+is why it was the answer for a quarter in which four subsystems still have no
+usage evidence either way: those four are on the watch list below, each with the
+evidence that would park it. Setting a verdict otherwise stays the owner's act, not
+an agent's — a cut is a promise to users, and parking a subsystem is a judgement
+about what Athena is for.
 
 ---
 
@@ -112,7 +117,7 @@ maintenance, a wrong cut costs trust.
 
 ---
 
-## The ledger — 2026-Q3 (draft, verdicts unset)
+## The ledger — 2026-Q3 (verdicts set 2026-11-26)
 
 Measured 2026-08-15 against both canonical stories. "demo" is the five-minute pitch;
 "field" is the 25-step operator loop. This table is the pre-deployment baseline;
@@ -120,26 +125,45 @@ the dated live snapshot above is the current usage evidence.
 
 | subsystem | surface | demo | field exercise | verdict |
 |---|---|---|---|---|
-| **issues (Aegis core)** | `/issues`, `/aegis`, `/projects` | 4 rows, 9 events | 3 rows, 5 events | _(unset)_ |
-| **pages (Mentor core)** | `/pages`, `/mentor`, `/spaces` | 3 rows, 3 events | 7 rows, 8 events | _(unset)_ |
-| **agent supervision** | `/workers`, `/approvals`, `/run-controls`, `/fleet` | 8 rows, 6 events | 5 rows, 4 events | _(unset)_ |
-| **activity trail** | `/activity`, `/events` | 46 rows | 62 rows | _(unset)_ |
-| **forge inbound** | `/forge`, `/event-sources` | — | **1 row, 2 events** | _(unset)_ |
-| **Icarus dispatch** | `/dispatches`, `/callbacks` | — | **1 row, 4 events** | _(unset)_ |
-| **delegation inbox** | `/delegations`, `/inbox` | — | **1 event** | _(unset)_ |
-| **notifications / watches** | `/notifications`, `/watches` | 13 rows | 19 rows | _(unset)_ |
-| **automation rules** | `/automation` | **neither** | **neither** | _(unset)_ |
-| **webhooks (outbound)** | `/webhooks` | **neither** | **neither** | _(unset)_ |
-| **attachments** | `/attachments` | **neither** | **neither** | _(unset)_ |
-| **saved filters** | `/filters` | **neither** | **neither** | _(unset)_ |
-| **desk / cursors** | `/desk` | **neither** | **neither** | _(unset)_ |
-| **OIDC login** | `/auth` | **neither** | **neither** | _(unset)_ |
-| **knowledge graph / ego view** | `/aegis/graph` | n/a — no trace | n/a — no trace | _(unset)_ |
-| **answerability ledger** | `/admin/answerability` | n/a — no trace | n/a — no trace | _(unset)_ |
-| **workspace search** | `/search`, `/find` | n/a — no trace | n/a — no trace | _(unset)_ |
-| **playbooks / workflows** | `/workflows` | n/a — no trace | n/a — no trace | _(unset)_ |
-| **portability (export/import)** | — | n/a — no trace | n/a — no trace | _(unset)_ |
-| **recovery (backup/restore)** | — | n/a — no trace | n/a — no trace | _(unset)_ |
+| **issues (Aegis core)** | `/issues`, `/aegis`, `/projects` | 4 rows, 9 events | 3 rows, 5 events | keep |
+| **pages (Mentor core)** | `/pages`, `/mentor`, `/spaces` | 3 rows, 3 events | 7 rows, 8 events | keep |
+| **agent supervision** | `/workers`, `/approvals`, `/run-controls`, `/fleet` | 8 rows, 6 events | 5 rows, 4 events | keep |
+| **activity trail** | `/activity`, `/events` | 46 rows | 62 rows | keep |
+| **forge inbound** | `/forge`, `/event-sources` | — | **1 row, 2 events** | keep |
+| **Icarus dispatch** | `/dispatches`, `/callbacks` | — | **1 row, 4 events** | keep |
+| **delegation inbox** | `/delegations`, `/inbox` | — | **1 event** | keep |
+| **notifications / watches** | `/notifications`, `/watches` | 13 rows | 19 rows | keep |
+| **automation rules** | `/automation` | **neither** | **neither** | keep (watch) |
+| **webhooks (outbound)** | `/webhooks` | **neither** | **neither** | keep (watch) |
+| **attachments** | `/attachments` | **neither** | **neither** | keep |
+| **saved filters** | `/filters` | **neither** | **neither** | keep |
+| **desk / cursors** | `/desk` | **neither** | **neither** | keep |
+| **OIDC login** | `/auth` | **neither** | **neither** | keep |
+| **knowledge graph / ego view** | `/aegis/graph` | n/a — no trace | n/a — no trace | keep (watch) |
+| **answerability ledger** | `/admin/answerability` | n/a — no trace | n/a — no trace | keep (watch) |
+| **workspace search** | `/search`, `/find` | n/a — no trace | n/a — no trace | keep |
+| **playbooks / workflows** | `/workflows` | n/a — no trace | n/a — no trace | keep |
+| **portability (export/import)** | — | n/a — no trace | n/a — no trace | keep |
+| **recovery (backup/restore)** | — | n/a — no trace | n/a — no trace | keep |
+
+### The watch list, and what would park each
+
+Four keeps are provisional. Each names the evidence that would turn it into
+**park** at a quarterly review; absent that evidence it stays keep.
+
+- **automation rules** — 0 rows and 0 events in the live snapshot, and neither
+  scripted story reaches it. Park if the 2026-Q4 run still shows 0 rows *and* no
+  integration (Icarus dispatch, playbooks, the scheduler) depends on the rule
+  engine at runtime.
+- **webhooks (outbound)** — the same evidence, and the same test: park if still 0
+  rows and no live integration consumes a delivery. Its signing and delivery code
+  is shared with neighbours, so parking means 410 on the routes, not removing the
+  primitives.
+- **knowledge graph / ego view** — leaves no trace. Park if the operator cannot
+  name one occasion when `/aegis/graph` answered something the backlinks list
+  did not. The `links` table stays regardless: backlinks need it.
+- **answerability ledger** — leaves no trace. Park if the operator cannot recall
+  acting on the page. It owns no table, so parking it is a route change only.
 
 ### What the comparison actually says
 
@@ -212,7 +236,7 @@ operator can recall acting on it.
 
 ## Next review
 
-**2026-Q4.** Re-run `scripts/prune_evidence.py` against the canonical dogfood
+**2026-Q4.** Start with the watch list above. Re-run `scripts/prune_evidence.py` against the canonical dogfood
 database and compare it with the dated live snapshot above. Treat row-count and
 last-seen movement as usage evidence, then inspect runtime consumers and integration
 contracts before setting any verdict. The `n/a` rows — graph view, answerability,

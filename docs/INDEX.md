@@ -91,7 +91,7 @@ directory listed below with its rule — and every link resolves;
 | [RELEASE_READINESS.md](RELEASE_READINESS.md) | The evidence behind `0.1.0a1` — a checklist, not a production claim. |
 | [ROADMAP.md](ROADMAP.md) | Where this is going: tracker + wiki + notebook, minus the reasons people hate each. |
 | [PRUNE_LEDGER.md](PRUNE_LEDGER.md) | What we cut and why — VISION.md's "cut or reshape" rule, made visible. |
-| [DECISIONS_PENDING.md](DECISIONS_PENDING.md) | Items blocked on an operator decision, not on engineering. |
+| [DECISIONS_PENDING.md](DECISIONS_PENDING.md) | The briefs for three operator decisions, all decided 2026-11-26 and kept as the reasoning. |
 
 ## Subdirectories
 

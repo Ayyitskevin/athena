@@ -24,3 +24,8 @@ date = "2026-11-25"
 routes = 417
 tools = 146
 tables = 73
+
+[[change]]
+change = "Wave 10, decision 6: DELETE /issues/{id}/prior-texts/{event_id}"
+routes = 1
+earns = "An administrator can remove a secret that an issue edit's kept prior text still held, with an audit event; before it, no edit could take text back."

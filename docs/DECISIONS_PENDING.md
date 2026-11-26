@@ -1,5 +1,12 @@
 # Decisions waiting on the release owner
 
+> **All three were decided on 2026-11-26, each for its brief's recommendation (b):**
+> tailnet-only transport encryption is permanent (SECURITY.md), recovery is
+> Linux-only and `athena-doctor` says so elsewhere (docs/OPERATIONS.md), and no
+> container image is published (docs/DOCKER.md). The record, with what would reverse
+> each, is [`decisions/2026-11-26-owner-decisions.md`](decisions/2026-11-26-owner-decisions.md).
+> The briefs below are kept as the reasoning; nothing on this page is waiting now.
+
 Three items in the performance/adoption guide are marked **[OPERATOR DECISION]**.
 They are not blocked on research or on engineering time — they are blocked because
 each one changes what Athena *claims*, and a claim is the owner's to make.

@@ -342,20 +342,20 @@ def test_a_request_the_reviewer_cannot_see_is_absent_everywhere(board):
             headers=ADMIN,
         )
     )
+    ok(
+        board.client.post(
+            f"/projects/{board.project}/members",
+            json={"user_id": board.bo["user"]["id"]},
+            headers=ADMIN,
+        ),
+        201,
+    )
     build = board.issue("Build", board.bo)
     review = board.issue("Review", board.rex)
     ok(
         board.client.post(
             f"/issues/{review}/links",
             json={"target_ref": str(build), "relation": "blocked_by"},
-            headers=ADMIN,
-        ),
-        201,
-    )
-    ok(
-        board.client.post(
-            f"/projects/{board.project}/members",
-            json={"user_id": board.bo["user"]["id"]},
             headers=ADMIN,
         ),
         201,

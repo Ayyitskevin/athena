@@ -43,13 +43,13 @@ def test_token_facts_are_complete_and_side_effect_free(tmp_path):
             conn, email="facts@e.com", name="Facts", role="admin", commit=True
         )
         active = token_commands.mint_token(
-            conn, actor_id=actor["id"], name="active", scopes=[tokens.READ_SCOPE]
+            conn, actor={"id": actor["id"]}, name="active", scopes=[tokens.READ_SCOPE]
         )
         broken = token_commands.mint_token(
-            conn, actor_id=actor["id"], name="broken", scopes=[tokens.READ_SCOPE]
+            conn, actor={"id": actor["id"]}, name="broken", scopes=[tokens.READ_SCOPE]
         )
         revoked = token_commands.mint_token(
-            conn, actor_id=actor["id"], name="revoked", scopes=[tokens.READ_SCOPE]
+            conn, actor={"id": actor["id"]}, name="revoked", scopes=[tokens.READ_SCOPE]
         )
         conn.execute(
             "UPDATE api_tokens SET scopes = ? WHERE id = ?",

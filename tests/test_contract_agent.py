@@ -123,7 +123,7 @@ def board(clock, tmp_path):
         conn = db.connect(db_file)
         try:
             minted = token_commands.mint_token(
-                conn, actor_id=1, name="operator", scopes=[tokens.ADMIN_SCOPE]
+                conn, actor={"id": 1}, name="operator", scopes=[tokens.ADMIN_SCOPE]
             )
         finally:
             conn.close()

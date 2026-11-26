@@ -34,8 +34,22 @@ Before a long-running deployment, follow
 [`docs/OPERATIONS.md`](docs/OPERATIONS.md), including cookie transport posture,
 request limits, attachment ownership and integrity, a single webhook/automation runner,
 matched database-plus-attachment backups, and `athena-doctor`. The current
-supported launcher is direct HTTP and refuses HTTPS-only cookies; Athena does not
-yet claim a supported TLS or proxy-termination shape.
+supported launcher is direct HTTP and refuses HTTPS-only cookies.
+
+### Transport encryption is the tailnet's job
+
+**Athena serves plain HTTP, and its only supported transport encryption is the
+WireGuard/Tailscale tunnel it runs inside. That is a position, not a gap: there is
+no supported TLS, reverse-proxy, or proxy-termination shape, and none is planned.**
+`athena-serve` refuses `ATHENA_COOKIE_SECURE=1` and points here, because marking
+cookies HTTPS-only on a connection that is not HTTPS would lose the operator's
+session without adding any security. A proxy mode would widen the deployment claim
+above to an untrusted network reaching a proxy that reaches Athena, and would tempt
+the one change the rate limiters forbid (trusting forwarded headers); a mode nobody
+runs is a mode nobody tests. Decided 2026-11-26
+([`docs/decisions/2026-11-26-owner-decisions.md`](docs/decisions/2026-11-26-owner-decisions.md)).
+It is reversible: a blessed proxy recipe can be added when a real deployment is
+blocked on one, and that deployment should pick the proxy.
 
 On a fresh database, HTTP creation of the first administrator is disabled until
 the operator configures a generated `ATHENA_BOOTSTRAP_TOKEN`, starts

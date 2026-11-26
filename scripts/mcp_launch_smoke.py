@@ -172,7 +172,7 @@ def main() -> int:
         try:
             operator_token = token_commands.mint_token(
                 conn,
-                actor_id=seeded["ids"]["operator"],
+                actor={"id": seeded["ids"]["operator"]},
                 name="launch-smoke",
                 scopes=[tokens.ADMIN_SCOPE],
             )["token"]

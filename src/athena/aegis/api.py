@@ -35,6 +35,7 @@ from athena.aegis import (
     issue_narrative,
     issue_prior_texts,
     issue_search,
+    prior_text_commands,
     issues,
     lease_commands,
     issue_query,
@@ -61,7 +62,12 @@ from athena.aegis.review_models import (
 )
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
-from athena.core.identity import is_admin, issue_write_actor, optional_actor
+from athena.core.identity import (
+    admin_actor,
+    is_admin,
+    issue_write_actor,
+    optional_actor,
+)
 from athena.core.refusals import Refusal
 from athena.aegis.rest_support import (
     PRIVATE_LEASE_HEADERS,
@@ -983,6 +989,40 @@ def issue_prior_text(
             code="not_found",
         )
     return answer
+
+
+class IssuePriorTextRemovedOut(BaseModel):
+    event_id: int
+    removed: list[Literal["title", "body"]]
+
+
+_PRIOR_TEXT_REMOVAL_STATUS = {"forbidden": 403, "not_found": 404}
+_PRIOR_TEXT_REMOVAL_CODE = {"forbidden": "forbidden", "not_found": "not_found"}
+
+
+@router.delete(
+    "/{issue_id}/prior-texts/{event_id}", response_model=IssuePriorTextRemovedOut
+)
+def remove_issue_prior_text(
+    issue_id: RowIdPath,
+    event_id: RowIdPath,
+    actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # An administrator removes the text one edit replaced, with its audit event
+    # (decision 6, 2026-11-26): editing a secret out of an issue otherwise left
+    # it readable through the kept prior text. The trail records the removal,
+    # never the text. The issue's current title and body do not change.
+    try:
+        return prior_text_commands.remove_prior_text(
+            conn, actor=actor, issue_id=issue_id, event_id=event_id
+        )
+    except prior_text_commands.PriorTextCommandError as exc:
+        raise Refusal(
+            status_code=_PRIOR_TEXT_REMOVAL_STATUS[exc.kind],
+            detail=str(exc),
+            code=_PRIOR_TEXT_REMOVAL_CODE[exc.kind],
+        ) from exc
 
 
 def _issue_for_write(conn: sqlite3.Connection, issue_id: int, actor: dict) -> dict:

@@ -95,7 +95,7 @@ athena-serve: warning: ATHENA_ANONYMOUS_READ is set but is not an Athena setting
 | `ATHENA_LOG_LEVEL` | `INFO` | no | Level for Athena's own logs (`athena.*`). At `INFO` startup logs the migrations it applied and which background loops started, every request logs one line, and the loops log any swallowed error. Set `WARNING` for a quieter server (no request lines) or `DEBUG` when diagnosing. |
 | `ATHENA_BOOTSTRAP_TOKEN` | *(empty; bootstrap disabled)* | yes | One-time credential for the first `POST /users`. Generate 32 random bytes as URL-safe text, present it in `X-Athena-Bootstrap-Token`, then remove it and restart. Values must be 32–255 visible ASCII characters. |
 | `ATHENA_TRUST_ACTOR_HEADER` | `false` | no | Legacy application-factory identity fallback. The supported `athena-serve` launcher refuses to start when this is enabled; use password/OIDC login or a bearer token. |
-| `ATHENA_COOKIE_SECURE` | `false` | no | Adds the HTTPS-only `Secure` flag to browser cookies for retained raw-factory HTTPS experiments. The current direct-HTTP `athena-serve` contract refuses `true`; no supported TLS/proxy mode exists yet. |
+| `ATHENA_COOKIE_SECURE` | `false` | no | Adds the HTTPS-only `Secure` flag to browser cookies for retained raw-factory HTTPS experiments. The current direct-HTTP `athena-serve` contract refuses `true`; by decision there is no supported TLS/proxy mode (SECURITY.md). |
 | `ATHENA_SESSION_TTL_DAYS` | `14` | no | Browser session lifetime. |
 | `ATHENA_MAX_REQUEST_BODY_BYTES` | `1048576` | no | Request body cap. A nonzero supported-launcher value must be at least `16384`, which carries the bounded bootstrap/login credential envelope; `0` disables the cap and is allowed only in local mode. Tailnet mode requires a positive value. Also caps attachment uploads (the whole request must fit), so raise it for larger files. |
 | `ATHENA_IDEMPOTENCY_TTL_SECONDS` | `86400` | no | Retention for completed API idempotency receipts. Expired completed receipts are removed lazily. |
@@ -204,9 +204,11 @@ already open and may queue connections, but Athena/Uvicorn does not accept or
 process their requests until every preflight check succeeds.
 
 `athena-serve` refuses `ATHENA_COOKIE_SECURE=1`: it currently speaks direct HTTP,
-and the browser would refuse to send a Secure login cookie back. A supported
-direct-TLS or proxy/origin contract has not yet been defined. The setting remains
-available to explicitly unsupported raw-factory HTTPS experiments.
+and the browser would refuse to send a Secure login cookie back. There is no
+supported direct-TLS or proxy/origin contract, by decision: transport encryption
+is the tailnet's ([SECURITY.md](../SECURITY.md#transport-encryption-is-the-tailnets-job)).
+The setting remains available to explicitly unsupported raw-factory HTTPS
+experiments.
 
 Outbound integrations are off until configured. Dispatch to an external
 executor ([DISPATCH.md](DISPATCH.md)) needs both Icarus settings; the Buzz
@@ -771,8 +773,15 @@ boundary: the CLI exits `130` and prints the retained stage path instead of hidi
 behind a traceback. If the destination exists across a caller-frame interrupt, the
 CLI reports its ownership and durability as unknown rather than claiming success.
 
-Bundle capture and scratch materialization currently require Linux with mounted
-`procfs` and `renameat2(2)` no-replace support. Those primitives keep opened source
+<a id="supported-platform"></a>**Supported platform: recovery is Linux-only, by
+decision.** Bundle capture and scratch materialization require Linux with mounted
+`procfs` and `renameat2(2)` no-replace support, and that is the supported contract,
+not a gap waiting on a port: there is no portable primitive that publishes a
+directory atomically without clobbering, and every off-Linux substitute gives up the
+atomicity guarantee this path exists to provide. `athena-doctor` prints a warning in
+every mode on any platform that lacks either primitive, so a macOS or BSD install
+learns this when it is set up rather than when a restore fails. Decided 2026-11-26
+(`docs/decisions/2026-11-26-owner-decisions.md`). Those primitives keep opened source
 and destination directories descriptor-pinned across the operation. The commands
 fail closed when that platform contract is unavailable. POSIX does not provide one
 operation that atomically couples an ancestor-containment decision to a rename. Keep

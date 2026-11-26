@@ -265,8 +265,11 @@ def test_rows_imported_before_0094_are_not_guessed(tmp_path):
     existing rows came from a bundle."""
     conn = db.connect(tmp_path / "upgrade.db")
     try:
-        migrations = sorted(db.MIGRATIONS_DIR.glob("*.sql"))
-        assert migrations[-1].name == "0094_imported_text.sql"
+        # Apply everything before 0094, then 0094 itself; later migrations
+        # are not this test's subject.
+        every = sorted(db.MIGRATIONS_DIR.glob("*.sql"))
+        names = [migration.name for migration in every]
+        migrations = every[: names.index("0094_imported_text.sql") + 1]
         for migration in migrations[:-1]:
             conn.executescript(migration.read_text())
         owner = _user(conn, "owner@example.com", "Owner", role="admin")

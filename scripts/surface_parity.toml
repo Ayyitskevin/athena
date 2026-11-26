@@ -129,6 +129,17 @@ through an identity provider.
 # --- reached from the REST API only -------------------------------------------
 
 [[row]]
+kind = "by-design"
+api = ["aegis.prior_text_commands.remove_prior_text"]
+reason = """
+Removing an edit's kept prior text is an administrator's rare, audited act on a
+text the cockpit never shows: the browser has no prior-text view to remove it
+from. REST pairs it with the one read of that text
+(GET /issues/{id}/prior-texts/{event_id}); MCP has the read and deliberately no
+removal, since erasing record is not an agent's act.
+"""
+
+[[row]]
 kind = "read"
 api = ["aegis.desk_commands.read_desk"]
 reason = """

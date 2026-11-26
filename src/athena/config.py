@@ -113,7 +113,8 @@ _DECLARED: tuple[Setting, ...] = (
         False,
         "Adds the HTTPS-only `Secure` flag to browser cookies for retained "
         "raw-factory HTTPS experiments. The current direct-HTTP `athena-serve` "
-        "contract refuses `true`; no supported TLS/proxy mode exists yet.",
+        "contract refuses `true`; by decision there is no supported TLS/proxy "
+        "mode (SECURITY.md).",
         "server",
     ),
     Setting("ATHENA_SESSION_TTL_DAYS", 14, "Browser session lifetime.", "server"),

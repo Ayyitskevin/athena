@@ -403,9 +403,7 @@ def create_token(
         scope_read, scope_issue_write, scope_docs_write, scope_admin
     )
     try:
-        created = token_commands.mint_token(
-            conn, actor_id=user["id"], name=name, scopes=scopes
-        )
+        created = token_commands.mint_token(conn, actor=user, name=name, scopes=scopes)
     except token_commands.TokenCommandError as exc:
         return templates.TemplateResponse(
             request=request,
@@ -430,7 +428,15 @@ def revoke_token(
     if err is not None:
         return err
     assert user is not None, "_write_required accepted a missing user"
-    if not token_commands.revoke_token(conn, actor_id=user["id"], token_id=token_id):
+    try:
+        revoked = token_commands.revoke_token(conn, actor=user, token_id=token_id)
+    except token_commands.TokenCommandError:
+        # Only a vanished or removed account reaches this past the session gate.
+        return BrowserRefusal(
+            '<div class="error">This account can no longer manage tokens.</div>',
+            status_code=403,
+        )
+    if not revoked:
         return BrowserRefusal(
             '<div class="error">No such live token.</div>', status_code=404
         )
