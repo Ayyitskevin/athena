@@ -250,14 +250,16 @@ def test_the_row_reads_only_what_the_viewer_could_already_read(tmp_path):
                 headers=ADMIN,
             )
             assert made_private.status_code == 200, made_private.text
-        _delegate(client, hidden_issue["id"], nyx)
-        _delegate(client, moved_issue["id"], nyx)
+        # Delegation refuses an account that cannot see the project, so Nyx
+        # joins it first.
         joined = client.post(
             f"/projects/{secret}/members",
             json={"user_id": nyx["user"]["id"]},
             headers=ADMIN,
         )
         assert joined.status_code in (200, 201, 204), joined.text
+        _delegate(client, hidden_issue["id"], nyx)
+        _delegate(client, moved_issue["id"], nyx)
         _complete(client, nyx, hidden_issue["id"], verdict="HOLD")
         _complete(client, nyx, moved_issue["id"], verdict="PASS")
         moved = client.patch(

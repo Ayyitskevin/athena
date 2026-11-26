@@ -353,8 +353,24 @@ class Workspace:
         lapse_lease(self.clock, self.db_file, self.made["lapsed"])
         self.issue("private", self.prv)
         self.assign("private", mo)
+        # Assigned while Bo was a member, then Bo left: assignment refuses an
+        # account that cannot see the project, so this is how an issue comes to
+        # be assigned to someone who cannot see it.
         self.issue("private for bo", self.prv)
+        bo_id = self.user_id(bo)
+        ok(
+            self.client.post(
+                f"/projects/{self.prv}/members",
+                json={"user_id": bo_id},
+                headers=ADMIN,
+            ),
+            201,
+        )
         self.assign("private for bo", bo)
+        left = self.client.delete(
+            f"/projects/{self.prv}/members/{bo_id}", headers=ADMIN
+        )
+        assert left.status_code in (200, 204), left.text
         self.issue("in review", self.cus, to=[bo])
         self.patch("in review", status="review")
         self.issue("shipped", self.cus, to=[bo])
