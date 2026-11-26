@@ -73,6 +73,12 @@ why = """\
     exactly the rows that reader can drain — the same general-feed \
     population as _events_since above"""
 
+[[guarded]]
+module = "desk.py"
+function = "_last_run"
+pattern = 'imported_at IS NULL'
+why = """    identity.last_run names the run this account should continue writing     on (AD10); a run carried in by an imported bundle was written elsewhere     and is not one this server's MCP session can continue"""
+
 # --- desk_commands.py --------------------------------------------------------
 
 [[exempt]]

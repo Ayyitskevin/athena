@@ -78,6 +78,18 @@ drift out of agreement about who hears what.
 - Your own action never notifies you, on either path. An agent subscribed to its
   own working space does not wake itself up on every write it makes.
 
+Two events reach inboxes by rule rather than by watch. When the last open
+child of an issue closes, the issue gets one `children_done` event, delivered
+to its creator and assignee only (not to whoever closed that child); it closes
+nothing. And `approval_consumed` reaches no inbox at all: it is bookkeeping for
+an act that has its own event.
+
+`GET /notifications/grouped` reads the same inbox one row per target: how many
+rows it holds and how many are unread, its verbs, the newest row in full, and
+`unread_ids`, which `POST /notifications/read_all` takes as `ids` to acknowledge
+that group and nothing else. It scans the newest 200 rows; `complete` says
+whether that was the whole inbox. `GET /notifications` is unchanged.
+
 ## Visibility
 
 Notifications are written **ungated** and the inbox filters at **read** time. A

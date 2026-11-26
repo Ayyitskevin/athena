@@ -157,6 +157,18 @@ NOT_PEER_WRITTEN: dict[str, tuple[str, str]] = {
         ID,
         "the run id the yielding client tagged its write with",
     ),
+    # --- AD6 and AD8: a handoff's replies, the reader's own lease -----------------
+    "aegis.handoff_replies.HandoffReplyAuthorOut.name": (
+        NAME,
+        "the display name of the reply's author; the reply carries authored_by",
+    ),
+    "aegis.work_context_api.YourLeaseOut.generation": (ID, "the lease's generation"),
+    "aegis.work_context_api.WorkOrderSourceOut.key": (ID, "the ancestor's issue key"),
+    "aegis.work_context_api.YourLeaseOut.until": (TIME, "server clock"),
+    "aegis.work_context_api.YourLeaseOut.open_handoff_token": (
+        ID,
+        "the open handoff's token",
+    ),
     # --- review tracking inside the packet ----------------------------------------
     "aegis.project_brief_models.Person.name": (
         NAME,
@@ -201,6 +213,8 @@ NOT_PEER_WRITTEN: dict[str, tuple[str, str]] = {
     "desk:.schema": (ID, "the desk's contract version"),
     "desk:.identity.name": (NAME, "the reader's own display name"),
     "desk:.identity.email": (ID, "the reader's own login email"),
+    "desk:.identity.last_run.run_id": (ID, "the reader's own newest run id"),
+    "desk:.identity.last_run.last_write_at": (ID, "a timestamp the server wrote"),
     "desk:.identity.role": (CLOSED, "the reader's role (admin, member, viewer)"),
     "desk:.identity.approval_required": (
         CLOSED,
@@ -225,6 +239,14 @@ NOT_PEER_WRITTEN: dict[str, tuple[str, str]] = {
         "the server's liveness classification",
     ),
     "desk:.asks.claim_handoffs.meaning": (SERVER, "fixed lane text"),
+    "desk:.asks.claim_handoffs.items[].replies[].author.name": (
+        NAME,
+        "the display name of the reply's author; the reply carries authored_by",
+    ),
+    "desk:.work.delegations.items[].open_claim_handoff.replies[].author.name": (
+        NAME,
+        "the display name of the reply's author; the reply carries authored_by",
+    ),
     "desk:.asks.claim_handoffs.items[].yielded.actor_name": (
         NAME,
         "the display name of the yielding actor, whose id is on the row",
@@ -465,8 +487,12 @@ def test_the_work_order_report_is_a_closed_vocabulary():
     work_order = work_context_api.WorkOrderOut
     for model in roots[:2]:
         assert model.model_fields["work_order"].annotation is work_order
-    assert set(work_order.model_fields) == {"present", "missing"}
-    assert unmarked_text_fields((work_order,), {}) == []
+    assert set(work_order.model_fields) == {"present", "missing", "inherited"}
+    assert unmarked_text_fields((work_order,), NOT_PEER_WRITTEN) == []
+    # AD7: the one place it carries text, the parts a slice inherits, is in an
+    # object that names their author.
+    inherited = work_context_api.WorkOrderInheritedOut
+    assert "authored_by" in inherited.model_fields
 
 
 # --- the desk: a seeded instance, walked by lane path ---------------------------

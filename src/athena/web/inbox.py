@@ -69,6 +69,7 @@ _WORDS = {
     "delegation_declined": "declined",
     "review_requested": "asked for a review on",
     "approval_requested": "asked for approval on",
+    "children_done": "finished the last open sub-issue of",
     "commented": "commented on",
     "comment_edited": "edited a comment on",
     "comment_deleted": "deleted a comment on",

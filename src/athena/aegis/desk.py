@@ -78,6 +78,19 @@ NOTIFICATIONS_LIMIT = 10
 EVENTS_SINCE_CAP = 500
 
 
+def _last_run(conn: sqlite3.Connection, user_id: int) -> dict | None:
+    """The run of this account's newest run-tagged event, and when it wrote."""
+    row = conn.execute(
+        "SELECT run_id, created_at FROM activity "
+        "WHERE actor_id = ? AND run_id IS NOT NULL AND imported_at IS NULL "
+        "ORDER BY id DESC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {"run_id": row["run_id"], "last_write_at": row["created_at"]}
+
+
 def _events_since(
     conn: sqlite3.Connection, *, actor: dict, after_id: int | None
 ) -> tuple[int | None, bool]:
@@ -267,6 +280,10 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
             # when you have none yet (POST /desk/notebook creates it; this read
             # never does).
             "notebook": agent_notebook.desk_lane(conn, actor),
+            # Your newest write tagged with a run (AD10, D32), or null: the
+            # run to continue with ATHENA_RUN_ID or begin_run, so one agent's
+            # work on one slice stays on one run across processes.
+            "last_run": _last_run(conn, user_id),
         },
         "asks": {
             # Present when empty, like every other lane (A13): an absent lane

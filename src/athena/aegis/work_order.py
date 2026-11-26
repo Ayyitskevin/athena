@@ -173,3 +173,60 @@ def report(body: str | None) -> dict[str, list[str]]:
         "present": [part for part in PARTS if part in present],
         "missing": [part for part in PARTS if part not in present],
     }
+
+
+def sections(body: str | None) -> dict[str, str]:
+    """The text under each present part's first heading, by :func:`report`'s
+    rule: every line after the heading until the next heading of the same or a
+    higher level, deeper headings included, trimmed. Used where a slice shows
+    the work order it inherits (AD7); the report itself still echoes no text."""
+    present = set(report(body)["present"])
+    collected: dict[str, list[str]] = {}
+    done: set[str] = set()
+    open_sections: list[tuple[int, str | None]] = []
+    fence: str | None = None
+
+    def add(line: str) -> None:
+        for _, part in open_sections:
+            if part in collected and part not in done:
+                collected[part].append(line)
+
+    for line in _LINES.split(body or ""):
+        if fence is not None:
+            stripped = line.strip()
+            if (
+                len(line) - len(line.lstrip(" ")) <= 3
+                and stripped
+                and set(stripped) == {fence[0]}
+                and len(stripped) >= len(fence)
+            ):
+                fence = None
+            add(line)
+            continue
+        opened = _fence_opening(line)
+        if opened is not None:
+            fence = opened
+            add(line)
+            continue
+        heading = _heading(line)
+        if heading is not None:
+            level, text = heading
+            while open_sections and open_sections[-1][0] >= level:
+                _, closed = open_sections.pop()
+                if closed in collected and closed not in done:
+                    if any(text.strip() for text in collected[closed]):
+                        done.add(closed)
+                    else:
+                        del collected[closed]  # empty: a later heading may fill it
+            add(line)
+            part = _part(text)
+            if part in present and part not in collected:
+                collected[part] = []
+            open_sections.append((level, part))
+            continue
+        add(line)
+    return {
+        part: "\n".join(collected[part]).strip()
+        for part in PARTS
+        if part in collected and part in present
+    }

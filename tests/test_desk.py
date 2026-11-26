@@ -842,3 +842,27 @@ def test_mcp_reads_the_desk_and_moves_the_cursor(tmp_path):
         with pytest.raises(AthenaError) as refused:
             api.advance_desk_cursor(after_id=1)
         assert refused.value.status_code == 409
+
+
+def test_the_desk_names_the_run_to_continue(tmp_path):
+    """AD10, D32: identity.last_run is the caller's newest run-tagged write, so
+    a restarted MCP process can continue it; null before any."""
+    app, _ = _app(tmp_path)
+    with TestClient(app) as client:
+        made = client.post(
+            "/users",
+            json={"email": "a@e.com", "name": "A", "password": PASSWORD},
+        )
+        assert made.status_code == 201, made.text
+        assert client.get("/desk", headers=H1).json()["identity"]["last_run"] is None
+        client.post("/issues", json={"title": "untagged"}, headers=H1)
+        tagged = client.post(
+            "/issues",
+            json={"title": "tagged"},
+            headers={**H1, "X-Athena-Run": "run-ad10"},
+        )
+        assert tagged.status_code == 201, tagged.text
+        client.post("/issues", json={"title": "later, untagged"}, headers=H1)
+        last = client.get("/desk", headers=H1).json()["identity"]["last_run"]
+        assert last["run_id"] == "run-ad10"
+        assert last["last_write_at"]

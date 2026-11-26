@@ -139,6 +139,12 @@ unset profile still means `full`, and an unknown profile refuses startup. See
 work context, `brief=true` keeps the issue, issue ETag, dependencies,
 warnings and work-order report for a compact re-read.
 
+Each `athena-mcp` process tags its writes with a new run unless the env sets
+`ATHENA_RUN_ID`. To keep one slice on one run when the client restarts the
+server, add `"ATHENA_RUN_ID": "<run>"` to `env`, using the run `my_desk()` shows
+under `identity.last_run` (the run of your newest tagged write). The printed
+config leaves it out on purpose: a run is per process unless you ask.
+
 For a conductor coordinating architect, builder and reviewer accounts, use the
 42-tool `conductor` profile (onboard it with `"profile": "conductor"`) and
 [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md).

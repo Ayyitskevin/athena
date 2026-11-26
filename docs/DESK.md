@@ -82,7 +82,7 @@ before migration 0086 has them only in its `detail`.
 
 | Lane | Holds | Bound |
 |---|---|---|
-| `identity` | id, name, role, agent flag, paused, scopes, budget, action kinds needing approval; `notebook` (see below) | `notebook.excerpt`: the first 12 lines |
+| `identity` | id, name, role, agent flag, paused, scopes, budget, action kinds needing approval; `notebook` (see below); `last_run`: `{run_id, last_write_at}` of your newest run-tagged write, or null (set `ATHENA_RUN_ID` to it to continue that run) | `notebook.excerpt`: the first 12 lines |
 | `asks.run_controls` | controls addressed to you that nobody has answered | 20 |
 | `asks.worker_kill_requests` | your workers the operator asked to stop, still unconfirmed | 50 matching workers, with exact `total`, `limit` and `clipped` |
 | `asks.review_requests` | visible current requests for you and superseded targets on review issues you still hold; present and empty when there are none | 20, `visible_total`, `returned`, `clipped` |

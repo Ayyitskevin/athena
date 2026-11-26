@@ -3,8 +3,12 @@
 An admin reads, declares, edits and removes the seats the Fleet roster and
 "Assign to a seat" use. The writes are ``core/fleet_seat_commands.py``'s, the
 same the cockpit's forms call; these routes translate transport only. Every
-route is admin only, the read included: the roster is the operator's page, and
-a non-admin sees no more of it than before.
+route is admin only but one: the roster is the operator's page, and a non-admin
+sees no more of it than before.
+
+The one is ``GET /fleet/seats/directory`` (AD11, D33): a conductor holding
+``issue:write`` reads each agent seat's slug, name and whether it has an agent
+account, which is what ``assign_issue_to_seat`` needs, and nothing else.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from athena.core import fleet_roster, fleet_seat_commands, list_cursor
 from athena.core.deps import get_conn
-from athena.core.identity import current_actor, require_admin
+from athena.core.identity import current_actor, issue_write_actor, require_admin
 from athena.core.packet_time import Timestamp
 from athena.core.refusals import Refusal
 from athena.core.request_models import RequestBody
@@ -143,6 +147,29 @@ def list_seats(
         ),
         "has_more": has_more,
     }
+
+
+class SeatDirectoryEntryOut(BaseModel):
+    slug: str = Field(description="what assign_issue_to_seat takes as seat_slug")
+    name: str
+    has_agent_account: bool = Field(
+        description="false: the seat cannot take an assignment until it has one"
+    )
+
+
+class SeatDirectoryOut(BaseModel):
+    items: list[SeatDirectoryEntryOut]
+
+
+@router.get("/directory", response_model=SeatDirectoryOut)
+def seat_directory(
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """The agent seats an issue can be assigned to, by slug, for any member
+    whose token holds `issue:write`. No emails, keys or units: the full roster
+    stays admin only. The operator's own seat is not listed."""
+    return {"items": fleet_roster.seat_directory(conn)}
 
 
 @router.post("", response_model=SeatOut, status_code=201)

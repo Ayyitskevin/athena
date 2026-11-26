@@ -14,6 +14,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+from athena.aegis import handoff_replies
 from athena.core import authorship
 from athena.core.authorship import AuthoredBy
 from athena.core.packet_time import Timestamp
@@ -118,6 +119,10 @@ class ClaimHandoffOut(BaseModel):
     resumed: ClaimHandoffResumeEventOut | None
     advisory_untrusted: Literal[True]
     authored_by: AuthoredBy | None = authorship.field(authorship.HANDOFF_DESCRIPTION)
+    replies: list[handoff_replies.HandoffReplyOut] | None = (
+        handoff_replies.replies_field()
+    )
+    replies_total: int | None = handoff_replies.replies_total_field()
 
 
 class LeaseOut(BaseModel):

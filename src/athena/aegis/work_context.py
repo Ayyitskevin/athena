@@ -19,6 +19,7 @@ from athena.aegis import (
     issue_etags,
     issues,
     lease_commands,
+    leases,
     related_learnings,
     review_queue,
     review_request_projection,
@@ -193,6 +194,55 @@ def _related_group(
         limit=limit,
         mapper=lambda row: _with_status_category(conn, _related_issue(row)),
     )
+
+
+#: How far up a slice looks for the work order it inherits, and how much of
+#: each inherited part it shows (AD7).
+MAX_INHERIT_DEPTH = 5
+INHERITED_PART_LIMIT = 1000
+
+
+def _inherited_work_order(
+    conn: sqlite3.Connection, issue: dict, actor: dict | None, own: dict
+) -> dict[str, Any] | None:
+    """The work order a slice inherits (AD7): from the nearest ancestor the
+    reader can see whose body has any of the six parts, when the issue's own
+    body lacks at least one. ``parts`` holds the text of the parts the issue
+    lacks and the ancestor has; the issue's own parts still win. ``None``
+    when there is nothing to inherit."""
+    if not own["missing"]:
+        return None
+    seen = {issue["id"]}
+    parent_id = issue.get("parent_id")
+    for _ in range(MAX_INHERIT_DEPTH):
+        if not parent_id or parent_id in seen:
+            return None
+        seen.add(parent_id)
+        if not access.can_see_issue(conn, actor, parent_id):
+            return None
+        ancestor = issues.get_issue(conn, parent_id)
+        if ancestor is None:
+            return None
+        texts = work_order.sections(ancestor["body"])
+        if texts:
+            parts = {
+                part: _excerpt(text, INHERITED_PART_LIMIT)
+                for part, text in texts.items()
+                if part in own["missing"]
+            }
+            if not parts:
+                return None
+            authors = issue_activity.issue_text_authors(
+                conn, [ancestor["id"]], actor=actor
+            )
+            return {
+                "from": {"id": ancestor["id"], "key": ancestor["key"]},
+                "present": list(texts),
+                "parts": parts,
+                "authored_by": authors[ancestor["id"]],
+            }
+        parent_id = ancestor.get("parent_id")
+    return None
 
 
 def _hierarchy(
@@ -634,6 +684,8 @@ def _has_clipping(value: Any) -> bool:
 #: build, so a retained value cannot differ from the full packet's and a hidden
 #: issue stays hidden on both paths.
 BRIEF_KEYS = ("issue", "issue_etag", "dependencies", "warnings", "work_order")
+#: Kept by the brief packet when present: present only for the lease's holder.
+BRIEF_OPTIONAL_KEYS = ("your_lease",)
 
 
 def brief_work_context(payload: dict[str, Any]) -> dict[str, Any]:
@@ -646,7 +698,36 @@ def brief_work_context(payload: dict[str, Any]) -> dict[str, Any]:
     }
     for key in BRIEF_KEYS:
         brief[key] = payload[key]
+    for key in BRIEF_OPTIONAL_KEYS:
+        if key in payload:
+            brief[key] = payload[key]
     return brief
+
+
+def _your_lease(
+    conn: sqlite3.Connection,
+    issue_id: int,
+    actor: dict | None,
+    open_handoff: dict | None,
+) -> dict[str, Any] | None:
+    """The caller's own active lease on this issue (AD8): what renew, complete
+    and yield need, so a holder does not read the lease again for it.
+
+    ``until`` is the expiry as a fact of state, deliberately not an
+    ``expires_at``: the packet's tag stays a function of state, and an
+    ``expires_at`` key would add a count of seconds from the clock."""
+    if actor is None:
+        return None
+    lease = leases.get_lease(conn, issue_id)
+    if lease is None or not lease["active"] or lease["holder_id"] != actor["id"]:
+        return None
+    return {
+        "generation": lease["generation"],
+        "until": packet_time.rfc3339(lease["expires_at"]),
+        "open_handoff_token": (
+            None if open_handoff is None else open_handoff["handoff_token"]
+        ),
+    }
 
 
 def build_work_context(
@@ -676,6 +757,7 @@ def build_work_context(
         dependencies = _dependencies(conn, issue["id"], visible_project_ids)
         claimant_eligible = lease_commands.claimant_is_eligible(conn, issue, actor)
         handoff_history = claim_handoffs.list_handoffs(conn, issue["id"])
+        your_lease = _your_lease(conn, issue["id"], actor, handoff_history["open"])
         payload: dict[str, Any] = {
             "schema": SCHEMA,
             "scope": SCOPE,
@@ -732,7 +814,10 @@ def build_work_context(
                     "satisfied_at_read": claimant_eligible,
                     "policy": "assignee, delegated contributor, or admin; creator alone is insufficient",
                     "next_operation": (
-                        "get_issue_lease then claim_issue with issue_etag"
+                        "you hold it: renew with claim_issue and your_lease.generation, "
+                        "or complete_claim or yield_claim with it"
+                        if your_lease is not None
+                        else "get_issue_lease then claim_issue with issue_etag"
                         if claimant_eligible
                         else "request assignment or contributor delegation from an authorized actor"
                     ),
@@ -789,6 +874,11 @@ def build_work_context(
             ),
             "claim_handoffs": handoff_history,
         }
+        if your_lease is not None:
+            payload["your_lease"] = your_lease
+        inherited = _inherited_work_order(conn, issue, actor, payload["work_order"])
+        if inherited is not None:
+            payload["work_order"] = {**payload["work_order"], "inherited": inherited}
 
         # Present only when the project has a checklist this actor may see, so a project
         # without one returns exactly the payload (and ETag) it always did.

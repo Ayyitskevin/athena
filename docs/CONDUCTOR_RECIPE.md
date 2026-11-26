@@ -48,7 +48,10 @@ account and makes it the assignee in one write, then radios the seat over Buzz
 with the note. A radio that fails or is not configured never undoes the
 assignment; `radio` and `receipt` in the answer say what it did. The seat's
 agent must be able to see the slice's project, or the call is refused as an
-unknown account is. Administrative
+unknown account is. To learn the slugs, read `GET /fleet/seats/directory`: each
+agent seat's `slug`, `name` and `has_agent_account`, for any member holding
+`issue:write`, with no emails or keys (the full roster stays admin only).
+Administrative
 approvals, worker controls, budgets, fleet health and dispatch remain in their
 authorized surfaces. See [RUNTIME_RECIPE.md](RUNTIME_RECIPE.md) for runtime wiring
 and [AGENT_BOOT.md](AGENT_BOOT.md) for profile and boot details.

@@ -108,6 +108,25 @@ def athena_assignable_seats(conn: sqlite3.Connection) -> list[dict]:
     return rows
 
 
+def seat_directory(conn: sqlite3.Connection) -> list[dict]:
+    """Every declared agent seat as a member may read it (AD11, D33): its slug,
+    its name and whether an agent account answers to it. No email, key or unit:
+    a conductor needs the slug ``assign_issue_to_seat`` takes, not the roster."""
+    rows: list[dict] = []
+    for spec in list_seats(conn):
+        if spec.get("kind") == "operator":
+            continue
+        account = _athena_account(conn, spec.get("email"))
+        rows.append(
+            {
+                "slug": spec["slug"],
+                "name": spec["name"],
+                "has_agent_account": bool(account and account["is_agent"]),
+            }
+        )
+    return rows
+
+
 def assignable_seat_slugs(conn: sqlite3.Connection) -> tuple[str, ...]:
     return tuple(
         str(spec["slug"])

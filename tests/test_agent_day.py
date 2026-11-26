@@ -377,6 +377,7 @@ async def seat_picks_up_and_asks(day: Day, seat: DayAgent) -> None:
         "get_issue_work_context", issue_id=picked["issue"]["id"], brief=True
     )
     day.sizes["work_context_brief_bytes"] = size(brief)
+    day.facts["brief_packet"] = brief
     day.facts["slice_packet"] = packet
     day.facts["contract"] = await contract_of(seat, packet)
     generation = await held_generation(seat, packet, picked["issue"]["id"])
@@ -557,33 +558,51 @@ def test_ad5_a_delegates_question_is_on_the_delegators_desk(day):
     )
 
 
-@unmet("AD6", "the reclaimed handoff does not carry the reply")
 def test_ad6_the_reply_comes_back_with_the_handoff(day):
+    """AD6: the open handoff Sol reclaims carries Nova's reply, by its author,
+    and nothing Sol wrote itself."""
     play(day, the_day)
-    replies = day.facts["reclaimed_handoff"].get("replies") or []
-    require(
-        bool(replies) and replies[0]["excerpt"].startswith("15 minutes"),
-        "AD6: the open handoff Sol reclaims carries Nova's reply",
-    )
+    handoff = day.facts["reclaimed_handoff"]
+    (reply,) = handoff["replies"]
+    assert handoff["replies_total"] == 1
+    assert reply["excerpt"].startswith("15 minutes"), reply
+    assert reply["author"]["id"] == day.user_id("conductor")
+    assert reply["authored_by"] == {"id": day.user_id("conductor"), "is_agent": True}
 
 
-@unmet("AD7", "a slice's packet shows only its parent's title")
 def test_ad7_a_slice_shows_its_parents_contract(day):
+    """AD7: the slice's packet, full and brief, shows the outcome's goal and
+    success criteria with their text and who wrote them."""
     play(day, the_day)
-    inherited = day.facts["slice_packet"]["work_order"].get("inherited")
-    require(
-        bool(inherited)
-        and inherited["from"]["key"] == day.facts["outcome"]["key"]
-        and "success_criteria" in inherited["present"],
-        "AD7: the slice's work order shows the outcome's success criteria",
-    )
+    for packet in (day.facts["slice_packet"], day.facts["brief_packet"]):
+        inherited = packet["work_order"]["inherited"]
+        assert inherited["from"]["key"] == day.facts["outcome"]["key"]
+        assert inherited["present"] == ["goal", "success_criteria"]
+        assert (
+            inherited["parts"]["goal"]["text"] == "Stop credential stuffing on /login."
+        )
+        assert inherited["parts"]["success_criteria"]["text"].startswith(
+            "- 10 failures"
+        )
+        assert inherited["authored_by"] == {
+            "id": day.user_id("conductor"),
+            "is_agent": True,
+        }
 
 
-@unmet("AD8", "the packet of an issue the caller holds carries no lease")
 def test_ad8_the_packet_knows_its_reader_holds_the_lease(day):
+    """AD8: the work context of an issue the reader holds carries the lease's
+    generation (and says so in how_to_claim); nobody else's packet does."""
     play(day, the_day)
-    mine = day.facts["held_packet"].get("your_lease") or {}
-    require(
-        len(mine.get("generation") or "") == 32,
-        "AD8: the work context of the issue Sol holds carries its generation",
+    packet = day.facts["held_packet"]
+    mine = packet["your_lease"]
+    assert len(mine["generation"]) == 32 and mine["until"].endswith("Z"), mine
+    assert mine["open_handoff_token"] is None
+    assert packet["how_to_claim"]["claimant_prerequisite"]["next_operation"].startswith(
+        "you hold it"
+    )
+    # The brief packet carries it too.
+    assert (
+        day.facts["brief_packet"]["your_lease"]["generation"]
+        == (day.facts["slice_packet"]["your_lease"]["generation"])
     )
