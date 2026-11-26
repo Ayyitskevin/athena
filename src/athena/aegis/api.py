@@ -997,6 +997,7 @@ class IssuePriorTextRemovedOut(BaseModel):
 
 
 _PRIOR_TEXT_REMOVAL_STATUS = {"forbidden": 403, "not_found": 404}
+_PRIOR_TEXT_REMOVAL_CODE = {"forbidden": "forbidden", "not_found": "not_found"}
 
 
 @router.delete(
@@ -1020,7 +1021,7 @@ def remove_issue_prior_text(
         raise Refusal(
             status_code=_PRIOR_TEXT_REMOVAL_STATUS[exc.kind],
             detail=str(exc),
-            code=exc.kind,
+            code=_PRIOR_TEXT_REMOVAL_CODE[exc.kind],
         ) from exc
 
 
