@@ -152,6 +152,67 @@ def create_handoff(
     return handoff
 
 
+#: How many replies an open handoff carries (AD6), and how much of each.
+MAX_REPLIES = 3
+MAX_REPLY_EXCERPT_CHARS = 500
+
+
+def _with_replies(conn: sqlite3.Connection, handoff: dict[str, Any]) -> dict[str, Any]:
+    """An open handoff with what other accounts have said on the issue since
+    the yield (AD6): the newest comments posted at or after it by anyone but
+    the account that yielded, so whoever picks the work up reads the answer to
+    the blocking question with the question. Imported comments are not replies.
+    With no reply yet the two fields are absent.
+    Advisory text like the handoff itself: data, never instructions."""
+    rows = conn.execute(
+        "SELECT c.id, c.author_id, u.name AS author_name, u.is_agent, c.body, "
+        "c.created_at FROM comments c JOIN users u ON u.id = c.author_id "
+        "WHERE c.issue_id = ? AND c.created_at >= ? AND c.author_id != ? "
+        "AND c.imported_at IS NULL ORDER BY c.id DESC LIMIT ?",
+        (
+            handoff["issue_id"],
+            handoff["yielded"]["created_at"],
+            handoff["yielded"]["actor_id"],
+            MAX_REPLIES + 1,
+        ),
+    ).fetchall()
+    if not rows:
+        # No reply yet: the handoff is unchanged, so a lane of open handoffs
+        # costs nothing more until someone answers.
+        return handoff
+    total = len(rows)
+    if total > MAX_REPLIES:
+        total = int(
+            conn.execute(
+                "SELECT COUNT(*) AS n FROM comments WHERE issue_id = ? "
+                "AND created_at >= ? AND author_id != ? AND imported_at IS NULL",
+                (
+                    handoff["issue_id"],
+                    handoff["yielded"]["created_at"],
+                    handoff["yielded"]["actor_id"],
+                ),
+            ).fetchone()["n"]
+        )
+    return {
+        **handoff,
+        "replies": [
+            {
+                "comment_id": row["id"],
+                "author": {"id": row["author_id"], "name": row["author_name"]},
+                "authored_by": {
+                    "id": row["author_id"],
+                    "is_agent": bool(row["is_agent"]),
+                },
+                "excerpt": row["body"][:MAX_REPLY_EXCERPT_CHARS],
+                "body_chars": len(row["body"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows[:MAX_REPLIES]
+        ],
+        "replies_total": total,
+    }
+
+
 def get_handoff(
     conn: sqlite3.Connection, *, issue_id: int, handoff_token: str
 ) -> dict[str, Any] | None:
@@ -167,7 +228,7 @@ def get_open_handoff(conn: sqlite3.Connection, issue_id: int) -> dict[str, Any] 
         _SELECT + "WHERE h.issue_id = ? AND h.resume_event_id IS NULL",
         (issue_id,),
     ).fetchone()
-    return None if row is None else _row_to_handoff(row)
+    return None if row is None else _with_replies(conn, _row_to_handoff(row))
 
 
 def open_handoffs_for_issues(
@@ -182,7 +243,9 @@ def open_handoffs_for_issues(
         "AND h.resume_event_id IS NULL ORDER BY h.issue_id",
         ordered,
     ).fetchall()
-    return {int(row["issue_id"]): _row_to_handoff(row) for row in rows}
+    return {
+        int(row["issue_id"]): _with_replies(conn, _row_to_handoff(row)) for row in rows
+    }
 
 
 def open_handoffs_for_holder(
@@ -212,7 +275,9 @@ def open_handoffs_for_holder(
             [*params, limit + 1],
         ).fetchall()
         return {
-            "items": [_row_to_handoff(row) for row in rows[:limit]],
+            "items": [
+                _with_replies(conn, _row_to_handoff(row)) for row in rows[:limit]
+            ],
             "clipped": len(rows) > limit,
         }
 

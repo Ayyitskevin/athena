@@ -157,6 +157,17 @@ NOT_PEER_WRITTEN: dict[str, tuple[str, str]] = {
         ID,
         "the run id the yielding client tagged its write with",
     ),
+    # --- AD6 and AD8: a handoff's replies, the reader's own lease -----------------
+    "aegis.handoff_replies.HandoffReplyAuthorOut.name": (
+        NAME,
+        "the display name of the reply's author; the reply carries authored_by",
+    ),
+    "aegis.work_context_api.YourLeaseOut.generation": (ID, "the lease's generation"),
+    "aegis.work_context_api.YourLeaseOut.until": (TIME, "server clock"),
+    "aegis.work_context_api.YourLeaseOut.open_handoff_token": (
+        ID,
+        "the open handoff's token",
+    ),
     # --- review tracking inside the packet ----------------------------------------
     "aegis.project_brief_models.Person.name": (
         NAME,
@@ -225,6 +236,14 @@ NOT_PEER_WRITTEN: dict[str, tuple[str, str]] = {
         "the server's liveness classification",
     ),
     "desk:.asks.claim_handoffs.meaning": (SERVER, "fixed lane text"),
+    "desk:.asks.claim_handoffs.items[].replies[].author.name": (
+        NAME,
+        "the display name of the reply's author; the reply carries authored_by",
+    ),
+    "desk:.work.delegations.items[].open_claim_handoff.replies[].author.name": (
+        NAME,
+        "the display name of the reply's author; the reply carries authored_by",
+    ),
     "desk:.asks.claim_handoffs.items[].yielded.actor_name": (
         NAME,
         "the display name of the yielding actor, whose id is on the row",

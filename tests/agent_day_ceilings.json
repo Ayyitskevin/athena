@@ -1,6 +1,6 @@
 {
-  "note": "Ceilings for tests/test_agent_day.py (AD1). tool_calls and bytes_received count every MCP call each role makes in one run of the day and the UTF-8 bytes of every answer's text; sizes are the tool listing per profile (json.dumps of each tool's model_dump, default separators, as docs/plans/reports/agent-day-2026-11-26.md measured them), the server instructions, and three answers re-encoded as compact JSON: Sol's first full desk, the full work context of the issue Sol holds, and the brief work context of the slice. All are the measured values, identical over three runs, with no headroom. A requirement of docs/plans/AGENT_DAY_SPEC.md that removes calls or bytes lowers them in the same commit; raise one only with a stated reason in the same PR. The scripted seat makes 22 calls where the report's hand-driven session made 37: the script never mistypes an argument shape or re-reads the desk to look around.",
-  "seat": {"tool_calls": 22, "bytes_received": 30607},
+  "note": "Ceilings for tests/test_agent_day.py (AD1). tool_calls and bytes_received count every MCP call each role makes in one run of the day and the UTF-8 bytes of every answer's text; sizes are the tool listing per profile (json.dumps of each tool's model_dump, default separators, as docs/plans/reports/agent-day-2026-11-26.md measured them), the server instructions, and three answers re-encoded as compact JSON: Sol's first full desk, the full work context of the issue Sol holds, and the brief work context of the slice. All are the measured values, identical over three runs, with no headroom. A requirement of docs/plans/AGENT_DAY_SPEC.md that removes calls or bytes lowers them in the same commit; raise one only with a stated reason in the same PR. The scripted seat makes 22 calls where the report's hand-driven session made 37: the script never mistypes an argument shape or re-reads the desk to look around. AD8 lowered the seat's tool_calls by 2 (22 to 20) and bytes_received by 156: the packet of an issue the seat holds carries your_lease with its generation, so the two get_issue_lease reads made only for it are gone. It raised work_context_full_bytes by 175 (6,980 to 7,155) and work_context_brief_bytes by 120 (1,204 to 1,324): the your_lease block itself, and the longer next_operation that names renew, complete and yield. AD6 lowered the seat's tool_calls by 1 (20 to 19) and bytes_received by 28: the open handoff Sol reclaims carries the conductor's reply, so the list_issue_comments read made to find it is gone.",
+  "seat": {"tool_calls": 19, "bytes_received": 30423},
   "conductor": {"tool_calls": 6, "bytes_received": 12530},
   "sizes": {
     "listing_bytes_seat": 50540,
@@ -8,7 +8,7 @@
     "listing_bytes_conductor": 67165,
     "instructions_bytes": 1836,
     "desk_full_bytes": 7405,
-    "work_context_full_bytes": 6980,
-    "work_context_brief_bytes": 1204
+    "work_context_full_bytes": 7155,
+    "work_context_brief_bytes": 1324
   }
 }

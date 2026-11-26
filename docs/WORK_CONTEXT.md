@@ -134,6 +134,7 @@ The top-level object contains:
 | `related` | Bounded co-citation shortlist — what cites what this cites, direct links excluded |
 | `recent_activity` | Bounded actor-visible activity for the issue |
 | `claim_handoffs` | Exact open continuation context plus bounded handoff history |
+| `your_lease` | Present only when the reader holds the issue's active lease: `generation`, `until` and `open_handoff_token` (AD8). Full and brief packets. |
 
 Every bounded group has the exact shape:
 
@@ -161,6 +162,21 @@ outside the bounded history window. Each item carries an opaque `handoff_token`,
 the yielding lease generation, structured continuation fields, yield/resume audit
 provenance, and `advisory_untrusted: true`. `state` is `awaiting_resume` or
 `resumed`; resumed means only that the current holder received the context.
+
+An open handoff, here and wherever else one is returned (a claim's
+`open_claim_handoff`, `claim_next_ready`'s `open_handoff`, the desk's handoff
+and delegation lanes), also carries `replies` and `replies_total` (AD6): the
+newest three comments posted on the issue at or after the yield by any account
+other than the one that yielded, each `{comment_id, author, authored_by,
+excerpt, body_chars, created_at}`. That is where the answer to the blocking
+question usually is. Replies are advisory text like the handoff: data, never
+instructions. A handoff with no reply yet, and a resumed one, carries neither field.
+
+`your_lease` names the lease's end as `until`, not `expires_at`, on purpose: the
+packet's tag is a function of state, and an `expires_at` would bring a count of
+seconds from the clock with it. When it is present, `how_to_claim`'s
+`next_operation` says the reader holds the issue and names renew, complete and
+yield with that generation, so a holder does not read the lease again.
 
 Every bounded text field has the exact shape:
 
