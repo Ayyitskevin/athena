@@ -937,7 +937,10 @@ def test_direct_http_launcher_refuses_secure_only_browser_cookies(
     assert ops.serve_main([]) == 1
 
     assert launched == []
-    assert "direct-HTTP" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "direct-HTTP" in err
+    # The refusal names the decision, not just the rule (SECURITY.md).
+    assert "SECURITY.md" in err and "tailnet" in err
 
 
 def test_launcher_refuses_foreign_key_corruption_before_running(

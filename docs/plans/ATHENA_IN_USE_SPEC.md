@@ -2,7 +2,7 @@
 
 Date: 2026-11-22. Review baseline: `0b42d40` (`main` after Waves 0, 0b, 1 and 2
 of [the agentic-use specification](AGENTIC_USE_SPEC_ATHENA.md)).
-Status: **decisions accepted by standing instruction; Waves 3 to 9 built, but for the owner's items named under Next step.**
+Status: **decisions accepted by standing instruction, and the owner's open ones by delegation on 2026-11-26; Waves 3 to 9 built; Wave 10 builds those decisions (Next step).**
 Evidence: [reports/repo-review-2026-11-22-round2.md](reports/repo-review-2026-11-22-round2.md).
 Finding IDs such as `FLEET-4`, `OPS-5`, `PERF-1` and `COCKPIT-2` refer to that
 report. Requirement IDs that begin A, B or C are carried from the first
@@ -155,10 +155,14 @@ an idempotency key's state, and learnings that reach an issue's parent and
 siblings. Wave 5 is built. "Wave 5 results" says the same for
 each.
 
-**Next step.** Waves 3 to 9 are built, but for what the owner decides: the
-idle sort that H5 left, the three missing twins the parity gate names, B11
-(blocked on D9), and the actor the operator CLI, demo and smoke script mint
-tokens as, which the next command-debt payment needs. Each requirement that removes calls lowers the fleet trial's ceilings
+**Next step.** Waves 3 to 9 are built. On 2026-11-26 the owner delegated the
+open decisions to the lead; they are recorded in
+[decisions/2026-11-26-owner-decisions.md](../decisions/2026-11-26-owner-decisions.md),
+and their builds are Wave 10: the idle sort that H5 left, the three missing
+twins the parity gate names, the operator CLI, demo and smoke script acting as
+the account they record (the next command-debt payment), assignment refusing an
+account that cannot see the issue's project, and an administrator's audited
+removal of a kept prior text. B11 stays blocked on D9. Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
 
 **How work is done here.** One requirement, one commit, with the test that
@@ -172,8 +176,9 @@ first pass. A wave leaves draft when
 `scripts/gate.sh --profile product` passes on its head and hosted CI is green.
 
 **Never done on the owner's behalf.** Cutting or pushing a tag, pushing a
-container image, setting a prune verdict, answering an item in
-`docs/DECISIONS_PENDING.md`, pushing `main`, lowering a coverage floor,
+container image, setting a prune verdict or answering an item in
+`docs/DECISIONS_PENDING.md` without the owner's cited delegation (the one
+given on 2026-11-26 is recorded), pushing `main`, lowering a coverage floor,
 widening `ALLOWED_PRAGMAS`.
 
 ## Purpose
@@ -1806,7 +1811,12 @@ The record is
 | D27 | Should the declared fleet seats move from source to data? | Yes. An existing instance keeps its eight by migration; a new one starts with none. |
 | D28 | Should `blocked` and `capacity` yields hold work back from the account that yielded, and should a direct claim by the settling account count as an answer? | No change to either. The accepted ready-rule record stands until the fleet trial shows a loop. |
 
-Six questions stay with the owner and are not answered here: what the name
+Six questions stayed with the owner and were not answered here. On
+2026-11-26 the owner delegated them; three are decided in
+[decisions/2026-11-26-owner-decisions.md](../decisions/2026-11-26-owner-decisions.md)
+(root catalog stays withheld, assignment refuses an account that cannot see
+the project, an admin may remove a kept prior text) and three still need facts
+only the owner has (Astra, the handbook, an operated instance). The six were: what the name
 "Astra" refers to in the lanes; whether the fallback rules in `AGENTS.md`
 match the machine-level handbook; D9's precondition, an operated instance;
 whether an agent may read the root catalog's digest and root keys, which

@@ -235,7 +235,19 @@ the trail. Careful: the lockout must not become a denial-of-service lever
 against a known email; cap the lockout duration and document the trade in
 SECURITY.md.
 
-### F-1.2 **[OPERATOR DECISION]** A supported TLS shape
+### F-1.2 **[OPERATOR DECISION]** A supported TLS shape — **DONE** (decided: tailnet-only, permanent)
+
+> Decided 2026-11-26 for option (b), on the brief in
+> [`DECISIONS_PENDING.md`](../DECISIONS_PENDING.md), and recorded in
+> [`docs/decisions/2026-11-26-owner-decisions.md`](../decisions/2026-11-26-owner-decisions.md).
+> SECURITY.md now states the position in one section ("Transport encryption is the
+> tailnet's job"), and the launcher's `ATHENA_COOKIE_SECURE` refusal names that
+> section, so an installer meets the reason where they meet the refusal. The reasoning:
+> Athena's differentiator is the operator-and-fleet loop, not deployment breadth; (a)
+> would widen the exact claim RELEASE_READINESS.md holds, add `X-Forwarded-*` handling
+> the rate limiters deliberately refuse, and be a security mode nobody runs and so
+> nobody tests. Reversible: take (a) when a real deployment is blocked on it, and let
+> that deployment pick the proxy. Original finding follows.
 
 `athena-serve` refuses `ATHENA_COOKIE_SECURE=1` today (`deployment.py:495-498`)
 because the supported contract is direct HTTP on loopback/tailnet, so anything
@@ -376,11 +388,18 @@ shows it" without reading any other doc; the recipe is exercised by a test to
 the extent it can be (the MCP config it prints parses; the tool names it cites
 exist — pin against `mcp/server.py`'s registry so drift fails the build).
 
-### F-2.3 Docker image + compose file — **DONE** (build/test landed; publishing still open)
+### F-2.3 Docker image + compose file — **DONE** (build/test landed; decided 2026-11-26: publish nothing)
+
+> The publishing question was decided 2026-11-26 for option (b): ship the
+> Dockerfile, publish no image. `docs/DOCKER.md` says so in its own section, with the
+> reason (a published image is a standing promise to rebuild on every base-image CVE,
+> and with no supported public-network shape it would mostly be pulled to do what
+> the docs say not to). Revisit when F-1.2 goes the other way or someone asks for the
+> image by name.
 
 > Landed exactly as scoped: the image and compose file are in the tree, CI builds
 > and boots them, and nothing is pushed anywhere. The publishing question is
-> written up in [`DECISIONS_PENDING.md`](DECISIONS_PENDING.md) with a
+> written up in [`DECISIONS_PENDING.md`](../DECISIONS_PENDING.md) with a
 > recommendation rather than left as a line item.
 >
 > The finding worth carrying: **a container cannot usefully publish a port.**
@@ -565,7 +584,19 @@ the command layer's transaction ownership untouched. Acceptance: a
 query-count/connection-count test pins one connection per request; the
 Barrier-coordinated race tests stay green.
 
-### F-3.3 **[OPERATOR DECISION]** Recovery portability vs. documented Linux-only
+### F-3.3 **[OPERATOR DECISION]** Recovery portability vs. documented Linux-only — **DONE** (decided: Linux-only)
+
+> Decided 2026-11-26 for option (b), with the doctor change treated as required.
+> OPERATIONS.md states the supported platform under Backup and Restore, and
+> `athena-doctor` prints a warning in every mode on a platform without Linux, procfs,
+> or `renameat2` (`core/recovery.py` `recovery_platform_problem`;
+> `tests/test_recovery_platform.py`), so a macOS install learns it at setup, not
+> during a restore. The cost estimate below was wrong: all three call sites publish
+> directories and `os.link` cannot link a directory anywhere, so a port is a design
+> change that trades away the atomicity guarantee, not a day of work (the brief in
+> [`DECISIONS_PENDING.md`](../DECISIONS_PENDING.md) has the detail). If a port is
+> ever wanted, the symlink swap is the only substitute that keeps atomicity and
+> should be its own item. Original finding follows.
 
 `core/recovery.py`'s `renameat2(RENAME_NOREPLACE)` via ctypes raises
 `ENOTSUP` off-Linux, so backup/restore — the feature a self-hoster most needs
@@ -636,11 +667,11 @@ hand to a fleet in the first place.
 
 ~~F-0.1 → F-0.2~~ (done) → ~~F-2.1 + F-2.2~~ (done) →
 ~~F-1.1/F-1.3/F-1.5~~ (done) → ~~F-0.3/F-0.4~~ (done) →
-~~F-2.5~~ (done) → ~~F-3.1/F-3.2~~ (done) → ~~F-2.3/F-2.4~~ (done) → the
-three [OPERATOR DECISION] items whenever Kevin decides (F-3.4's first ledger is
-drafted and waiting on verdicts) — each decision now has a brief in
-[`DECISIONS_PENDING.md`](DECISIONS_PENDING.md), so deciding is a read rather than a
-research project. Waves are
+~~F-2.5~~ (done) → ~~F-3.1/F-3.2~~ (done) → ~~F-2.3/F-2.4~~ (done) →
+~~the three [OPERATOR DECISION] items and F-3.4's first verdicts~~ (decided
+2026-11-26; see
+[`docs/decisions/2026-11-26-owner-decisions.md`](../decisions/2026-11-26-owner-decisions.md)).
+Waves are
 parallelizable across agents except where noted; one item = one PR = one green
 gate.
 

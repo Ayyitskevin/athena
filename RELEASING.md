@@ -119,5 +119,6 @@ even after a delete. Yank it and ship the next number. This is why step 3 exists
 ## What is not automated, and will not be
 
 Signing and attestation, publishing the container image, and any promotion beyond
-PyPI. Those are open decisions rather than missing work — see the guide's
-`[OPERATOR DECISION]` items and `docs/DECISIONS_PENDING.md`.
+PyPI. Publishing the image was decided against on 2026-11-26 (`docs/DOCKER.md`, "No
+image is published"); signing, attestation and wider promotion remain open
+decisions rather than missing work.

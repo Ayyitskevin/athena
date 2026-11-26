@@ -139,3 +139,21 @@ the dependency graph is the one CI pins.
 It runs as uid/gid `10001` (`athena`), never root. A **named** volume inherits that
 ownership automatically; a **bind mount** of a host directory does not, so chown it
 to `10001:10001` first or the process cannot write.
+
+## No image is published — build it yourself
+
+**Athena publishes no container image, by decision.** You build it locally with
+`docker compose build`; CI builds the same `Dockerfile` on every push and proves it
+(non-root, a fresh volume refused without an explicit bootstrap, the `HEALTHCHECK`,
+a restart on an existing database), so the recipe is tested even though nothing is
+pushed anywhere.
+
+The reason is the maintenance promise, not the code: a published image has to be
+rebuilt whenever its `python:3.12-slim` base takes a CVE, whether or not Athena
+changed, and the image pulled in July is not the one published in March. That
+promise pays off only once people are pulling it, and with no supported
+public-network shape ([SECURITY.md](../SECURITY.md#transport-encryption-is-the-tailnets-job))
+a published image would mostly be pulled to do what this page says not to. Revisit
+when that transport decision changes or someone asks for the image by name; the
+change is a job in `publish.yml` beside the PyPI one. Decided 2026-11-26
+([`decisions/2026-11-26-owner-decisions.md`](decisions/2026-11-26-owner-decisions.md)).

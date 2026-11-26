@@ -496,7 +496,9 @@ def validate_static_configuration(
         raise ValueError("ATHENA_TRUST_ACTOR_HEADER must be disabled for athena-serve")
     if cookie_secure:
         raise ValueError(
-            "ATHENA_COOKIE_SECURE must be disabled for direct-HTTP athena-serve"
+            "ATHENA_COOKIE_SECURE must be disabled for direct-HTTP athena-serve; "
+            "transport encryption comes from the tailnet, by decision (SECURITY.md, "
+            "'Transport encryption is the tailnet's job')"
         )
     if bootstrap:
         if network_mode != LOCAL_MODE:
