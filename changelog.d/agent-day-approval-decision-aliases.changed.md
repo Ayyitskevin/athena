@@ -1,1 +1,1 @@
-An approval decision now accepts `approved` and `rejected`, the states it produces, as well as `approve` and `reject` (AD13): an operator who sends back the state they read is not refused for the tense. Any other value is still refused.
+- An approval decision now accepts `approved` and `rejected`, the states it produces, as well as `approve` and `reject` (AD13): an operator who sends back the state they read is not refused for the tense. Any other value is still refused.

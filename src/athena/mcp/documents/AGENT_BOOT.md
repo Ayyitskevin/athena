@@ -70,7 +70,10 @@ file's section census.
   packet (issue, neighbours, blockers, runbook) — not five separate reads.
 - Tag your writes: `athena-mcp` gives the session a run identity automatically;
   `current_run()` shows it. The full profile also offers `begin_run(run_id=...)`
-  to switch runs. Heartbeat while working. Heartbeat records an authenticated report, not process liveness
+  to switch runs. Each `athena-mcp` process starts a new run unless
+  `ATHENA_RUN_ID` is set in its env; `my_desk()` shows `identity.last_run`,
+  the run of your newest tagged write, so set `ATHENA_RUN_ID` to it to keep one
+  slice on one run across restarts. Heartbeat while working. Heartbeat records an authenticated report, not process liveness
   or lease renewal; `heartbeat_agent_run()` reports on the session's run. Renew
   before expiry with the generation alone (no issue ETag unless the renewal
   changes `paths` or the root). Untagged writes are not replayable as a unit.
