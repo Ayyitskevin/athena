@@ -26,6 +26,7 @@ from athena.core.authorship import AuthoredBy
 from athena.core.request_models import RequestBody
 from athena import config
 from athena.aegis import (
+    claim_close,
     comment_commands,
     comments,
     dependencies,
@@ -1657,6 +1658,21 @@ def detach_label(
 # gated, same as labels). Reading the list is open, like comments/labels.
 
 
+class ClaimCloseOut(BaseModel):
+    """What ``close_status`` did, beside the release (AD13). ``applied`` false
+    means the release went through and the status change did not; ``code`` is
+    the refusal's own (``approval_required``, ``approval_rejected``,
+    ``budget_exhausted``, or an issue command's)."""
+
+    status: str
+    applied: bool
+    code: str | None = None
+    detail: str | None = None
+    approval: dict | None = None
+    retry_after_seconds: int | None = None
+    next: str | None = None
+
+
 class CompleteClaimOut(BaseModel):
     released: bool
     issue_id: int
@@ -1670,6 +1686,7 @@ class CompleteClaimOut(BaseModel):
     next: str
     candidate_submission: CandidateSubmissionReceipt | None = None
     candidate_review: CandidateReviewReceipt | None = None
+    close: ClaimCloseOut | None = None
 
 
 HandoffEvidenceItem = Annotated[
@@ -1707,6 +1724,17 @@ class CompleteClaimIn(LeaseGenerationIn):
     # or lone surrogates which cannot be encoded in the error response).
     candidate_submission: SkipValidation[CandidateSubmission | None] = None
     review_candidate_id: SkipValidation[ReviewCandidateId | None] = None
+    close_status: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "After the release, set the issue to this status through the same "
+            "command as PATCH /issues/{id}, every gate included. A status the "
+            "project does not offer is refused before the release; a refused "
+            "close (approval, policy, budget) leaves the release done and says "
+            "so under `close`."
+        ),
+    )
 
 
 # --- Delegation claim/lease: accept / decline / complete -------------------
@@ -1742,7 +1770,12 @@ def complete_issue_claim(
     # coordination lease only — status
     # changes go through the ordinary status command. The body says so explicitly so
     # an agent does not have to read source to learn the issue is still open.
+    close_status = payload.close_status if payload is not None else None
     try:
+        if close_status is not None:
+            claim_close.check_offered(
+                conn, actor=actor, issue_id=issue_id, status=close_status
+            )
         released = lease_commands.complete_claim(
             conn,
             actor=actor,
@@ -1762,10 +1795,14 @@ def complete_issue_claim(
             if payload is not None
             else None,
         )
-        response.headers.update(PRIVATE_LEASE_HEADERS)
-        return released
     except issue_commands.IssueCommandError as exc:
         return issue_command_error_response(exc)
+    response.headers.update(PRIVATE_LEASE_HEADERS)
+    if close_status is not None:
+        return claim_close.close_after_release(
+            conn, actor=actor, issue_id=issue_id, status=close_status, released=released
+        )
+    return released
 
 
 # Sibling modules attach the remaining routes to the routers defined

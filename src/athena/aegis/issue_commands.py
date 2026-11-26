@@ -224,6 +224,24 @@ def _unknown_status(
     )
 
 
+def unknown_status(
+    conn: sqlite3.Connection, project_id: int | None
+) -> IssueCommandError:
+    """:func:`_unknown_status` for a caller that checks a status before an act
+    that precedes the status change (``claim_close``)."""
+    return _unknown_status(conn, project_id)
+
+
+def visible_issue_or_none(
+    conn: sqlite3.Connection, actor: dict, issue_id: int
+) -> dict | None:
+    """The issue if ``actor`` may see it, else None (hidden reads as missing)."""
+    try:
+        return _visible_issue(conn, actor, issue_id)
+    except IssueCommandError:
+        return None
+
+
 def _require_issue_writer(actor: dict | None) -> dict:
     if actor is None:
         raise IssueCommandError("unauthorized", "authentication required")

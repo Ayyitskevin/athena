@@ -178,6 +178,16 @@ leaseholder resumes it (`resume_claim_handoff`). Refs are inert data; never
 submit credentials, secret URLs, or tokens. A `not_met` result or an `unrun`
 reference does not block release.
 
+To make both writes in one call, pass `close_status` (REST: in the
+`POST /issues/{id}/complete` body; MCP: once the `complete_claim` tool takes it).
+The release happens first, then the status change runs through the same command
+as `update_issue`, with every gate: blocked-close policy, budget, approval. The
+answer carries `close: {status, applied}`. When the close is refused, `applied`
+is false and `code` and `detail` say why (`approval_required` comes with the
+pending `approval` and a `next` to retry `update_issue` once it is approved).
+The release stands either way. A status the project does not offer is refused
+with 422 and `valid_statuses` before anything is released.
+
 ## Deliberate closeout actions
 
 Read `my_desk()` first. Keep active leases, lapsed residual rows and unread

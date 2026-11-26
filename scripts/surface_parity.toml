@@ -81,17 +81,6 @@ conductor agent needs to place its slices in rooms for workers to filter on.
 """
 
 [[row]]
-kind = "elsewhere"
-cockpit = ["core.approval_commands.open_request"]
-reason = """
-Both transports open the pending ask for a gated act. The cockpit calls it when
-an undo refuses with ApprovalRequired, and says so on the page; REST reaches it
-through main.py's _approval_required exception handler, which answers the 202.
-main.py is the composition root, not a transport, so the check does not follow
-it.
-"""
-
-[[row]]
 kind = "by-design"
 cockpit = ["core.user_commands.change_own_password"]
 reason = """
@@ -115,6 +104,19 @@ through an identity provider.
 """
 
 # --- reached from the REST API only -------------------------------------------
+
+[[row]]
+kind = "read"
+api = [
+  "aegis.issue_commands.unknown_status",
+  "aegis.issue_commands.visible_issue_or_none",
+]
+reason = """
+The checks complete_claim's close_status makes before it releases anything
+(AD13): is the issue visible, and does its project offer that status. The
+cockpit's forms offer only the project's own statuses, so it has nothing to
+check ahead of a release.
+"""
 
 [[row]]
 kind = "by-design"
