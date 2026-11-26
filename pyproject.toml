@@ -180,5 +180,5 @@ excluded_line_count = 2
 # fall. The counts and their debtors are docs/COMMAND_MIGRATION.md's generated
 # tables; bare_actor_id counts its automation entry points too.
 [tool.athena.command_debts]
-bare_actor_id = 37
+bare_actor_id = 35
 outside_command = 23

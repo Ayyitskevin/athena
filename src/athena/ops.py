@@ -2628,7 +2628,7 @@ def mint_host_token(db_path: Path, email: str, *, name: str, scopes: list[str]) 
         try:
             return token_commands.mint_token(
                 conn,
-                actor_id=int(account["id"]),
+                actor=account,
                 name=name,
                 scopes=scopes,
                 via="athena-token on the host",

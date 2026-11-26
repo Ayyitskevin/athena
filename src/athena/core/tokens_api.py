@@ -79,7 +79,7 @@ def create(
     # credential is never a silent write.
     try:
         return token_commands.mint_token(
-            conn, actor_id=actor["id"], name=payload.name, scopes=payload.scopes
+            conn, actor=actor, name=payload.name, scopes=payload.scopes
         )
     except token_commands.TokenCommandError as exc:
         raise Refusal(
@@ -105,6 +105,14 @@ def revoke(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> Response:
     # The command owns the revoke AND its atomic 'revoked_token' audit event.
-    if not token_commands.revoke_token(conn, actor_id=actor["id"], token_id=token_id):
+    try:
+        revoked = token_commands.revoke_token(conn, actor=actor, token_id=token_id)
+    except token_commands.TokenCommandError as exc:
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
+        ) from exc
+    if not revoked:
         raise Refusal(status_code=404, detail="no such live token", code="not_found")
     return Response(status_code=204)

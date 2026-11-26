@@ -323,7 +323,7 @@ def test_a_bearer_token_still_reads_the_api(tmp_path, closed):
     try:
         admin = users.get_user_by_email(conn, "a@e.com")
         minted = token_commands.mint_token(
-            conn, actor_id=admin["id"], name="reader", scopes=[tokens.READ_SCOPE]
+            conn, actor={"id": admin["id"]}, name="reader", scopes=[tokens.READ_SCOPE]
         )
         token = minted["token"]
     finally:
@@ -359,7 +359,7 @@ def test_a_revoked_bearer_does_not_open_the_browser_surface(tmp_path, closed):
     try:
         admin = users.get_user_by_email(conn, "a@e.com")
         minted = token_commands.mint_token(
-            conn, actor_id=admin["id"], name="doomed", scopes=[tokens.READ_SCOPE]
+            conn, actor={"id": admin["id"]}, name="doomed", scopes=[tokens.READ_SCOPE]
         )
         tokens.revoke_token(
             conn, user_id=admin["id"], token_id=minted["id"], commit=True
@@ -392,7 +392,7 @@ def test_a_live_bearer_does_not_open_the_browser_surface(tmp_path, closed):
     try:
         admin = users.get_user_by_email(conn, "a@e.com")
         minted = token_commands.mint_token(
-            conn, actor_id=admin["id"], name="reader", scopes=[tokens.READ_SCOPE]
+            conn, actor={"id": admin["id"]}, name="reader", scopes=[tokens.READ_SCOPE]
         )
         token = minted["token"]
     finally:
@@ -423,7 +423,7 @@ def test_a_paused_bearer_does_not_open_the_browser_surface(tmp_path, closed):
     try:
         admin = users.get_user(conn, 1)
         minted = token_commands.mint_token(
-            conn, actor_id=admin["id"], name="paused", scopes=[tokens.READ_SCOPE]
+            conn, actor={"id": admin["id"]}, name="paused", scopes=[tokens.READ_SCOPE]
         )
         users.set_paused(conn, user_id=admin["id"], paused=True, commit=True)
         conn.commit()
@@ -451,7 +451,7 @@ def test_malformed_stored_scope_does_not_open_the_browser_surface(tmp_path, clos
     try:
         admin = users.get_user(conn, 1)
         minted = token_commands.mint_token(
-            conn, actor_id=admin["id"], name="broken", scopes=[tokens.READ_SCOPE]
+            conn, actor={"id": admin["id"]}, name="broken", scopes=[tokens.READ_SCOPE]
         )
         conn.execute(
             "UPDATE api_tokens SET scopes = ? WHERE id = ?",
@@ -566,7 +566,7 @@ def test_malformed_stored_scope_is_rejected_before_token_side_effects(tmp_path, 
     try:
         admin = users.get_user_by_email(conn, "a@e.com")
         minted = token_commands.mint_token(
-            conn, actor_id=admin["id"], name="broken", scopes=[tokens.READ_SCOPE]
+            conn, actor={"id": admin["id"]}, name="broken", scopes=[tokens.READ_SCOPE]
         )
         conn.execute(
             "UPDATE api_tokens SET scopes = ? WHERE id = ?",

@@ -453,7 +453,7 @@ def seed_demo(
         # the database stores its hash, and the mint itself is on the activity trail.
         agent_token = token_commands.mint_token(
             conn,
-            actor_id=sol["id"],
+            actor=sol,
             name="demo-mcp",
             scopes=[
                 tokens.READ_SCOPE,

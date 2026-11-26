@@ -313,7 +313,7 @@ def _admin_token(db_file, admin_id: int) -> str:
     conn = db.connect(db_file)
     try:
         minted = token_commands.mint_token(
-            conn, actor_id=admin_id, name="docs-admin", scopes=[tokens.ADMIN_SCOPE]
+            conn, actor={"id": admin_id}, name="docs-admin", scopes=[tokens.ADMIN_SCOPE]
         )
     finally:
         conn.close()

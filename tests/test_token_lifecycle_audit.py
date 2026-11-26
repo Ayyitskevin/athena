@@ -11,7 +11,7 @@ and that owner-scoping and the atomic-rejection guarantees are preserved.
 
 from fastapi.testclient import TestClient
 
-from athena.core import activity, db, token_commands, tokens
+from athena.core import activity, db, token_commands, tokens, users
 from athena.main import create_app
 
 H1 = {"X-Athena-Actor": "1"}
@@ -187,7 +187,7 @@ def test_command_mint_rejects_invalid_scope_atomically(tmp_path):
     conn = db.connect(db_file)
     before = conn.execute("SELECT COUNT(*) AS n FROM api_tokens").fetchone()["n"]
     try:
-        token_commands.mint_token(conn, actor_id=1, name="bad", scopes=["wizard"])
+        token_commands.mint_token(conn, actor={"id": 1}, name="bad", scopes=["wizard"])
         raise AssertionError("expected TokenCommandError")
     except token_commands.TokenCommandError as exc:
         assert exc.kind == "invalid"
@@ -206,7 +206,7 @@ def test_command_mint_records_event_in_same_transaction(tmp_path):
         _bootstrap(c)
     conn = db.connect(db_file)
     created = token_commands.mint_token(
-        conn, actor_id=1, name="atomic", scopes=[tokens.READ_SCOPE]
+        conn, actor={"id": 1}, name="atomic", scopes=[tokens.READ_SCOPE]
     )
     row = conn.execute(
         "SELECT revoked_at FROM api_tokens WHERE id = ?", (created["id"],)
@@ -218,3 +218,54 @@ def test_command_mint_records_event_in_same_transaction(tmp_path):
         if e["verb"] == "minted_token" and e["target_id"] == created["id"]
     ]
     assert len(ev) == 1
+
+
+def test_the_commands_act_as_the_live_account_they_are_handed(tmp_path):
+    """mint_token and revoke_token take the resolved actor and re-read it under
+    their own lock (the command-debt payment for the host command, the demo and
+    the smoke script): the row a caller resolved is the account that acts, and an
+    account paused or removed after that lookup does not get a fresh credential.
+    Revoking stays open to a paused account; a removed one manages nothing."""
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        member = _make_user(c, "m@e.com")
+    conn = db.connect(db_file)
+    try:
+        stale = users.get_user(conn, member["id"])
+        kept = token_commands.mint_token(
+            conn, actor=stale, name="kept", scopes=[tokens.READ_SCOPE]
+        )
+        assert tokens.list_tokens(conn, member["id"])[0]["id"] == kept["id"]
+
+        users.set_paused(conn, member["id"], True, commit=True)
+        try:
+            token_commands.mint_token(
+                conn, actor=stale, name="late", scopes=[tokens.READ_SCOPE]
+            )
+            raise AssertionError("a paused account minted a token")
+        except token_commands.TokenCommandError as exc:
+            assert (exc.kind, str(exc)) == ("forbidden", "account is paused")
+        assert token_commands.revoke_token(conn, actor=stale, token_id=kept["id"])
+
+        users.set_paused(conn, member["id"], False, commit=True)
+        users.set_removed(conn, member["id"], True, commit=True)
+        for attempt in (
+            lambda: token_commands.mint_token(conn, actor=stale, name="gone"),
+            lambda: token_commands.revoke_token(conn, actor=stale, token_id=kept["id"]),
+        ):
+            try:
+                attempt()
+                raise AssertionError("a removed account managed a token")
+            except token_commands.TokenCommandError as exc:
+                assert exc.kind == "forbidden"
+        names = [t["name"] for t in tokens.list_tokens(conn, member["id"])]
+        assert names == ["kept"]
+        minted = [
+            e
+            for e in activity.list_activity(conn, limit=50)
+            if e["verb"] == "minted_token" and e["actor_id"] == member["id"]
+        ]
+        assert len(minted) == 1
+    finally:
+        conn.close()

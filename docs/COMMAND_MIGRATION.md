@@ -123,12 +123,11 @@ recorder that only attributes an event, so the app-level refusal recorders
 | `athena.core.budget_commands` | `set_budget`, `clear_budget`, `record_exhaustion` | — |
 | `athena.core.oidc_commands` | `link_identity`, `unlink_identity` | — |
 | `athena.core.security_event_commands` | `record_failure` | — |
-| `athena.core.token_commands` | `mint_token`, `revoke_token` | — |
 | `athena.core.user_commands` | `create_user`, `set_user_role`, `set_user_agent` | — |
 | `athena.core.webhook_commands` | `register_webhook`, `set_webhook_active`, `delete_webhook` | — |
 | `athena.mentor.space_commands` | `create_space`, `edit_space`, `delete_space`, `set_space_visibility`, `add_space_member`, `remove_space_member` | — |
 
-*37 commands in 12 modules.*
+*35 commands in 11 modules.*
 <!-- END GENERATED debtors:bare-actor-id -->
 
 **Writes outside a command.** Every exception in `ALLOWED_TRANSPORT_WRITES` of
