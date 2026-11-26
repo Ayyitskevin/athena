@@ -25,6 +25,17 @@
 # --- reached from the cockpit only --------------------------------------------
 
 [[row]]
+kind = "elsewhere"
+cockpit = ["core.approval_commands.open_request"]
+reason = """
+Both transports open the pending ask for a gated act. The cockpit calls it when
+an undo refuses with ApprovalRequired, and says so on the page; REST reaches it
+through main.py's _approval_required exception handler, which answers the 202,
+and through claim_close_commands when a close_status is gated. main.py is the
+composition root, not a transport, so the check does not follow it.
+"""
+
+[[row]]
 kind = "pair"
 cockpit = ["aegis.issue_commands.attach_label_by_name"]
 api = ["aegis.issue_commands.attach_label", "core.label_commands.create_label"]
@@ -107,15 +118,21 @@ through an identity provider.
 
 [[row]]
 kind = "read"
-api = [
-  "aegis.issue_commands.unknown_status",
-  "aegis.issue_commands.visible_issue_or_none",
-]
+api = ["aegis.claim_close_commands.check_offered"]
 reason = """
-The checks complete_claim's close_status makes before it releases anything
-(AD13): is the issue visible, and does its project offer that status. The
-cockpit's forms offer only the project's own statuses, so it has nothing to
-check ahead of a release.
+The check close_status makes before anything is released (AD13): does the
+issue's project offer that status. The cockpit's status control offers only the
+project's own statuses, so it has nothing to check ahead of a release.
+"""
+
+[[row]]
+kind = "by-design"
+api = ["aegis.claim_close_commands.close_after_release"]
+reason = """
+complete_claim's close_status (AD13): an agent releases its lease and closes
+the issue in one call, the close running through update_issue with every gate.
+It exists to save an agent a round trip. The cockpit's issue page has the
+complete action and the status control side by side, each its own command.
 """
 
 [[row]]

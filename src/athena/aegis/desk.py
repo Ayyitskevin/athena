@@ -82,7 +82,8 @@ def _last_run(conn: sqlite3.Connection, user_id: int) -> dict | None:
     """The run of this account's newest run-tagged event, and when it wrote."""
     row = conn.execute(
         "SELECT run_id, created_at FROM activity "
-        "WHERE actor_id = ? AND run_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+        "WHERE actor_id = ? AND run_id IS NOT NULL AND imported_at IS NULL "
+        "ORDER BY id DESC LIMIT 1",
         (user_id,),
     ).fetchone()
     if row is None:

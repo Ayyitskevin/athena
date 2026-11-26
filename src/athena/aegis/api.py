@@ -26,7 +26,7 @@ from athena.core.authorship import AuthoredBy
 from athena.core.request_models import RequestBody
 from athena import config
 from athena.aegis import (
-    claim_close,
+    claim_close_commands,
     comment_commands,
     comments,
     dependencies,
@@ -1773,7 +1773,7 @@ def complete_issue_claim(
     close_status = payload.close_status if payload is not None else None
     try:
         if close_status is not None:
-            claim_close.check_offered(
+            claim_close_commands.check_offered(
                 conn, actor=actor, issue_id=issue_id, status=close_status
             )
         released = lease_commands.complete_claim(
@@ -1799,7 +1799,7 @@ def complete_issue_claim(
         return issue_command_error_response(exc)
     response.headers.update(PRIVATE_LEASE_HEADERS)
     if close_status is not None:
-        return claim_close.close_after_release(
+        return claim_close_commands.close_after_release(
             conn, actor=actor, issue_id=issue_id, status=close_status, released=released
         )
     return released

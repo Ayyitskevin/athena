@@ -228,7 +228,7 @@ def unknown_status(
     conn: sqlite3.Connection, project_id: int | None
 ) -> IssueCommandError:
     """:func:`_unknown_status` for a caller that checks a status before an act
-    that precedes the status change (``claim_close``)."""
+    that precedes the status change (``claim_close_commands``)."""
     return _unknown_status(conn, project_id)
 
 
