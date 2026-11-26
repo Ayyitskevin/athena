@@ -170,23 +170,12 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         space_id: int | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Write down what you learned, so the NEXT run starts knowing it.
-
-        Appends your summary to the issue's runbook page — one Mentor page per
-        issue holding what people and agents found out while working on it. The
-        entry references the issue, so it shows up in the issue's backlinks and in
-        the work-context packet the next agent reads. This is how a correction
-        becomes durable memory instead of dying with your session.
-
-        Write what would have saved you time: what you tried, what the evidence
-        showed, what actually resolved it, what is still unknown. Your text is
-        recorded as a QUOTE attributed to you — it is your report, not Athena's
-        finding, and nothing in it is ever executed.
-
-        Pass run_id to attribute the learning to a run (it must exist and be one
-        you can see). space_id is needed only the first time, to say where the
-        runbook should live; `get_issue_runbook` tells you whether one exists.
-        Requires the docs:write scope."""
+        """Write down what you learned, so the NEXT run starts knowing it: what
+        you tried, what the evidence showed, what resolved it, what is still
+        unknown. Appends it, quoted and attributed to you, to the issue's
+        runbook page, which the next agent's work context carries. run_id
+        attributes it to a run you can see. space_id is needed only for the
+        first entry; `get_issue_runbook` says whether one exists."""
         return client.record_run_learning(
             issue_id,
             summary=summary,
@@ -197,9 +186,8 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
 
     @tool(scope=READ_ONLY, profiles=KNOWLEDGE)
     def get_issue_runbook(issue_id: int) -> dict | None:
-        """The issue's runbook page — accumulated learnings from earlier runs — or
-        {found: false} when nobody has recorded one yet. Read it before starting work, and
-        add to it with `record_run_learning` when you finish."""
+        """The issue's runbook page of earlier runs' learnings, or {found:
+        false}. Read it before work; add with `record_run_learning`."""
         return client.get_issue_runbook(issue_id)
 
     @tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=READS)
@@ -259,37 +247,18 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
 
     @tool(scope=READ_ONLY, profiles=SEAT)
     def my_desk(section: AnswerSection | None = None, offset: ListOffset = 0) -> dict:
-        """START HERE. Your desk: who you are, what is asked of you, what you
-        are holding, and what changed since you last looked.
-
-        Profiles (ATHENA_MCP_PROFILE): `seat`, `seat+knowledge` (adds pages),
-        `conductor` (adds assignment and delegation), `full` (all your token
-        allows). Ask the operator to widen yours.
-
-        Replaces the whoami + delegations + controls + notifications + budget
-        round trip with one bounded read. Lanes: `identity` (role, scopes,
-        budget, action kinds needing approval), `asks` (open run controls
-        addressed to you, kill requests on your workers, claim handoffs you
-        have not acknowledged), `work` (your delegation inbox, the leases you
-        hold — `active` is the clock's verdict at THIS read, not a stored
-        state — and `work.leases.lapsed`, your expired rows including done
-        issues (`issue_done`); settle them with complete_claim, as reading
-        never releases them. `lapsed_total` and `lapsed_clipped` bound the list;
-        oldest expiry is unknown when clipped), `signals` (unread
-        notifications, visible events past your cursor).
-
-        The loop: `my_desk()` -> `claim_next_ready()` -> act ->
-        `complete_claim(...)` -> drain `wait_for_events(after=<cursor>, wait=0)`
-        -> `advance_desk_cursor(after_id=<last id you handled>)`. Creating
-        and editing `identity.notebook` need `seat+knowledge`.
-
+        """START HERE. Your desk in one bounded read: `identity` (role,
+        scopes, budget, actions needing approval), `asks` (run controls,
+        kill requests, handoffs to acknowledge), `work` (delegations, your
+        leases; work.leases.lapsed are expired rows only complete_claim
+        settles), `signals` (unread notifications, events past your cursor).
         RESERVES NOTHING: seeing work here does not claim it.
 
-        A desk over its size budget is cut and says where under `_truncated`,
-        each cut with the `next` call that reads on: a lane's own tool, or
-        `my_desk(section=<that key>, offset=...)`, which answers one place of a
-        fresh desk read: a list's rows from `offset`, a text from character
-        `offset`, or an object."""
+        The loop: `my_desk()` -> `claim_next_ready()` -> act ->
+        `complete_claim(...)` -> `wait_for_events(after=<cursor>, wait=0)` ->
+        `advance_desk_cursor(after_id=<last id you handled>)`. Your tools
+        follow ATHENA_MCP_PROFILE (athena://docs/boot-block); the operator
+        widens it. section and offset read on where `_truncated` cut."""
         desk = client.my_desk()
         for item in desk.get("work", {}).get("delegations", {}).get("items", []):
             item["issue"] = results.summary(item["issue"])
@@ -319,12 +288,9 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
     def get_project_floor(
         project_id: int, section: AnswerSection | None = None, offset: ListOffset = 0
     ) -> dict:
-        """A project's floor: every open issue is a chair. Occupied chairs
-        have a sitting agent and optional fenced paths. Empty chairs still
-        need a body. `blocked_by` lists open blockers; there is no 'ready'
-        flag. RESERVES NOTHING. A floor over its size budget is cut and says
-        where under `_truncated`; `section=<that key>` with `offset` reads one
-        place of a fresh read (a list's rows or a text from `offset`)."""
+        """A project's floor: each open issue a chair, occupied by an agent
+        (with any fenced paths) or empty; `blocked_by` lists open blockers.
+        RESERVES NOTHING. section and offset read on where `_truncated` cut."""
         floor = client.get_project_floor(project_id)
         if section is None:
             return floor
@@ -332,13 +298,10 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
 
     @tool(scope=READ_ONLY, profiles=CONDUCTOR)
     def get_project_brief(project_id: ProjectId, limit: ProjectBriefLimit = 5) -> dict:
-        """A compact visible project snapshot: summary, active claims, blocker edges,
-        awaiting-resume handoffs and latest native completion reports. limit is per
-        section (1..20); counts and excerpts disclose clipping. Claims are not process
-        liveness; reports are historical actor statements, not acceptance or artifact
-        freshness. Zero visible blockers does not establish readiness. Changes no work state
-        and supplies no claim ETag; fetch full issue work context before claiming or
-        recovery. See docs/CONDUCTOR_RECIPE.md for interpretation."""
+        """A compact project snapshot: summary, active claims, blocker edges,
+        handoffs awaiting resume and latest completion reports, `limit` per
+        section; counts disclose clipping. Supplies no claim ETag: read the
+        work context before claiming. Reading it: docs/CONDUCTOR_RECIPE.md."""
         return client.get_project_brief(project_id, limit=limit)
 
     @tool(scope=READ_ONLY, profiles=CONDUCTOR)
@@ -347,40 +310,22 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         limit: ProjectReviewQueueLimit = 5,
         cursor: ReviewCandidateId | None = None,
     ) -> dict:
-        """Read current visible project candidates with their exact-version reports.
-        Follow next_cursor as cursor until null to read older submissions (1..20
-        per page). Each call checks current visibility. Restart from the top to
-        see new submissions. visible_total and clipped describe the whole queue.
-        A replacement, including identical bytes, never inherits an older PASS.
-        awaiting_review can also mean the latest review is not visible; unknown
-        means the visible latest report has no usable verdict. review_state follows
-        any account's newest review. To gate on a review you requested, read your
-        request in the row's review_requests.items[] (match reviewer_id): its
-        reported_verdict is set only by that reviewer's own report on that review
-        issue, null until then. Reports are advisory,
-        not acceptance, independent verification or merge authority. This read changes
-        no state and supplies no claim ETag. Workers read full get_issue_work_context
-        for the exact candidate and bounded history. See docs/CONDUCTOR_RECIPE.md."""
+        """A project's current candidates with their exact-version reports;
+        follow next_cursor as cursor until null for older ones. review_state
+        follows any account's newest review; to gate on a review you
+        requested, read reported_verdict on your row in review_requests.items[]
+        (match reviewer_id), which only that reviewer's report sets. Reports
+        are advisory, not acceptance. Reading it: docs/CONDUCTOR_RECIPE.md."""
         return client.get_project_review_queue(project_id, limit=limit, cursor=cursor)
 
     # An acknowledgement moves a marker forward; what it acknowledges stays
     # readable.
     @mutation_tool(scope=ANY_WRITE_SCOPE, profiles=SEAT, hints=SETS)
     def advance_desk_cursor(after_id: int) -> dict:
-        """Record that you have handled every visible event up to `after_id`.
-
-        Your cursor is personal bookkeeping — it emits no activity event and
-        tells nobody else anything. It moves FORWARD only: acknowledging the
-        same id twice is a harmless no-op, and a lower id is refused (409),
-        because unsaying an acknowledgement would be a claim about history.
-
-        Pass the id of the last event you actually processed, not the newest
-        one you saw — the desk's `signals.latest_visible_event_id` is what a
-        fully drained reader would use.
-
-        Valid range: from your current `cursor.after_id` up to the newest event
-        id. A higher id is refused (422, code `cursor_ahead`, naming the newest
-        id you can see) and the cursor does not move."""
+        """Record that you have handled every visible event up to `after_id`:
+        the last event you processed, not the newest you saw. Forward only:
+        the same id again is a no-op, a lower one 409, one past the newest
+        event 422 `cursor_ahead`."""
         return client.advance_desk_cursor(after_id=after_id)
 
     # An admin read: the route carries the admin dependency
@@ -530,12 +475,9 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         limit: RunControlListLimit = 50,
         offset: ListOffset = 0,
     ) -> ListResult:
-        """Run controls — operator requests on live runs and how their agents
-        answered. Admins see everything; anyone else sees only controls addressed
-        to them. state='open' is YOUR inbox: unsettled, not yet expired — poll it
-        while you work and answer what you find. `state` reports what was
-        actually said; 'expired' means the clock ran out, never that anything
-        stopped."""
+        """Operator requests on runs addressed to you, and your answers.
+        state='open' is your inbox of unsettled ones: answer what you find.
+        'expired' means the clock ran out, never that anything stopped."""
         return window(
             lambda rows: client.list_run_controls(
                 run_id=run_id, state=state, limit=rows
@@ -556,11 +498,9 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         control_id: RunControlId,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Record that YOU read a control addressed to your run.
-
-        Receipt, nothing more — follow up with decline_run_control or
-        complete_run_control when you have actually acted. Re-acknowledging is a
-        no-op. Refused once the control is settled or expired."""
+        """Record that you read a control addressed to your run: a receipt
+        only; answer it with decline_run_control or complete_run_control.
+        Refused once it is settled or expired."""
         return client.acknowledge_run_control(
             control_id, idempotency_key=idempotency_key
         )
@@ -573,7 +513,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Decline a control addressed to your run, with the reason the operator
-        will read. An answer, not an error — say why you will not comply."""
+        will read."""
         return client.decline_run_control(
             control_id, reason=reason, idempotency_key=idempotency_key
         )
@@ -586,14 +526,10 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         handoff: dict | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Complete a control addressed to your run.
-
-        For steer and request_cancel, pass a bounded summary of what you actually
-        did. For request_fresh_context, pass handoff instead: an object with
-        summary (required), unresolved_questions, athena_refs, evidence_refs —
-        bounded lists of short strings; never transcripts or hidden reasoning.
-        Completion is YOUR CLAIM, recorded as such — it does not prove any
-        process-level effect."""
+        """Complete a control addressed to your run: for steer and
+        request_cancel, a summary of what you did; for request_fresh_context,
+        handoff = {summary, unresolved_questions, athena_refs, evidence_refs},
+        short strings, never transcripts. Recorded as your claim."""
         return client.complete_run_control(
             control_id,
             summary=summary,

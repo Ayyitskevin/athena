@@ -282,11 +282,12 @@ def test_queue_is_one_new_read_and_completion_keeps_its_authority():
     schema = tools[name].inputSchema
     assert schema["required"] == ["project_id"]
     assert set(schema["properties"]) == {"project_id", "limit", "cursor"}
+    # Listed without pydantic's "title" annotation (AD3): what a client
+    # validates is these four keys.
     assert schema["properties"]["limit"] == {
         "default": 5,
         "maximum": 20,
         "minimum": 1,
-        "title": "Limit",
         "type": "integer",
     }
     complete = tools["complete_claim"].inputSchema

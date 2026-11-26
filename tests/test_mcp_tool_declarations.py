@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import inspect
 from pathlib import Path
 
 import pytest
@@ -168,6 +169,46 @@ def test_the_surface_sizes_are_unchanged():
     assert len(mcp_server.PROFILES["seat+knowledge"]) == 40
     assert len(mcp_server.PROFILES["conductor"]) == 42
     assert mcp_server.RESPONSE_BUDGET_EXCEPTIONS == {"get_issue_work_context": 32_000}
+
+
+# --- what the listing carries (AD3) -----------------------------------------------
+
+
+def _without_titles(schema):
+    """Pydantic's schema minus every ``title`` keyword, by a walk of its own:
+    a property *named* title is kept."""
+    if isinstance(schema, list):
+        return [_without_titles(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    return {
+        key: (
+            {name: _without_titles(inner) for name, inner in value.items()}
+            if key in {"properties", "$defs"}
+            else _without_titles(value)
+        )
+        for key, value in schema.items()
+        if not (key == "title" and isinstance(value, str))
+    }
+
+
+def test_the_listing_drops_only_titles_and_indentation():
+    # WHY: AD3 cut the listing an agent reads before its first call. The cut
+    # must not change what a client validates or what the server checks: each
+    # listed input schema is exactly the argument model's schema without its
+    # titles, and each description is its docstring without the source's
+    # indentation.
+    server = mcp_server.build_server(_NoServer(), scopes=None)
+    listed = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    assert len(listed) == len(mcp_server.declared())
+    for name, tool in listed.items():
+        registered = server._tool_manager.get_tool(name)  # noqa: SLF001
+        model = registered.fn_metadata.arg_model.model_json_schema(by_alias=True)
+        assert tool.inputSchema == _without_titles(model), name
+        assert tool.description == inspect.cleandoc(tool.description), name
+    # A property named title survives (create_issue's title argument).
+    assert "title" in listed["create_issue"].inputSchema["properties"]
+    assert "title" in listed["create_issue"].inputSchema["required"]
 
 
 # --- the profile composition rule -----------------------------------------------
