@@ -145,3 +145,40 @@ def test_an_approval_consumed_is_in_the_trail_and_in_no_inbox(tmp_path):
     assert [row["target_id"] for row in _inbox(db_file, 1, "changed_status")] == [
         issue["id"]
     ]
+
+
+def test_an_approval_decision_accepts_the_state_it_produces(tmp_path):
+    """AD13: `approved` and `rejected`, the states a decision reads back as, are
+    accepted as the decision; anything else is still refused."""
+    app, _ = make_app(tmp_path)
+    with TestClient(app) as client:
+        bootstrap(client)
+        sol = onboard_agent(client, email="sol@e.com", name="Sol")
+        sol_id = sol["user"]["id"]
+        gated = client.put(
+            f"/approvals/policies/{sol_id}",
+            json={"action_kind": "issue.close"},
+            headers=ADMIN,
+        )
+        assert gated.status_code == 200, gated.text
+        states = []
+        for decision in ("approved", "rejected"):
+            issue = _issue(client, f"Gated {decision}", assignee_id=sol_id)
+            asked = client.patch(
+                f"/issues/{issue['id']}", json={"status": "done"}, headers=bearer(sol)
+            )
+            approval_id = asked.json()["approval"]["id"]
+            decided = client.post(
+                f"/approvals/{approval_id}/decision",
+                json={"decision": decision},
+                headers=ADMIN,
+            )
+            assert decided.status_code == 200, decided.text
+            states.append(decided.json()["state"])
+        assert states == ["approved", "rejected"]
+        refused = client.post(
+            f"/approvals/{approval_id}/decision",
+            json={"decision": "maybe"},
+            headers=ADMIN,
+        )
+        assert refused.status_code == 422

@@ -14,7 +14,7 @@ import sqlite3
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from athena.core.request_models import RequestBody
 from athena.core import approval_commands, approvals, users
@@ -57,9 +57,20 @@ class ApprovalOut(BaseModel):
     created_at: str
 
 
+#: The states a decision produces, accepted as the decision itself (AD13,
+#: D35): an operator who reads `state: "approved"` and sends it back is not
+#: refused for the tense.
+_DECISION_ALIASES = {"approved": "approve", "rejected": "reject"}
+
+
 class ApprovalDecision(RequestBody):
     decision: Literal["approve", "reject"]
     note: str | None = None
+
+    @field_validator("decision", mode="before")
+    @classmethod
+    def _accept_the_state_name(cls, value: object) -> object:
+        return _DECISION_ALIASES.get(value, value) if isinstance(value, str) else value
 
 
 class ApprovalPolicyUpdate(RequestBody):
