@@ -1139,7 +1139,11 @@ def _normalize_completion_report(
             else:
                 _evidence_problems(problems, label, item)
     problems.raise_any()
-    refs = [item["ref"] for item in evidence or [] if "ref" in item]
+    refs = (
+        [item["ref"] for item in evidence if "ref" in item]
+        if isinstance(evidence, list)
+        else []
+    )
     if refs:
         # The same item-count, text/control and encoded-ref envelope as yield.
         # Validation trims there; retain the original bytes in this report.
