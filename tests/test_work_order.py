@@ -392,3 +392,26 @@ def test_a_hostile_body_is_read_in_linear_time(body):
     started = time.perf_counter()
     work_order.report(body)
     assert time.perf_counter() - started < 5.0
+
+
+def test_sections_returns_the_text_under_each_present_parts_first_heading():
+    """AD7: the text a slice inherits follows report()'s rule exactly: the
+    lines under a part's heading until a heading of the same or a higher
+    level, deeper headings included; a fenced heading is text; an empty
+    heading yields to a later one of the same part; a part report() calls
+    missing has no text."""
+    body = (
+        "## Goal\n\n"
+        "## Context\nWhy.\n### Detail\nMore.\n"
+        "```\n## Inputs\n```\n"
+        "## Goal\nThe real goal.\n"
+        "# Success criteria\n- one\n## Format\n"
+    )
+    assert work_order.report(body)["present"] == ["goal", "context", "success_criteria"]
+    assert work_order.sections(body) == {
+        "goal": "The real goal.",
+        "context": "Why.\n### Detail\nMore.\n```\n## Inputs\n```",
+        "success_criteria": "- one\n## Format",
+    }
+    assert work_order.sections(work_order.TEMPLATE) == {}
+    assert work_order.sections(None) == {}

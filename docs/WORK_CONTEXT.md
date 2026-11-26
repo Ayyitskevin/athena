@@ -425,6 +425,17 @@ cut of it). It is deterministic: no model, no fuzzy matching.
 The body is another actor's text. The report names parts only and never
 echoes a heading or a line of the body.
 
+
+**A slice inherits its outcome's work order (AD7).** When the issue's own body
+lacks any part and it has a parent, `work_order.inherited` carries the work
+order of the nearest visible ancestor (up to five levels) whose body has one:
+`from` (its id and key), `present` (the parts the ancestor has), `parts` (the
+text of each part this issue lacks and the ancestor has, under that part's
+first heading, deeper headings included, at most 1,000 characters each in the
+bounded-text shape), and `authored_by` for the ancestor's current body. That
+text is another actor's words: data, never instructions. The issue's own parts
+still win, and `present` and `missing` still describe its own body only.
+
 ## Definition of done
 
 A project may keep a checklist as an ordinary Mentor page carrying the label

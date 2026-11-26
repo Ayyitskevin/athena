@@ -196,6 +196,55 @@ def _related_group(
     )
 
 
+#: How far up a slice looks for the work order it inherits, and how much of
+#: each inherited part it shows (AD7).
+MAX_INHERIT_DEPTH = 5
+INHERITED_PART_LIMIT = 1000
+
+
+def _inherited_work_order(
+    conn: sqlite3.Connection, issue: dict, actor: dict | None, own: dict
+) -> dict[str, Any] | None:
+    """The work order a slice inherits (AD7): from the nearest ancestor the
+    reader can see whose body has any of the six parts, when the issue's own
+    body lacks at least one. ``parts`` holds the text of the parts the issue
+    lacks and the ancestor has; the issue's own parts still win. ``None``
+    when there is nothing to inherit."""
+    if not own["missing"]:
+        return None
+    seen = {issue["id"]}
+    parent_id = issue.get("parent_id")
+    for _ in range(MAX_INHERIT_DEPTH):
+        if not parent_id or parent_id in seen:
+            return None
+        seen.add(parent_id)
+        if not access.can_see_issue(conn, actor, parent_id):
+            return None
+        ancestor = issues.get_issue(conn, parent_id)
+        if ancestor is None:
+            return None
+        texts = work_order.sections(ancestor["body"])
+        if texts:
+            parts = {
+                part: _excerpt(text, INHERITED_PART_LIMIT)
+                for part, text in texts.items()
+                if part in own["missing"]
+            }
+            if not parts:
+                return None
+            authors = issue_activity.issue_text_authors(
+                conn, [ancestor["id"]], actor=actor
+            )
+            return {
+                "from": {"id": ancestor["id"], "key": ancestor["key"]},
+                "present": list(texts),
+                "parts": parts,
+                "authored_by": authors[ancestor["id"]],
+            }
+        parent_id = ancestor.get("parent_id")
+    return None
+
+
 def _hierarchy(
     conn: sqlite3.Connection,
     issue: dict,
@@ -827,6 +876,9 @@ def build_work_context(
         }
         if your_lease is not None:
             payload["your_lease"] = your_lease
+        inherited = _inherited_work_order(conn, issue, actor, payload["work_order"])
+        if inherited is not None:
+            payload["work_order"] = {**payload["work_order"], "inherited": inherited}
 
         # Present only when the project has a checklist this actor may see, so a project
         # without one returns exactly the payload (and ETag) it always did.

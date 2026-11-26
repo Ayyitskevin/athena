@@ -163,6 +163,7 @@ NOT_PEER_WRITTEN: dict[str, tuple[str, str]] = {
         "the display name of the reply's author; the reply carries authored_by",
     ),
     "aegis.work_context_api.YourLeaseOut.generation": (ID, "the lease's generation"),
+    "aegis.work_context_api.WorkOrderSourceOut.key": (ID, "the ancestor's issue key"),
     "aegis.work_context_api.YourLeaseOut.until": (TIME, "server clock"),
     "aegis.work_context_api.YourLeaseOut.open_handoff_token": (
         ID,
@@ -484,8 +485,12 @@ def test_the_work_order_report_is_a_closed_vocabulary():
     work_order = work_context_api.WorkOrderOut
     for model in roots[:2]:
         assert model.model_fields["work_order"].annotation is work_order
-    assert set(work_order.model_fields) == {"present", "missing"}
-    assert unmarked_text_fields((work_order,), {}) == []
+    assert set(work_order.model_fields) == {"present", "missing", "inherited"}
+    assert unmarked_text_fields((work_order,), NOT_PEER_WRITTEN) == []
+    # AD7: the one place it carries text, the parts a slice inherits, is in an
+    # object that names their author.
+    inherited = work_context_api.WorkOrderInheritedOut
+    assert "authored_by" in inherited.model_fields
 
 
 # --- the desk: a seeded instance, walked by lane path ---------------------------

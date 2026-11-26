@@ -2,7 +2,7 @@
 
 Date: 2026-11-26. Baseline: `13585e5` (`main` after Wave 10 of
 [the in-use specification](ATHENA_IN_USE_SPEC.md)).
-Status: **specified; decisions accepted by standing instruction; Wave 11 (AD1) built; Wave 12 under way (AD8, AD6 built).**
+Status: **specified; decisions accepted by standing instruction; Wave 11 (AD1) built; Wave 12 under way (AD8, AD6 built); AD7 built.**
 Evidence: [reports/agent-day-2026-11-26.md](reports/agent-day-2026-11-26.md).
 Finding IDs such as `DAY-3` refer to that report. Requirement IDs begin `AD`.
 Decision IDs continue the in-use specification's, from D29.

@@ -570,16 +570,24 @@ def test_ad6_the_reply_comes_back_with_the_handoff(day):
     assert reply["authored_by"] == {"id": day.user_id("conductor"), "is_agent": True}
 
 
-@unmet("AD7", "a slice's packet shows only its parent's title")
 def test_ad7_a_slice_shows_its_parents_contract(day):
+    """AD7: the slice's packet, full and brief, shows the outcome's goal and
+    success criteria with their text and who wrote them."""
     play(day, the_day)
-    inherited = day.facts["slice_packet"]["work_order"].get("inherited")
-    require(
-        bool(inherited)
-        and inherited["from"]["key"] == day.facts["outcome"]["key"]
-        and "success_criteria" in inherited["present"],
-        "AD7: the slice's work order shows the outcome's success criteria",
-    )
+    for packet in (day.facts["slice_packet"], day.facts["brief_packet"]):
+        inherited = packet["work_order"]["inherited"]
+        assert inherited["from"]["key"] == day.facts["outcome"]["key"]
+        assert inherited["present"] == ["goal", "success_criteria"]
+        assert (
+            inherited["parts"]["goal"]["text"] == "Stop credential stuffing on /login."
+        )
+        assert inherited["parts"]["success_criteria"]["text"].startswith(
+            "- 10 failures"
+        )
+        assert inherited["authored_by"] == {
+            "id": day.user_id("conductor"),
+            "is_agent": True,
+        }
 
 
 def test_ad8_the_packet_knows_its_reader_holds_the_lease(day):
