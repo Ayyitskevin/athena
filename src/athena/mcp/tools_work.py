@@ -212,6 +212,21 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             )
         )
 
+    @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=CONDUCTOR, hints=ADDS)
+    def assign_issue_to_seat(
+        issue_id: int,
+        seat_slug: Annotated[str, Field(max_length=40)],
+        note: Annotated[str, Field(max_length=200)] | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Hand an issue to a declared fleet seat by its slug: the seat's agent
+        is delegated the issue and made its assignee, then radioed with the
+        optional note. A failed radio never undoes the assign; radio and receipt
+        say what it did. A seat whose agent cannot see the issue is refused."""
+        return client.assign_issue_to_seat(
+            issue_id, seat_slug, note=note, idempotency_key=idempotency_key
+        )
+
     @tool(scope=READ_ONLY, profiles=CONDUCTOR)
     def list_eligible_accounts(
         issue_id: int,

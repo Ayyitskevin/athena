@@ -95,6 +95,8 @@ CONDUCTOR_ADDITIONS = frozenset(
         "list_eligible_accounts",
         # F10: the text one edit replaced, which the history points at.
         "get_issue_prior_text",
+        # Decision 8: hand a slice to a declared seat by slug, and radio it.
+        "assign_issue_to_seat",
     }
 )
 
@@ -158,9 +160,10 @@ def test_the_four_profiles_are_the_whole_vocabulary():
         ("seat", ISSUE_ONLY, 28),
         # the twelve minus the four docs:write tools
         ("seat+knowledge", ISSUE_ONLY, 36),
-        ("conductor", SEAT_SCOPES, 41),
-        ("conductor", ISSUE_ONLY, 41),
-        ("conductor", ADMIN, 41),
+        # Decision 8 added assign_issue_to_seat, an issue:write conductor tool.
+        ("conductor", SEAT_SCOPES, 42),
+        ("conductor", ISSUE_ONLY, 42),
+        ("conductor", ADMIN, 42),
         ("conductor", READ_TOKEN, 21),
         # docs:write permits six inherited any-write tools (cursor, heartbeat,
         # targeted notification ack and own controls), but no issue writes.
@@ -215,6 +218,7 @@ def test_conductor_assignment_and_delegation_still_require_issue_write():
     profile = mcp_server.PROFILES["conductor"]
     writes = {
         "assign_issue",
+        "assign_issue_to_seat",
         "delegate_issue",
         "set_issue_parent",
         "link_issues",

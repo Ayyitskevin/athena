@@ -142,6 +142,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 |---|---|---|---|
 | `archive_issue` | `POST /issues/{issue_id}/archive` | idempotent | Archive (soft-delete) an issue: it's hidden from the default lists but the … |
 | `assign_issue` | `PUT /issues/{issue_id}/assignee` | idempotent | Assign an issue to a user id, or pass no assignee_id to unassign it. |
+| `assign_issue_to_seat` | `POST /issues/{issue_id}/assign-seat` | additive | Hand an issue to a declared fleet seat by its slug: the seat's agent … |
 | `attach_label` | `POST /issues/{issue_id}/labels` | idempotent | Attach an existing label (by id — see list_labels) to an issue. |
 | `bulk_update_issues` | `POST /issues/bulk` | idempotent | Apply the same change to MANY issues at once (one call instead of N). |
 | `claim_issue` | `POST /issues/{issue_id}/claim` | additive | Claim or renew an issue. To acquire, omit generation and pass the … |
@@ -317,4 +318,4 @@ with `isError` true and `status_code` null.
 
 ---
 
-*146 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*147 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

@@ -193,6 +193,8 @@ def test_writes_that_add_something_each_time_are_not_idempotent():
         name for name, hint in mcp_server.WRITE_HINTS.items() if not hint.idempotent
     )
     assert additive == [
+        # Each call radios the seat again, so a repeat is not a no-op.
+        "assign_issue_to_seat",
         "claim_issue",
         "claim_next_ready",
         "comment_on_issue",

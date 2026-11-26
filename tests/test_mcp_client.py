@@ -145,6 +145,12 @@ MUTATION_CASES = [
         lambda c, k: c.delegate_issue(7, 9, idempotency_key=k),
     ),
     (
+        "assign_issue_to_seat",
+        "POST",
+        "/issues/7/assign-seat",
+        lambda c, k: c.assign_issue_to_seat(7, "grok", idempotency_key=k),
+    ),
+    (
         "claim_issue",
         "POST",
         "/issues/7/claim",
@@ -499,6 +505,7 @@ MCP_MUTATION_CASES = [
     ),
     ("assign_issue", {"issue_id": 7}),
     ("delegate_issue", {"issue_id": 7, "agent_user_id": 9}),
+    ("assign_issue_to_seat", {"issue_id": 7, "seat_slug": "grok"}),
     ("claim_issue", {"issue_id": 7, "if_match": '"issue-v1"'}),
     (
         "yield_claim",

@@ -8,15 +8,26 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import sqlite3
+from typing import Literal
 
 from athena import config
 from athena.aegis import issue_commands, issues
 from athena.core import activity, buzz_radio, db, fleet_roster, users
 
 
+#: The refusal kinds this command raises. A transport maps each to its own
+#: answer (``fleet_assign_api.STATUS_BY_KIND``); the cockpit shows the detail.
+#: An unknown seat, the operator's seat, a seat with no handle or no agent
+#: account are ``invalid`` (the seat is in the request body, like an account id
+#: the issue commands refuse as ``invalid``); a missing issue is ``not_found``
+#: with the issue commands' own detail, so it reads exactly as a hidden one.
+AssignErrorKind = Literal["invalid", "not_found", "conflict"]
+
+
 class AssignError(Exception):
-    def __init__(self, detail: str) -> None:
+    def __init__(self, kind: AssignErrorKind, detail: str) -> None:
         super().__init__(detail)
+        self.kind = kind
         self.detail = detail
 
 
@@ -31,25 +42,26 @@ def assign_issue_to_seat(
 ) -> dict:
     spec = fleet_roster.find_declared_seat(conn, seat_slug)
     if spec is None:
-        raise AssignError(f"unknown seat {seat_slug!r}")
+        raise AssignError("invalid", f"unknown seat {seat_slug!r}")
     if spec.get("kind") == "operator":
-        raise AssignError("assign work to an agent seat, not the operator")
+        raise AssignError("invalid", "assign work to an agent seat, not the operator")
     email = spec.get("email")
     if not email:
-        raise AssignError(f"{spec['name']} has no Athena handle yet")
+        raise AssignError("invalid", f"{spec['name']} has no Athena handle yet")
     if conn.in_transaction:
         # The radio can only announce a durable transfer. A caller-owned
         # transaction could still roll back after our savepoint returns.
         raise AssignError(
-            "fleet assignment requires a connection without an open transaction"
+            "conflict",
+            "fleet assignment requires a connection without an open transaction",
         )
 
     with db.transaction(conn, immediate=True):
         target = users.get_user_by_email(conn, str(email))
         if target is None or not target.get("is_agent"):
-            raise AssignError(f"{spec['name']} has no Athena agent account")
+            raise AssignError("invalid", f"{spec['name']} has no Athena agent account")
         if issues.get_issue(conn, issue_id) is None:
-            raise AssignError("issue not found")
+            raise AssignError("not_found", "no such issue")
 
         # The current assignee may hand off work even if this transfer ends
         # their authority. Delegate while both commands can check that authority.

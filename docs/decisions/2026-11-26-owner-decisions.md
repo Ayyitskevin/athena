@@ -69,7 +69,14 @@ resolved account and re-read it under their lock, and the ceiling is 35.
 
 **8. The three missing twins are built.** Assigning to a fleet seat over REST,
 resuming a claim handoff in the cockpit, and editing a sprint in the cockpit; each
-deletes its `missing-twin` row in `scripts/surface_parity.toml`.
+deletes its `missing-twin` row in `scripts/surface_parity.toml`. Assigning to a
+seat is built as `POST /issues/{issue_id}/assign-seat` and the conductor's
+`assign_issue_to_seat` tool (`workflows/fleet_assign_api.py`;
+`tests/test_fleet_assign_api.py`). Resuming a handoff is the palette's "Resume
+handoff", offered to the current leaseholder while a handoff is open
+(`web/palette.py`; `tests/test_palette_resume_handoff.py`). Editing a sprint is
+the sprint list's "Edit" (`POST /aegis/sprints/{sprint_id}/edit`;
+`tests/test_sprint_edit_web.py`).
 
 **9. The root catalog's digest and root keys stay withheld from agents.** Nothing
 has changed the reason `ACTIVE_WORK.md` gives (operator evidence first), and

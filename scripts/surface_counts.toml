@@ -29,3 +29,19 @@ tables = 73
 change = "Wave 10, decision 6: DELETE /issues/{id}/prior-texts/{event_id}"
 routes = 1
 earns = "An administrator can remove a secret that an issue edit's kept prior text still held, with an audit event; before it, no edit could take text back."
+
+[[change]]
+change = "Wave 10, decision 8 (T1): POST /issues/{id}/assign-seat and the conductor's assign_issue_to_seat tool"
+routes = 1
+tools = 1
+earns = "A conductor agent can hand a slice to a declared fleet seat by its slug and wake it over Buzz, as the operator does from the floor, without first knowing the seat's account id."
+
+[[change]]
+change = "Wave 10, decision 8 (T2): POST /aegis/palette/issues/{id}/resume"
+routes = 1
+earns = "An operator who takes over an issue a seat handed off can acknowledge the handoff from the palette, and then hand it off in turn, without leaving the browser."
+
+[[change]]
+change = "Wave 10, decision 8 (T3): POST /aegis/sprints/{id}/edit"
+routes = 1
+earns = "The project creator can correct a sprint's name, goal or dates on the sprint list instead of leaving the browser for the API."

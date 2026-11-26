@@ -93,8 +93,9 @@ def _decorated_tools() -> dict[str, ast.Call | ast.Name]:
 
 def test_every_tool_states_its_declaration_at_its_definition():
     decorated = _decorated_tools()
-    # H6: get_issue_comment; H14: the two admin tools for indeterminate keys
-    assert len(decorated) == 146
+    # H6: get_issue_comment; H14: the two admin tools for indeterminate keys;
+    # decision 8: assign_issue_to_seat
+    assert len(decorated) == 147
     assert set(decorated) == set(mcp_server.declared())
     assert set(decorated) == set(_listed())
     for name, decorator in decorated.items():
@@ -160,11 +161,12 @@ def test_the_derived_tables_are_read_only_views():
 
 
 def test_the_surface_sizes_are_unchanged():
-    # H6 added get_issue_comment to seat; H14 two admin tools to the full profile
-    assert len(mcp_server.declared()) == 146
+    # H6 added get_issue_comment to seat; H14 two admin tools to the full profile;
+    # decision 8 assign_issue_to_seat to conductor
+    assert len(mcp_server.declared()) == 147
     assert len(mcp_server.PROFILES["seat"]) == 28
     assert len(mcp_server.PROFILES["seat+knowledge"]) == 40
-    assert len(mcp_server.PROFILES["conductor"]) == 41
+    assert len(mcp_server.PROFILES["conductor"]) == 42
     assert mcp_server.RESPONSE_BUDGET_EXCEPTIONS == {"get_issue_work_context": 32_000}
 
 

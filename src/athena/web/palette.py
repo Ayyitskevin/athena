@@ -12,6 +12,8 @@ Actions in this slice (MWS-18):
 - capture  → ``issue_commands.create_issue`` (one issue, one 'created' event)
 - claim    → ``lease_commands.claim_issue`` (exact issue ETag precondition, or 428/412)
 - yield    → ``lease_commands.yield_claim`` (holder-only, exact lease generation)
+- resume   → ``lease_commands.resume_claim_handoff`` (holder-only, exact lease
+  generation, offered only while the issue has an open handoff)
 - complete → ``lease_commands.complete_claim`` (holder-only, exact lease generation)
 - approve  → ``approvals_api.decide_for_actor`` (admin-only, pending requests only)
 - inspect  → read-only navigation to the issue's existing work-context page
@@ -29,6 +31,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse
 
 from athena.aegis import (
+    claim_handoffs,
     issue_commands,
     issue_etags,
     issues,
@@ -211,6 +214,27 @@ def palette_actions(
                         "fields": [_hidden("generation", lease["generation"])],
                     }
                 )
+                # A handoff left open by the previous holder: acknowledging it is
+                # the holder's act, and their own yield is refused until they do.
+                handoff = claim_handoffs.get_open_handoff(conn, issue["id"])
+                if handoff is not None:
+                    actions.append(
+                        {
+                            "id": "resume",
+                            "label": f"Resume handoff on {ref}",
+                            "endpoint": f"/aegis/palette/issues/{issue['id']}/resume",
+                            "fields": [
+                                _hidden("handoff_token", handoff["handoff_token"]),
+                                _hidden("generation", lease["generation"]),
+                                {
+                                    "name": "resume_note",
+                                    "type": "text",
+                                    "label": "Note (optional)",
+                                    "required": False,
+                                },
+                            ],
+                        }
+                    )
         elif eligible_claimant:
             actions.append(
                 {
@@ -346,6 +370,43 @@ def palette_yield(
             "issue_id": handoff["issue_id"],
             "handoff_token": handoff["handoff_token"],
             "reason": handoff["reason"],
+        }
+    )
+
+
+@router.post(
+    "/aegis/palette/issues/{issue_id}/resume", dependencies=[Depends(verify_csrf)]
+)
+def palette_resume_handoff(
+    request: Request,
+    issue_id: RowIdPath,
+    handoff_token: str = Form(""),
+    generation: str = Form(""),
+    resume_note: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> JSONResponse:
+    """Acknowledge an open handoff through the resume command: the exact
+    current leaseholder, under the exact lease generation, or the command's
+    own refusal. It records that the context was received, nothing more."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required()
+    try:
+        handoff = lease_commands.resume_claim_handoff(
+            conn,
+            actor=user,
+            issue_id=issue_id,
+            handoff_token=handoff_token,
+            generation=generation or None,
+            resume_note=resume_note.strip() or None,
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _command_error(exc)
+    return JSONResponse(
+        {
+            "issue_id": handoff["issue_id"],
+            "handoff_token": handoff["handoff_token"],
+            "state": handoff["state"],
         }
     )
 
