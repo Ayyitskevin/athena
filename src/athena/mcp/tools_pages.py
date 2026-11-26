@@ -25,7 +25,8 @@ def register_page_tools(tool, mutation_tool, client) -> None:
     # Every page edit is snapshotted into the page's version history, so no page
     # write is destructive.
 
-    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
+    # In the knowledge profile (AD11): list_pages takes a space_id.
+    @tool(scope=READ_ONLY, profiles=KNOWLEDGE)
     def list_spaces() -> ListResult:
         """List Mentor spaces (id, key, name)."""
         return listing(client.list_spaces())

@@ -25,10 +25,10 @@ Distinct account names alone do not prove independent review.
 Give the conductor member credentials with `read` and `issue:write`, and set
 `ATHENA_MCP_PROFILE=conductor` in its MCP server environment: onboard it with
 `POST /users/onboard_agent` and `"profile": "conductor"`, and the printed config
-names it. This selects the 28
+names it. This selects the 29
 `seat` tools plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`,
 `get_issue_prior_text`, `assign_issue`, `assign_issue_to_seat`, `delegate_issue`, `list_eligible_accounts`, `request_candidate_review`, `set_issue_parent`,
-`list_subtasks`, and `link_issues`: 42 tools before scope filtering. `docs:write` is optional for this
+`list_subtasks`, `link_issues`, `list_projects` and `list_fleet_seats`: 45 tools before scope filtering. `docs:write` is optional for this
 issue-only loop; page tools remain in `seat+knowledge` or `full`. The default remains
 `full`. Profiles never grant permission, and REST still enforces access.
 

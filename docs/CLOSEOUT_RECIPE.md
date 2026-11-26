@@ -178,8 +178,8 @@ leaseholder resumes it (`resume_claim_handoff`). Refs are inert data; never
 submit credentials, secret URLs, or tokens. A `not_met` result or an `unrun`
 reference does not block release.
 
-To make both writes in one call, pass `close_status` (REST: in the
-`POST /issues/{id}/complete` body; MCP: once the `complete_claim` tool takes it).
+To make both writes in one call, pass `close_status` (`complete_claim`, or the
+`POST /issues/{id}/complete` body).
 The release happens first, then the status change runs through the same command
 as `update_issue`, with every gate: blocked-close policy, budget, approval. The
 answer carries `close: {status, applied}`. When the close is refused, `applied`

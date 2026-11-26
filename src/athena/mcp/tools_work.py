@@ -364,8 +364,10 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         usage: dict | None = None,
         candidate_submission: SkipValidation[CandidateSubmission | None] = None,
         review_candidate_id: ReviewCandidateId | None = None,
+        close_status: Annotated[str | None, Field(max_length=64)] = None,
     ) -> dict:
-        """Release your lease. This does NOT close the issue; update_issue does.
+        """Release your lease; NOT a close unless close_status (update_issue's
+        gates) applies after it; a refused close says why in close.
 
         Pass the generation you hold, or a lapsed row's from my_desk's
         work.leases.lapsed. While you hold the issue, an open claim handoff
@@ -403,6 +405,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             usage=usage,
             candidate_submission=submission,
             review_candidate_id=review_candidate_id,
+            close_status=close_status,
         )
 
     @mutation_tool(scope=tokens.ISSUE_WRITE_SCOPE, profiles=SEAT, hints=SETS)
@@ -671,10 +674,19 @@ def register_work_tools(tool, mutation_tool, client) -> None:
 
     # --- projects & users ---------------------------------------------------
 
-    @tool(scope=READ_ONLY, profiles=KNOWLEDGE)
+    # On conductor too (AD11, D33): a conductor places slices in projects.
+    @tool(scope=READ_ONLY, profiles=(KNOWLEDGE, CONDUCTOR))
     def list_projects(offset: ListOffset = 0) -> ListResult:
         """List Aegis projects (id, key, name)."""
         return results.sliced(client.list_projects(), offset=offset)
+
+    # A read (AD11, D33); the route answers members holding issue:write, the
+    # ones who can assign, with slugs, names and whether an account answers.
+    @tool(scope=READ_ONLY, profiles=CONDUCTOR)
+    def list_fleet_seats() -> ListResult:
+        """The agent seats assign_issue_to_seat takes: slug, name and
+        has_agent_account."""
+        return listing(client.list_fleet_seats()["items"])
 
     @tool(scope=tokens.ADMIN_SCOPE, profiles=FULL_ONLY, hints=READS)
     def list_users() -> ListResult:

@@ -1158,7 +1158,8 @@ _SUBSCHEMA_MAPS = frozenset({"properties", "$defs", "definitions", "patternPrope
 def listed_schema(schema: Any) -> Any:
     """An input schema as listed: pydantic's schema without its ``title``
     keywords ("Issue Id" for issue_id, "complete_claimArguments" for the
-    whole). A title is an annotation, not an assertion: a client validates
+    whole) and without ``"default": null`` (an optional argument left out is
+    already null). Both are annotations, not assertions: a client validates
     exactly what it validated before, and the argument model that checks each
     call on the server is untouched."""
     if not isinstance(schema, dict):
@@ -1166,6 +1167,8 @@ def listed_schema(schema: Any) -> Any:
     listed: dict[str, Any] = {}
     for key, value in schema.items():
         if key == "title" and isinstance(value, str):
+            continue
+        if key == "default" and value is None:
             continue
         if key in _SUBSCHEMA:
             listed[key] = listed_schema(value)

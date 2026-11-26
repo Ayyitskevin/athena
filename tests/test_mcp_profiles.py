@@ -57,6 +57,9 @@ SEAT = frozenset(
         # H6: a comment the list cuts is read whole by its id, so the seat that
         # reads the thread carries the read.
         "get_issue_comment",
+        # AD10 (D32): a seat continues the run my_desk names under
+        # identity.last_run.
+        "begin_run",
     }
 )
 # The audit's eleven for knowledge work, and the notebook tool (G8).
@@ -76,6 +79,8 @@ KNOWLEDGE = frozenset(
         # G8: the desk tells a seat how to open its notebook, so the profile
         # that edits pages carries the tool that makes one.
         "open_my_notebook",
+        # AD11 (D33): list_pages takes a space_id, so the profile lists spaces.
+        "list_spaces",
     }
 )
 CONDUCTOR_ADDITIONS = frozenset(
@@ -97,6 +102,10 @@ CONDUCTOR_ADDITIONS = frozenset(
         "get_issue_prior_text",
         # Decision 8: hand a slice to a declared seat by slug, and radio it.
         "assign_issue_to_seat",
+        # AD11 (D33): a conductor places slices in projects and learns the
+        # seat slugs assign_issue_to_seat takes.
+        "list_projects",
+        "list_fleet_seats",
     }
 )
 
@@ -153,27 +162,30 @@ def test_the_four_profiles_are_the_whole_vocabulary():
     "profile_name,scopes,expected",
     [
         # H6 added get_issue_comment, a read in `seat`: every count rose by one.
-        ("seat", SEAT_SCOPES, 28),
-        ("seat+knowledge", SEAT_SCOPES, 40),
-        ("seat", ADMIN, 28),
-        ("seat+knowledge", ADMIN, 40),
-        ("seat", ISSUE_ONLY, 28),
-        # the twelve minus the four docs:write tools
-        ("seat+knowledge", ISSUE_ONLY, 36),
+        # AD10 added begin_run to `seat`, and AD11 list_spaces to
+        # `seat+knowledge` and list_projects and list_fleet_seats to
+        # `conductor`, all three reads.
+        ("seat", SEAT_SCOPES, 29),
+        ("seat+knowledge", SEAT_SCOPES, 42),
+        ("seat", ADMIN, 29),
+        ("seat+knowledge", ADMIN, 42),
+        ("seat", ISSUE_ONLY, 29),
+        # the thirteen minus the four docs:write tools
+        ("seat+knowledge", ISSUE_ONLY, 38),
         # Decision 8 added assign_issue_to_seat, an issue:write conductor tool.
-        ("conductor", SEAT_SCOPES, 42),
-        ("conductor", ISSUE_ONLY, 42),
-        ("conductor", ADMIN, 42),
-        ("conductor", READ_TOKEN, 21),
+        ("conductor", SEAT_SCOPES, 45),
+        ("conductor", ISSUE_ONLY, 45),
+        ("conductor", ADMIN, 45),
+        ("conductor", READ_TOKEN, 24),
         # docs:write permits six inherited any-write tools (cursor, heartbeat,
         # targeted notification ack and own controls), but no issue writes.
-        ("conductor", DOCS_ONLY, 27),
+        ("conductor", DOCS_ONLY, 30),
         # the thirteen reads among the core: my_desk, list_my_delegated_work,
         # search_work, get_issue, get_issue_work_context, list_issue_comments,
         # get_issue_comment (H6),
         # get_issue_lease, current_run, list_notifications, list_run_controls,
-        # wait_for_events, get_idempotency_key
-        ("seat", READ_TOKEN, 13),
+        # wait_for_events, get_idempotency_key, and begin_run (AD10)
+        ("seat", READ_TOKEN, 14),
     ],
 )
 def test_exact_counts_per_profile_and_token_class(profile_name, scopes, expected):
@@ -249,6 +261,11 @@ def test_conductor_assignment_and_delegation_still_require_issue_write():
         "get_issue_prior_text",
         "list_subtasks",
         "list_eligible_accounts",
+        "begin_run",
+        "list_projects",
+        # A read the route answers only for issue:write (AD11); listing it to a
+        # read token costs a refusal, not a disclosure.
+        "list_fleet_seats",
     }
     server = mcp_server.build_server(_NoServer(), scopes=READ_TOKEN, profile=profile)
     for tool in asyncio.run(server.list_tools()):

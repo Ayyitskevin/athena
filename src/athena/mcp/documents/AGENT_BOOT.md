@@ -137,8 +137,8 @@ No seat profile carries `mark_notifications_read`: bulk acknowledgement is never
 a seat's move. An unknown value stops the server with a message naming the
 four profiles; it never falls back to `full` by accident. A seat that needs a hidden
 tool for one task starts that session with `ATHENA_MCP_PROFILE=full`. The seat
-profile also includes `claim_next_ready` and `wait_for_events`: 28 tools for a
-normal seat, 40 with knowledge, or 42 for a conductor, before any narrower token
+profile also includes `claim_next_ready`, `wait_for_events` and `begin_run`: 29
+tools for a normal seat, 42 with knowledge, or 45 for a conductor, before any narrower token
 scope removes more. The conductor profile adds no admin tools or permission.
 `get_project_brief(project_id=..., limit=5)` provides a bounded project snapshot;
 it does not replace desk boot or full issue work context for claims and recovery.

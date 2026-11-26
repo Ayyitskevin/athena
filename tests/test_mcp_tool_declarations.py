@@ -95,8 +95,8 @@ def _decorated_tools() -> dict[str, ast.Call | ast.Name]:
 def test_every_tool_states_its_declaration_at_its_definition():
     decorated = _decorated_tools()
     # H6: get_issue_comment; H14: the two admin tools for indeterminate keys;
-    # decision 8: assign_issue_to_seat
-    assert len(decorated) == 147
+    # decision 8: assign_issue_to_seat; AD11: list_fleet_seats
+    assert len(decorated) == 148
     assert set(decorated) == set(mcp_server.declared())
     assert set(decorated) == set(_listed())
     for name, decorator in decorated.items():
@@ -163,11 +163,12 @@ def test_the_derived_tables_are_read_only_views():
 
 def test_the_surface_sizes_are_unchanged():
     # H6 added get_issue_comment to seat; H14 two admin tools to the full profile;
-    # decision 8 assign_issue_to_seat to conductor
-    assert len(mcp_server.declared()) == 147
-    assert len(mcp_server.PROFILES["seat"]) == 28
-    assert len(mcp_server.PROFILES["seat+knowledge"]) == 40
-    assert len(mcp_server.PROFILES["conductor"]) == 42
+    # decision 8 assign_issue_to_seat to conductor; AD10 begin_run to seat;
+    # AD11 list_fleet_seats (new) to conductor
+    assert len(mcp_server.declared()) == 148
+    assert len(mcp_server.PROFILES["seat"]) == 29
+    assert len(mcp_server.PROFILES["seat+knowledge"]) == 42
+    assert len(mcp_server.PROFILES["conductor"]) == 45
     assert mcp_server.RESPONSE_BUDGET_EXCEPTIONS == {"get_issue_work_context": 32_000}
 
 
@@ -175,8 +176,8 @@ def test_the_surface_sizes_are_unchanged():
 
 
 def _without_titles(schema):
-    """Pydantic's schema minus every ``title`` keyword, by a walk of its own:
-    a property *named* title is kept."""
+    """Pydantic's schema minus every ``title`` keyword and every null
+    ``default``, by a walk of its own: a property *named* title is kept."""
     if isinstance(schema, list):
         return [_without_titles(item) for item in schema]
     if not isinstance(schema, dict):
@@ -189,6 +190,7 @@ def _without_titles(schema):
         )
         for key, value in schema.items()
         if not (key == "title" and isinstance(value, str))
+        and not (key == "default" and value is None)
     }
 
 
@@ -196,7 +198,7 @@ def test_the_listing_drops_only_titles_and_indentation():
     # WHY: AD3 cut the listing an agent reads before its first call. The cut
     # must not change what a client validates or what the server checks: each
     # listed input schema is exactly the argument model's schema without its
-    # titles, and each description is its docstring without the source's
+    # titles and null defaults, and each description is its docstring without the source's
     # indentation.
     server = mcp_server.build_server(_NoServer(), scopes=None)
     listed = {tool.name: tool for tool in asyncio.run(server.list_tools())}
@@ -248,13 +250,13 @@ def test_every_profile_is_built_on_seat_and_full_carries_everything():
     assert profiles["seat"] < profiles["seat+knowledge"]
     assert profiles["seat"] < profiles["conductor"]
     assert set(_listed(profile=None)) == set(mcp_server.declared())
-    # link_issues is the one tool declared for two narrower profiles.
+    # link_issues and list_projects (AD11) are declared for two narrower profiles.
     both = {
         n
         for n, d in mcp_server.declared().items()
         if d.profiles == (mcp_server.KNOWLEDGE, mcp_server.CONDUCTOR)
     }
-    assert both == {"link_issues"}
+    assert both == {"link_issues", "list_projects"}
     assert "link_issues" not in profiles["seat"]
 
 

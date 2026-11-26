@@ -70,7 +70,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 
 | MCP tool | REST call(s) | Hints | Summary |
 |---|---|---|---|
-| `begin_run` | *(client-side)* | read-only | Switch this session's run identity: every write you make afterwards is … |
+| `begin_run` | *(client-side)* | read-only | Tag later writes with run_id: continue my_desk's identity.last_run, … |
 | `count_work` | `GET /issues/query/count` | read-only | How many issues a work query matches, ignoring paging — so a bounded … |
 | `current_run` | *(client-side)* | read-only | The run identity this session stamps on writes. |
 | `embed_help` | `GET /embeds/help` | read-only | The embed vocabulary as data: every kind, its keys, and the limits. |
@@ -102,12 +102,13 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `list_activity_runs` | `GET /activity/runs` | read-only | Reconstruct one actor's recent activity into runs. Explicit X-Athena-Run … |
 | `list_dispatches` | `GET /dispatches` | read-only | What Athena has handed to the executor, newest first. Filter by … |
 | `list_eligible_accounts` | `GET /issues/{issue_id}/eligible-accounts` | read-only | The accounts that can see and work this issue, by id: {accounts: |
+| `list_fleet_seats` | `GET /fleet/seats/directory` | read-only | The agent seats assign_issue_to_seat takes: slug, name and … |
 | `list_issue_comments` | `GET /issues/{issue_id}/comments` | read-only | One issue's comments, oldest first, each an excerpt; … |
 | `list_issue_links` | `GET /issues/{issue_id}/links` | read-only | Read an issue's dependency links — what it blocks, what blocks it, and … |
 | `list_issues` | `GET /issues` | read-only | List Aegis issues, optionally filtered by a project-configured status, … |
 | `list_labels` | `GET /labels` | read-only | List the shared label vocabulary (id, name, color). |
 | `list_my_delegated_work` | `GET /delegations/me` | read-only | Issues delegated to you, without archived or done work unless … |
-| `list_notifications` | `GET /notifications` | read-only | Your notifications: mentions, watched changes, delegations, lapsed … |
+| `list_notifications` | `GET /notifications/grouped`<br>`GET /notifications` | read-only | Your notifications (mentions, watched changes, delegations, lapsed … |
 | `list_page_versions` | `GET /pages/{page_id}/versions` | read-only | The page's superseded revisions, newest first (the live page is NOT one of … |
 | `list_pages` | `GET /spaces/{space_id}/pages` | read-only | A space's pages by title, without bodies; archived ones only with … |
 | `list_priority_notifications` | `GET /notifications/priority` | read-only | Read YOUR inbox as a priority/mute/digest projection. Priority is an … |
@@ -148,7 +149,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `claim_issue` | `POST /issues/{issue_id}/claim` | additive | Claim or renew an issue's lease (30 minutes unless lease_seconds). |
 | `claim_next_ready` | `POST /issues/claim-next` | additive | Atomically claim the next ready issue: delegated first, then … |
 | `comment_on_issue` | `POST /issues/{issue_id}/comments` | additive | Add a comment to an issue, authored by the token's user. |
-| `complete_claim` | `POST /issues/{issue_id}/complete` | idempotent | Release your lease. This does NOT close the issue; update_issue does. |
+| `complete_claim` | `POST /issues/{issue_id}/complete` | idempotent | Release your lease; NOT a close unless close_status (update_issue's … |
 | `complete_sprint` | `POST /sprints/{sprint_id}/complete` | idempotent | Move an active sprint to completed. Athena supplies today's date when … |
 | `create_issue` | `POST /issues` | additive | Create an issue. status defaults to the project's own; priority is … |
 | `create_label` | `POST /labels` | idempotent | Create a label in the shared vocabulary. color is a #RRGGBB hex string. |
@@ -318,4 +319,4 @@ with `isError` true and `status_code` null.
 
 ---
 
-*147 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*148 tools. Generated from `mcp/tools_*.py` (each tool's declared scope and hints, and its body) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

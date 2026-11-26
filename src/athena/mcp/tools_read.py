@@ -624,11 +624,26 @@ def register_read_tools(tool, mutation_tool, client) -> None:
 
     @tool(scope=READ_ONLY, profiles=SEAT)
     def list_notifications(
-        unread: bool = False, limit: int = 50, offset: ListOffset = 0
+        unread: bool = False,
+        limit: int = 50,
+        offset: ListOffset = 0,
+        group: Literal["issue", "none"] = "issue",
     ) -> ListResult:
-        """Your notifications: mentions, watched changes, delegations, lapsed
-        leases you answer for; unread=true for the unseen. A row's target_state
-        "completed_by_you" means you completed a claim on it since."""
+        """Your notifications (mentions, watched changes, delegations, lapsed
+        leases); unread=true for the unseen. Default: one row per target with
+        count, unread, verbs, newest row and unread_ids (ids for
+        mark_notification_read); group="none" lists rows. target_state
+        "completed_by_you": you completed a claim on it since."""
+        if group == "issue":
+            answer = client.list_notification_groups(
+                unread=unread, limit=min(offset + limit, NOTIFICATION_LIST_CAP)
+            )
+            page = results.sliced(answer["items"][: offset + limit], offset=offset)
+            if answer.get("complete") is False and not page["truncated"]:
+                # The grouped read scans the newest rows only: older rows of a
+                # listed target are not counted, and group="none" reads them.
+                return listing(page["items"], truncated=True)
+            return page
         return window(
             lambda rows: client.list_notifications(unread=unread, limit=rows),
             limit=limit,
@@ -780,19 +795,16 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         interval only once."""
         return client.heartbeat_agent_run(run_id, usage)
 
-    @tool(scope=READ_ONLY, profiles=FULL_ONLY)
+    # In the seat profiles (AD10, D32): a seat continues the run my_desk names
+    # under identity.last_run instead of scattering one slice over processes.
+    @tool(scope=READ_ONLY, profiles=SEAT)
     def begin_run(
         run_id: RunId,
         parent_run_id: RunId | None = None,
         fork_from_event_id: int | None = None,
     ) -> dict:
-        """Switch this session's run identity: every write you make afterwards is
-        attributed to `run_id` in the activity trail (replayable, lineage-linked).
-        A session already starts with an auto-minted run id, so call this when you
-        begin a NEW unit of work, continue a run you were assigned, or apply the
-        `headers` from get_run_fork_contract (pass its run/parent/fork values here
-        to work on the fork). Setting a new run clears the previous parent/fork
-        context. Returns the now-active identity."""
+        """Tag later writes with run_id: continue my_desk's identity.last_run,
+        or start new work. Returns the active identity."""
         return client.set_run(
             run_id,
             parent_run_id=parent_run_id,

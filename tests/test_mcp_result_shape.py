@@ -348,13 +348,15 @@ def test_a_limit_only_route_is_paged_by_offset_through_the_tool(tool, path, cap)
         asked.append(limit)
         return httpx.Response(200, json=stored[:limit])
 
+    # list_notifications groups by target unless asked for rows (AD12).
+    rows = {"group": "none"} if tool == "list_notifications" else {}
     server = mcp_server.build_server(_mocked(respond))
     first, second, past_cap = _wire(
         server,
         [
-            (tool, {"limit": 3}),
-            (tool, {"limit": 3, "offset": 6}),
-            (tool, {"limit": 3, "offset": cap - 2}),
+            (tool, {"limit": 3, **rows}),
+            (tool, {"limit": 3, "offset": 6, **rows}),
+            (tool, {"limit": 3, "offset": cap - 2, **rows}),
         ],
     )
     assert _one(first) == {
