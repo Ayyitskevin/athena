@@ -34,6 +34,18 @@ def grouped_inbox(
         conn, actor["id"], unread_only=unread_only, limit=SCAN_ROWS, actor=actor
     )
     rows = notification_state.annotate_inbox(conn, actor["id"], rows)
+    return {
+        "items": group_rows(rows)[:limit],
+        "complete": len(rows) < SCAN_ROWS,
+        "rows_scanned": len(rows),
+        "oldest_id_scanned": int(rows[-1]["id"]) if rows else None,
+    }
+
+
+def group_rows(rows: list[dict]) -> list[dict]:
+    """``rows`` (newest first) one per target, in order of each target's
+    newest row: its count, unread, verbs, the newest row whole and the unread
+    ids that acknowledge just that group. Also the desk's grouped preview."""
     groups: dict[tuple[str, int], dict] = {}
     for row in rows:
         key = (row["target_kind"], int(row["target_id"]))
@@ -55,10 +67,4 @@ def grouped_inbox(
             group["unread"] += 1
             if len(group["unread_ids"]) < notification_commands.MAX_ACKNOWLEDGE_IDS:
                 group["unread_ids"].append(int(row["id"]))
-    listed = list(groups.values())[:limit]
-    return {
-        "items": listed,
-        "complete": len(rows) < SCAN_ROWS,
-        "rows_scanned": len(rows),
-        "oldest_id_scanned": int(rows[-1]["id"]) if rows else None,
-    }
+    return list(groups.values())

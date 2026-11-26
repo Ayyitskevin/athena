@@ -56,7 +56,7 @@ from support import (
 )
 
 from athena import demo
-from athena.aegis import answer_glossary
+from athena.aegis import answer_glossary, notification_groups
 from athena.core import db, token_commands, users
 from athena.main import create_app
 from athena.mcp import server as mcp_server
@@ -623,6 +623,19 @@ def test_ad2_explain_answers_the_full_answer_and_the_default_is_its_lean_shape(d
         assert explained == rest, name
         shape = answer_glossary.SHAPES[explained["schema"]]
         assert default["schema"] == shape.lean_schema, name
+        if name == "desk":
+            # The MCP desk also folds its notification preview one row per
+            # target (AD12), as GET /desk?group=issue does.
+            signals = explained["signals"]
+            explained = {
+                **explained,
+                "signals": {
+                    **signals,
+                    "notifications": notification_groups.group_rows(
+                        signals["notifications"]
+                    ),
+                },
+            }
         assert default == answer_glossary.lean(explained), name
     assert day.facts["desk"][0]["schema"] == "athena.agent_desk.v2"
     assert day.facts["desk"][1]["schema"] == "athena.agent_desk.v3"

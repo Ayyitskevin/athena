@@ -8,12 +8,19 @@ story: you get yours.
 from __future__ import annotations
 
 import sqlite3
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from athena.aegis import answer_glossary, desk_commands, operator_since, ready_queue
+from athena.aegis import (
+    answer_glossary,
+    desk_commands,
+    notification_groups,
+    operator_since,
+    ready_queue,
+)
 from athena.core import desk_cursors, packet_time
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, personal_write_actor
@@ -79,6 +86,11 @@ def read_office(
 @router.get("/desk")
 def read_desk(
     lean: bool = Query(False, description=answer_glossary.LEAN_QUERY),
+    group: Literal["issue", "none"] = Query(
+        "none",
+        description="issue: signals.notifications one row per target, as "
+        "GET /notifications/grouped answers (AD12); the MCP desk's default",
+    ),
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -92,6 +104,11 @@ def read_desk(
     desk = packet_time.stamp(
         desk_commands.read_desk(conn, actor=actor, now=now), now=now
     )
+    if group == "issue":
+        signals = desk["signals"]
+        signals["notifications"] = notification_groups.group_rows(
+            signals["notifications"]
+        )
     return answer_glossary.lean(desk) if lean else desk
 
 

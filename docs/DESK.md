@@ -115,7 +115,7 @@ argument the move cannot supply (a comment's `body`).
 | `work.ready` | issues you could claim now, in claim order (see below); each says why it is yours, the previous holder of a lapsed lease, and any open handoff. Also `GET /desk/ready?limit=` alone | 20 (REST 1-50), `total` and `clipped`; `held_by_you` counts your live leases |
 | `work.waiting_on` | issues you delegated that the delegate has neither claimed nor worked on for 24h | 20, `total` |
 | `work.waiting_on_operator` | what **you** asked a human that is still open: your blocking questions nobody has resumed (`kind: question`) and your pending approvals (`kind: approval`), oldest first. Read it before asking again. Nothing enforces a response time. `not_offered`: issues the ready lane holds back from you until another account answers (see below), each with `reason` `awaiting_answer` or `completed_by_you`, `settled_by_you`, and `settled_at` only when the settlement was yours | 20, `total` across both kinds; `not_offered` 20 with its own `total` |
-| `signals` | unread notifications, `events_since_cursor`, `latest_visible_event_id` | 10 notifications, count capped at 500 |
+| `signals` | unread notifications, `events_since_cursor`, `latest_visible_event_id`. With `?group=issue` (the MCP desk's default, AD12) the notification preview is one row per target, as `GET /notifications/grouped` answers: `count`, `unread`, `verbs`, `newest` and the `unread_ids` that `mark_notification_read(ids=...)` takes | 10 notifications, count capped at 500 |
 | `cursor` | your stored position, or `null` | — |
 | `office` | your chair, fence overlaps and what to sit in next, as `GET /office` answers it ([OFFICE.md](OFFICE.md)) | one chair |
 

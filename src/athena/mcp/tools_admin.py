@@ -264,7 +264,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         follow ATHENA_MCP_PROFILE (athena://docs/boot-block); the operator
         widens it. section and offset read on where `_truncated` cut.
         explain=true inlines athena://answers/glossary."""
-        desk = client.my_desk() if explain else client.my_desk(lean=True)
+        desk = client.my_desk() if explain else client.my_desk(lean=True, group="issue")
         for item in desk.get("work", {}).get("delegations", {}).get("items", []):
             item["issue"] = results.summary(item["issue"])
         if section is None:

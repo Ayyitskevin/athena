@@ -2,7 +2,7 @@
 
 Date: 2026-11-26. Baseline: `13585e5` (`main` after Wave 10 of
 [the in-use specification](ATHENA_IN_USE_SPEC.md)).
-Status: **specified; decisions accepted by standing instruction. Built: AD1 (#491); AD6, AD7, AD8 and the server halves of AD10 to AD13 (#492); AD3 and the MCP halves of AD10 to AD13 (#493); AD9 (typed argument shapes, refusals with examples, command evidence) and AD2 (lean desk and packet, one glossary). Next: AD5, AD4, and AD12's grouped desk preview.**
+Status: **specified; decisions accepted by standing instruction. Built: AD1 (#491); AD6, AD7, AD8 and the server halves of AD10 to AD13 (#492); AD3 and the MCP halves of AD10 to AD13 (#493); AD9 and AD2 (#494); AD5, AD4 and AD12's grouped desk preview. Every requirement AD1 to AD13 is built.**
 Evidence: [reports/agent-day-2026-11-26.md](reports/agent-day-2026-11-26.md).
 Finding IDs such as `DAY-3` refer to that report. Requirement IDs begin `AD`.
 Decision IDs continue the in-use specification's, from D29.
@@ -96,7 +96,7 @@ script never mistypes a shape or looks around.
 | Seat calls made only to read a generation | 2 | 0 |
 | Seat calls to read the answer to its own question | 1 | 0 |
 | Seat calls to read the slice's contract from its parent | 1 | 0 |
-| Conductor calls to find a delegate's question | 1 (the ranking) | 0 (the desk) |
+| Conductor calls to find a delegate's question | 1 (the ranking) | 0 (the desk) (now 0) |
 | Unread conductor notifications after one slice | 9 | ≤ 2 rows, grouped |
 
 ## Waves
