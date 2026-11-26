@@ -283,10 +283,11 @@ def test_a_failed_radio_never_rolls_back_the_assign(tmp_path, monkeypatch, caplo
     # The radio's own reason can name a key file's path or carry the CLI's
     # stderr: the server log keeps it, the bearer caller gets a fixed sentence.
     reason = "cannot read key file: [Errno 13] Permission denied: '/etc/buzz/k'"
+    forged = "\nWARNING athena: forged line"
     monkeypatch.setattr(
         buzz_radio,
         "send_assignment",
-        lambda **kwargs: {"status": "failed", "detail": reason},
+        lambda **kwargs: {"status": "failed", "detail": reason + forged},
     )
     app, db_file = make_app(tmp_path)
     with TestClient(app) as client:
@@ -302,7 +303,9 @@ def test_a_failed_radio_never_rolls_back_the_assign(tmp_path, monkeypatch, caplo
             "permalink": None,
         }
         assert "/etc/buzz" not in answer.text
-        assert any(reason in record.getMessage() for record in caplog.records)
+        logged = [r.getMessage() for r in caplog.records if reason in r.getMessage()]
+        # One line: the reason's own line break is escaped, not followed.
+        assert logged and all("\n" not in line for line in logged)
         assert answer.json()["receipt"]["status"] == "skipped"
         assert (
             client.get(f"/issues/{issue['id']}", headers=ADMIN).json()["assignee_id"]

@@ -45,6 +45,12 @@ RADIO_FAILED_DETAIL = "the radio failed; the server log has the reason"
 RECEIPT_FAILED_DETAIL = "the receipt was not recorded; the server log has the reason"
 
 
+def _one_line(text: object) -> str:
+    """A reason as one log line: the CLI's stderr can hold line breaks, and a
+    forged line in the operator's log is worse than an escaped one."""
+    return str(text).replace("\r", "\\r").replace("\n", "\\n")
+
+
 def _without_failure_reasons(assigned: dict, issue_id: int) -> dict:
     """The command's answer with a failed radio's or receipt's own reason
     replaced by a fixed sentence, logged for the operator instead."""
@@ -52,14 +58,16 @@ def _without_failure_reasons(assigned: dict, issue_id: int) -> dict:
     receipt = dict(assigned["receipt"])
     if radio.get("status") == "failed":
         logger.warning(
-            "seat assign of issue %s: radio failed: %s", issue_id, radio.get("detail")
+            "seat assign of issue %s: radio failed: %s",
+            issue_id,
+            _one_line(radio.get("detail")),
         )
         radio["detail"] = RADIO_FAILED_DETAIL
     if receipt.get("status") == "failed":
         logger.warning(
             "seat assign of issue %s: receipt failed: %s",
             issue_id,
-            receipt.get("detail"),
+            _one_line(receipt.get("detail")),
         )
         receipt["detail"] = RECEIPT_FAILED_DETAIL
     return {**assigned, "radio": radio, "receipt": receipt}
