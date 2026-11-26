@@ -2,7 +2,7 @@
 
 Date: 2026-11-26. Baseline: `13585e5` (`main` after Wave 10 of
 [the in-use specification](ATHENA_IN_USE_SPEC.md)).
-Status: **specified; decisions accepted by standing instruction. Built: AD1 (#491); AD8, AD6, AD7; the server halves of AD10 (`identity.last_run`, docs), AD11 (`GET /fleet/seats/directory`), AD12 (`children_done`, quiet `approval_consumed`, `GET /notifications/grouped`) and AD13 (`close_status` on REST, decision aliases). Their MCP halves wait for AD3's tool-listing work. Next: AD3, AD2, then AD5, AD4, AD9.**
+Status: **specified; decisions accepted by standing instruction. Built: AD1 (#491); AD6, AD7, AD8 and the server halves of AD10 to AD13 (#492); AD3 and the MCP halves of AD10 to AD13 (begin_run in the seat profiles, close_status on complete_claim, grouped list_notifications, list_spaces, list_projects and list_fleet_seats). Next: AD2, then AD5, AD4, AD9.**
 Evidence: [reports/agent-day-2026-11-26.md](reports/agent-day-2026-11-26.md).
 Finding IDs such as `DAY-3` refer to that report. Requirement IDs begin `AD`.
 Decision IDs continue the in-use specification's, from D29.
