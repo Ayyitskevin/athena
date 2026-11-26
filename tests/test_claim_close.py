@@ -56,6 +56,11 @@ def test_close_status_releases_and_closes_in_one_call(tmp_path):
         assert answer["close"] == {"status": "done", "applied": True}
         assert answer["issue_status"] == "done"
         assert answer["issue_still_open"] is False
+        # The answer carries the closed issue's tag for the next guarded write.
+        assert (
+            done.headers["ETag"]
+            == client.get(f"/issues/{issue_id}", headers=bearer(sol)).headers["ETag"]
+        )
         issue = client.get(f"/issues/{issue_id}", headers=bearer(sol)).json()
         assert issue["status"] == "done"
 

@@ -1799,9 +1799,15 @@ def complete_issue_claim(
         return issue_command_error_response(exc)
     response.headers.update(PRIVATE_LEASE_HEADERS)
     if close_status is not None:
-        return claim_close_commands.close_after_release(
+        closed = claim_close_commands.close_after_release(
             conn, actor=actor, issue_id=issue_id, status=close_status, released=released
         )
+        # The close (when it applied) changed the issue, so the answer carries
+        # its current tag for the next guarded write (C9).
+        current = issues.get_issue(conn, issue_id)
+        if current is not None:
+            response.headers["ETag"] = issue_etags.current_etag(conn, current)
+        return closed
     return released
 
 
