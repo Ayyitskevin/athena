@@ -271,8 +271,8 @@ def test_queue_is_one_new_read_and_completion_keeps_its_authority():
     }
     name = "get_project_review_queue"
     # F9: list_eligible_accounts; F10: get_issue_prior_text; A11: get_idempotency_key;
-    # H6: get_issue_comment
-    assert len(tools) == 146
+    # H6: get_issue_comment; decision 8: assign_issue_to_seat
+    assert len(tools) == 147
     assert mcp_server.TOOL_SCOPES[name] == mcp_server.READ_ONLY
     assert mcp_server.TOOL_SCOPES["complete_claim"] == "issue:write"
     assert name in mcp_server.PROFILES["conductor"]

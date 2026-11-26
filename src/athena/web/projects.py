@@ -826,7 +826,7 @@ def project_sprints(
     request: Request, project_id: int, conn: sqlite3.Connection = Depends(get_conn)
 ):
     """A project's sprints — open read, like the issue list. The create form and the
-    start/complete/delete controls render only for the project creator."""
+    edit/start/complete/delete controls render only for the project creator."""
     user = getattr(request.state, "user", None)
     project = projects.get_project(conn, project_id)
     # A private project the viewer can't see is a 404, like a missing one.
@@ -935,6 +935,52 @@ def complete_sprint_web(
     except sprints.SprintStateError as exc:
         return BrowserRefusal(
             f'<div class="error">{html.escape(str(exc))}</div>', status_code=409
+        )
+    except sprint_commands.SprintCommandError as exc:
+        if exc.kind != "not_found":
+            return _sprint_refusal(exc)
+        # Vanished past the authorization gate — land back on the list, which 404s.
+    return RedirectResponse(
+        f"/aegis/projects/{sprint['project_id']}/sprints", status_code=303
+    )
+
+
+@router.post("/aegis/sprints/{sprint_id}/edit", dependencies=[Depends(verify_csrf)])
+def edit_sprint_web(
+    request: Request,
+    sprint_id: int,
+    name: str = Form(""),
+    goal: str = Form(""),
+    start_date: str = Form(""),
+    end_date: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Edit a sprint's name, goal and dates. The form sends all four, as the
+    list shows them; an empty date clears it. The command owns the write and
+    its 'sprint_edited' event, records nothing for an edit that changes
+    nothing, and re-checks the gate above inside its transaction."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _sprints_signin()
+    sprint, err = _authorize_sprint_write(conn, sprint_id, user)
+    if err is not None:
+        return err
+    name = name.strip()
+    if not name:
+        return BrowserRefusal(
+            '<div class="error">Sprint name is required.</div>', status_code=400
+        )
+    try:
+        sprint_commands.update_sprint(
+            conn,
+            actor=user,
+            sprint_id=sprint_id,
+            fields={
+                "name": name,
+                "goal": goal.strip(),
+                "start_date": start_date.strip() or None,
+                "end_date": end_date.strip() or None,
+            },
         )
     except sprint_commands.SprintCommandError as exc:
         if exc.kind != "not_found":

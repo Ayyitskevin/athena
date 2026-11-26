@@ -39,6 +39,7 @@ from athena.aegis import notification_state_api as aegis_notification_state_api
 from athena.aegis import automation_api as aegis_automation_api
 from athena.aegis import delegations_api as aegis_delegations_api
 from athena.aegis import desk_api as aegis_desk_api
+from athena.workflows import fleet_assign_api as workflows_fleet_assign_api
 from athena.workflows import playbook_api as workflows_playbook_api
 from athena.workflows import workspace_search_api as workflows_workspace_search_api
 from athena.aegis import dispatch_api as aegis_dispatch_api
@@ -989,6 +990,7 @@ def create_app(
     app.include_router(answerability_api.router)
     app.include_router(aegis_desk_api.router)
     app.include_router(workflows_playbook_api.router)
+    app.include_router(workflows_fleet_assign_api.router)
     # Before search_api: both live under /search, and the workspace route is the
     # more specific path. Registration order does not decide the match here (the
     # paths are distinct), but keeping the composed route adjacent to its layer's

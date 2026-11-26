@@ -2,7 +2,7 @@
 
 Date: 2026-11-22. Review baseline: `0b42d40` (`main` after Waves 0, 0b, 1 and 2
 of [the agentic-use specification](AGENTIC_USE_SPEC_ATHENA.md)).
-Status: **decisions accepted by standing instruction, and the owner's open ones by delegation on 2026-11-26; Waves 3 to 9 built; Wave 10 builds those decisions (Next step).**
+Status: **decisions accepted by standing instruction, and the owner's open ones by delegation on 2026-11-26; Waves 3 to 10 built; three questions need the owner's facts (Next step).**
 Evidence: [reports/repo-review-2026-11-22-round2.md](reports/repo-review-2026-11-22-round2.md).
 Finding IDs such as `FLEET-4`, `OPS-5`, `PERF-1` and `COCKPIT-2` refer to that
 report. Requirement IDs that begin A, B or C are carried from the first
@@ -158,11 +158,15 @@ each.
 **Next step.** Waves 3 to 9 are built. On 2026-11-26 the owner delegated the
 open decisions to the lead; they are recorded in
 [decisions/2026-11-26-owner-decisions.md](../decisions/2026-11-26-owner-decisions.md),
-and their builds are Wave 10: the idle sort that H5 left, the three missing
-twins the parity gate names, the operator CLI, demo and smoke script acting as
-the account they record (the next command-debt payment), assignment refusing an
-account that cannot see the issue's project, and an administrator's audited
-removal of a kept prior text. B11 stays blocked on D9. Each requirement that removes calls lowers the fleet trial's ceilings
+and their builds are Wave 10, built: the idle sort that H5 left (a stored
+key, migration 0096), the three missing twins the parity gate named (assign to
+a seat over REST and MCP, resume a claim handoff in the palette, edit a sprint
+in the cockpit), the token commands acting as the account their callers record
+(`bare_actor_id` 37 to 35), assignment refusing an account that cannot see the
+issue's project, and an administrator's audited removal of a kept prior text
+(migration 0095). What is left needs facts only the owner has: what "Astra"
+names, whether `AGENTS.md`'s fallback rules match the machine handbook, and an
+operated instance for D9, which keeps B11 blocked. Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
 
 **How work is done here.** One requirement, one commit, with the test that
@@ -288,7 +292,7 @@ Found and not fixed:
 - **U11.** Forms beyond the first tier still answer a refusal in the page
   shell without the typed values.
 - **U12.** The board and the inbox do not refresh themselves.
-- **C10's three missing twins** remain, as above.
+- **C10's three missing twins** remained, as above; built in Wave 10.
 
 ### Wave 9 results (second lanes)
 

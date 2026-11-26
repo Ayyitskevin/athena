@@ -37,6 +37,7 @@ from support import fill_desk_lanes
 from athena import config
 from athena.aegis import desk as desk_lanes
 from athena.aegis import issue_drafts
+from athena.core import buzz_radio
 from athena.main import create_app
 from athena.mcp import results
 from athena.mcp import server as mcp_server
@@ -166,6 +167,16 @@ def _seed(admin: TestClient) -> dict[str, Any]:
         )
     )
     review = issue("review the build", "review it")
+    # A slice the seat hands to the declared seat Ray (assign_issue_to_seat).
+    seated = issue("a slice for a seat", "short")
+    ok(admin.post(f"/issues/{seated['id']}/delegate", json={"user_id": sol}), 201)
+    ok(
+        admin.post(
+            "/fleet/seats",
+            json={"slug": "ray", "name": "Ray", "email": "ray@e.com"},
+        ),
+        201,
+    )
     for agent in (sol, ray):
         ok(admin.post(f"/issues/{review['id']}/delegate", json={"user_id": agent}), 201)
 
@@ -197,6 +208,7 @@ def _seed(admin: TestClient) -> dict[str, Any]:
         "label": label,
         "candidate_id": submitted["candidate_submission"]["candidate_id"],
         "review": review,
+        "seated": seated,
         "space": space,
         "big_page": big_page,
         "rewritten": rewritten,
@@ -289,6 +301,10 @@ def _plan(world: dict[str, Any], admin: TestClient) -> list[Step]:
             lambda s: {"issue_id": world["small"]["id"], "agent_user_id": world["ray"]},
         ),
         (
+            "assign_issue_to_seat",
+            lambda s: {"issue_id": world["seated"]["id"], "seat_slug": "ray"},
+        ),
+        (
             "request_candidate_review",
             lambda s: {
                 "review_issue_id": world["review"]["id"],
@@ -356,6 +372,12 @@ def _play_every_tool(tmp_path, monkeypatch, *, maxima: bool, clock=None):
     workspace: the size of each answer, and the answer itself. With ``maxima``
     the seat's desk also has every lane at its declared maximum."""
     monkeypatch.setattr(config, "TOKEN_RATE_LIMIT_PER_MINUTE", 0)
+    # assign_issue_to_seat radios the seat: answered here, never sent.
+    monkeypatch.setattr(
+        buzz_radio,
+        "send_assignment",
+        lambda **kwargs: {"status": "skipped", "detail": "radio not configured"},
+    )
     db_file = tmp_path / "budget.db"
     app = create_app(db_file)
     with TestClient(app) as admin:

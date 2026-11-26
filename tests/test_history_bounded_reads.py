@@ -122,6 +122,11 @@ FLEET_STATISTICS = {
     ("issues", "idx_issues_archived"): "10000 371",
     ("issues", "idx_issues_project"): "10000 1429",
     ("issues", "idx_issues_assignee"): "10000 1429",
+    # The idle sort's indexes (0096), measured on the same seeded workspace
+    # after the migration: they too hold archived_at, so a statement that asks
+    # for archived issues chooses between them and idx_issues_archived.
+    ("issues", "idx_issues_idle"): "10000 304 154 1",
+    ("issues", "idx_issues_closed_idle"): "10000 304 152 77 1",
 }
 
 

@@ -81,18 +81,6 @@ conductor agent needs to place its slices in rooms for workers to filter on.
 """
 
 [[row]]
-kind = "missing-twin"
-cockpit = ["workflows.fleet_assign_commands.assign_issue_to_seat"]
-reason = """
-Assigning an issue to a declared fleet seat by its roster slug, and radioing the
-seat over Buzz, is cockpit-only (Admin > Fleet assign, and a chair on the
-floor). REST has the two writes underneath (PATCH /issues/{id} assignee_id and
-the delegate route), but not the seat lookup or the radio, so a conductor agent
-handing a slice to a seat must already know the account id and cannot wake it.
-The C10 review found an admin-scope token answered 401 or 404 here.
-"""
-
-[[row]]
 kind = "elsewhere"
 cockpit = ["core.approval_commands.open_request"]
 reason = """
@@ -212,16 +200,6 @@ ordinary contributor command.
 """
 
 [[row]]
-kind = "missing-twin"
-api = ["aegis.lease_commands.resume_claim_handoff"]
-reason = """
-The cockpit can claim an issue and yield it with a handoff (the palette), but
-cannot resume one. An operator who takes over an issue with an open handoff
-cannot acknowledge the context in the browser, and their own yield with a
-handoff is then refused until the handoff is resumed over REST.
-"""
-
-[[row]]
 kind = "by-design"
 api = ["aegis.lease_lapse_commands.observe_lapses"]
 reason = """
@@ -247,15 +225,6 @@ reason = """
 Asking a named reviewer to review an exact candidate is a conductor step
 (docs/REVIEW_REQUEST_SPEC.md, docs/CONDUCTOR_RECIPE.md), exposed as a conductor
 and full-profile tool. The cockpit shows the request in the inbox.
-"""
-
-[[row]]
-kind = "missing-twin"
-api = ["aegis.sprint_commands.update_sprint"]
-reason = """
-The cockpit creates, starts, completes and deletes sprints but cannot edit one,
-so an operator who mistypes a sprint's name, goal or dates has to leave the
-browser for PATCH /sprints/{id}.
 """
 
 [[row]]

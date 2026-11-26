@@ -38,6 +38,31 @@
             <td class="muted">{{ counts[s.id] }}</td>
             {% if can_manage %}
             <td class="muted sprint-actions">
+                <details>
+                    <summary>Edit</summary>
+                    <form method="post" action="/aegis/sprints/{{ s.id }}/edit" class="issue-form">
+                        {% include "partials/csrf.html" %}
+                        <div class="form-group">
+                            <label for="sprint-{{ s.id }}-name">Name</label>
+                            <input type="text" id="sprint-{{ s.id }}-name" name="name" value="{{ s.name }}" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="sprint-{{ s.id }}-goal">Goal</label>
+                            <input type="text" id="sprint-{{ s.id }}-goal" name="goal" value="{{ s.goal or '' }}">
+                        </div>
+                        <div class="form-group">
+                            <label for="sprint-{{ s.id }}-start">Start date</label>
+                            <input type="date" id="sprint-{{ s.id }}-start" name="start_date" value="{{ s.start_date or '' }}">
+                        </div>
+                        <div class="form-group">
+                            <label for="sprint-{{ s.id }}-end">End date</label>
+                            <input type="date" id="sprint-{{ s.id }}-end" name="end_date" value="{{ s.end_date or '' }}">
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="button secondary small">Save</button>
+                        </div>
+                    </form>
+                </details>
                 {% if s.state == "planned" %}
                 <form method="post" action="/aegis/sprints/{{ s.id }}/start" class="inline-form">
                     {% include "partials/csrf.html" %}

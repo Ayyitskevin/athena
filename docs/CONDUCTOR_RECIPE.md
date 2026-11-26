@@ -27,8 +27,8 @@ Give the conductor member credentials with `read` and `issue:write`, and set
 `POST /users/onboard_agent` and `"profile": "conductor"`, and the printed config
 names it. This selects the 28
 `seat` tools plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`,
-`get_issue_prior_text`, `assign_issue`, `delegate_issue`, `list_eligible_accounts`, `request_candidate_review`, `set_issue_parent`,
-`list_subtasks`, and `link_issues`: 41 tools before scope filtering. `docs:write` is optional for this
+`get_issue_prior_text`, `assign_issue`, `assign_issue_to_seat`, `delegate_issue`, `list_eligible_accounts`, `request_candidate_review`, `set_issue_parent`,
+`list_subtasks`, and `link_issues`: 42 tools before scope filtering. `docs:write` is optional for this
 issue-only loop; page tools remain in `seat+knowledge` or `full`. The default remains
 `full`. Profiles never grant permission, and REST still enforces access.
 
@@ -40,7 +40,15 @@ and `delegate_issue` every listed one with `is_agent: true`; an account that
 cannot see the issue is not listed and both writes refuse it, so put it in the
 project before you hand it work. `assign_issue` answers an ID that is missing,
 removed or blind to the project alike, and `delegate_issue` also answers a
-non-agent the same way. With the IDs supplied, skip the read. Administrative
+non-agent the same way. With the IDs supplied, skip the read. To hand a slice
+to a declared fleet seat by its roster slug instead, call
+`assign_issue_to_seat(issue_id=slice_id, seat_slug=..., note=...)`
+(`POST /issues/{id}/assign-seat`): it delegates the slice to the seat's agent
+account and makes it the assignee in one write, then radios the seat over Buzz
+with the note. A radio that fails or is not configured never undoes the
+assignment; `radio` and `receipt` in the answer say what it did. The seat's
+agent must be able to see the slice's project, or the call is refused as an
+unknown account is. Administrative
 approvals, worker controls, budgets, fleet health and dispatch remain in their
 authorized surfaces. See [RUNTIME_RECIPE.md](RUNTIME_RECIPE.md) for runtime wiring
 and [AGENT_BOOT.md](AGENT_BOOT.md) for profile and boot details.

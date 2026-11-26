@@ -558,6 +558,25 @@ class AthenaClient:
             idempotency_key=idempotency_key,
         )
 
+    def assign_issue_to_seat(
+        self,
+        issue_id: int,
+        seat_slug: str,
+        *,
+        note: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Hand an issue to a declared fleet seat by slug and radio the seat."""
+        body: dict[str, Any] = {"seat_slug": seat_slug}
+        if note:
+            body["note"] = note
+        return self._mutate(
+            self._client.post,
+            f"/issues/{issue_id}/assign-seat",
+            json=body,
+            idempotency_key=idempotency_key,
+        )
+
     def request_candidate_review(
         self,
         review_issue_id: int,

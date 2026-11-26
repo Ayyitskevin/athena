@@ -46,9 +46,13 @@ hunting for. A field with a quoted **value** is unaffected, since that colon is
 outside the quotes: `assignee:"Ada Lovelace"` is still an assignee filter.
 
 `is:open` and `is:closed` are **category-based**, not name-based. A project whose
-done state is called `shipped` behaves correctly, because the query resolves
-through the same status-category expression the fleet views use — there is one
-definition of "closed" in Athena, and this is not a second one.
+done state is called `shipped` behaves correctly, because the query reads the
+verdict of the same status-category expression the fleet views use — there is one
+definition of "closed" in Athena, and this is not a second one. The verdict is
+stored on the issue (`issues.status_closed`, migration 0096) by triggers that run
+whenever an issue's status or project, or its project's statuses, change, so the
+idle sort's index can lead with it; a test pins the stored copy to the
+expression.
 
 ## Idle, age and claims
 
@@ -75,13 +79,20 @@ the claimable work, longest-waiting first.
 Every time-relative atom in one query is measured against one clock, taken when
 the query is compiled.
 
-**Cost.** `idle:` and `sort:idle-desc` add one correlated subquery per issue the
-rest of the query keeps. It reads that issue's own trail through
-`idx_activity_target (target_kind, target_id, id)`, never the whole activity
-table; a test pins the query plan.
-- Rows: work is bounded by the page `limit`.
-- Count: the count endpoint pays it for every issue that passes the other atoms,
-  so put cheap atoms (`is:open`, `project:`) beside `idle:` on a large board.
+**Cost.** The last work time is stored on the issue (`issues.last_work_at`,
+migration 0096): a trigger keeps it equal to the newest native work event on the
+issue's trail in the same statement that writes, edits or removes the event, so
+a query reads a column and never the trail. Two indexes order issues by the idle
+measure, one of them after open/closed, so `sort:idle-desc` and `is:open
+sort:idle-desc` (or `is:closed`) read the page off an index: about 4,700 SQLite
+steps for 50 rows at 1,000, 10,000 and 50,000 issues alike, where it was 8.0 M
+at 50,000. `idle:` beside `sort:idle-desc` is a range of the same index. Tests
+pin the plans, with and without statistics, and the stored value against the
+trail.
+- `idle:` with another sort reads the stored column of each issue the sort walks
+  past, which is linear in the issues that do not match, at about a twentieth of
+  the cost of reading each one's trail.
+- `is:archived sort:idle-desc` sorts the archived issues it matches.
 
 `is:claimed` is one primary-key lookup in `issue_leases`. `age:` is a column
 comparison.
