@@ -309,7 +309,7 @@ def test_an_edit_that_never_had_an_inverse_does_not_end_the_offer(tmp_path):
         edit_event = events(db_file, "issue_edited")[0]["id"]
     conn = db.connect(db_file)
     try:
-        conn.execute("DROP TRIGGER issue_prior_texts_immutable_delete")
+        conn.execute("DROP TRIGGER issue_prior_texts_delete_requires_removal_event")
         conn.execute("DELETE FROM issue_prior_texts")
         conn.commit()
     finally:
