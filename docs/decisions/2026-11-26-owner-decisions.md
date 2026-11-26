@@ -49,17 +49,23 @@ page are kept on a watch list, each with the evidence that would park it at the
 succeeds and answers with that account's name, which the eligible-accounts read
 (D19) deliberately does not list. Assigning work to someone who cannot read it is
 never useful, and the answer discloses a name. The refusal names no account: it is
-the same answer an unknown account gets. To be built.
+the same answer an unknown account gets. Delegation and a contributor add apply
+the same rule, so the eligible-accounts list and every write that takes an account
+are one rule (`issue_commands._eligible_target`; `tests/test_eligible_accounts.py`).
 
 **6. An administrator can remove a kept prior text.** F10 keeps what an edit
 replaced, so editing a secret out of an issue no longer removes it. An admin-only,
 audited removal of one prior version answers that: the trail records who removed
-which version and when, never its text. To be built.
+which version and when, never its text. Built as
+`DELETE /issues/{issue_id}/prior-texts/{event_id}` (`aegis/prior_text_commands.py`,
+migration 0096; `tests/test_prior_text_removal.py`); REST only, since the cockpit
+never shows a prior text and erasing record is not an agent's act.
 
 **7. The operator CLI, demo and smoke script act as the account they record.** The
 next command-debt payment needs these entry points to resolve an actor rather than
 pass a bare id; each keeps acting as the account it records today, so nothing they
-write changes owner. To be built, lowering the `bare_actor_id` ceiling.
+write changes owner. Built: `token_commands.mint_token` and `revoke_token` take the
+resolved account and re-read it under their lock, and the ceiling is 35.
 
 **8. The three missing twins are built.** Assigning to a fleet seat over REST,
 resuming a claim handoff in the cockpit, and editing a sprint in the cockpit; each

@@ -297,12 +297,12 @@ def test_prior_text_rows_are_append_only_and_native_only(tmp_path):
         event_id = _edits(client, issue_id)[0]["id"]
     conn = db.connect(db_file)
     try:
-        for statement in (
-            "UPDATE issue_prior_texts SET prior_title = 'forged'",
-            "DELETE FROM issue_prior_texts",
-        ):
-            with pytest.raises(sqlite3.IntegrityError, match="append-only"):
-                conn.execute(statement)
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute("UPDATE issue_prior_texts SET prior_title = 'forged'")
+        # A delete needs its removal event on the trail first (migration 0096;
+        # tests/test_prior_text_removal.py).
+        with pytest.raises(sqlite3.IntegrityError, match="removal event"):
+            conn.execute("DELETE FROM issue_prior_texts")
         # A row for an event that is not this issue's native edit is refused.
         created = conn.execute(
             "SELECT id FROM activity WHERE verb = 'created' AND target_id = ?",
@@ -412,7 +412,7 @@ def test_undo_of_an_edit_recorded_without_prior_text_refuses(tmp_path):
         edit = _edits(client, issue_id)[0]
     conn = db.connect(db_file)
     try:
-        conn.execute("DROP TRIGGER issue_prior_texts_immutable_delete")
+        conn.execute("DROP TRIGGER issue_prior_texts_delete_requires_removal_event")
         conn.execute("DELETE FROM issue_prior_texts")
         conn.commit()
     finally:

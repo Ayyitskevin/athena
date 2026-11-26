@@ -102,7 +102,16 @@ edit changed must still hold the text the edit left, or `undo_no_effect` (409)
 and nothing is written, so an undo never overwrites a later edit with older text.
 A later edit of the other field, or of status or anything else, does not block
 it. An edit recorded before the table, which has no row, is `undo_not_reversible`
-(422). The restore runs through `issue_commands.restore_issue_text` as the undoing
+(422), and so is an edit whose kept text an administrator removed.
+
+Keeping the replaced text means editing a secret out of an issue does not remove
+it. An administrator with an admin-scope credential can:
+`DELETE /issues/{issue_id}/prior-texts/{event_id}` removes that edit's kept text
+and records `issue_prior_text_removed`, whose detail names the edit
+(`edit <event_id>`) and never the text. The issue's current text and the edit's
+own event are untouched; anyone else is refused 403, and an edit with no kept
+text reads 404. Migration 0096's trigger refuses any delete of a kept text that
+does not already have its removal event on the trail. The restore runs through `issue_commands.restore_issue_text` as the undoing
 actor, which re-checks the digests under the write lock; that check is the
 precondition, so a bearer-token caller undoing an edit sends no `If-Match`. The
 reversal is an ordinary `issue_edited` with its own prior text, so undoing it is

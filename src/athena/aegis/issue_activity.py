@@ -203,6 +203,14 @@ def prior_text_for_event(conn: sqlite3.Connection, event_id: int) -> dict | None
     return fact
 
 
+def delete_prior_text(conn: sqlite3.Connection, event_id: int) -> None:
+    """Delete one kept prior text. The only DELETE of ``issue_prior_texts``;
+    migration 0096's trigger refuses it unless the removal event naming this
+    edit is already on the trail, so call it only from
+    ``prior_text_commands.remove_prior_text``, inside its transaction."""
+    conn.execute("DELETE FROM issue_prior_texts WHERE event_id = ?", (event_id,))
+
+
 class _ScopeKwargs(TypedDict, total=False):
     """The one optional kwarg this module forwards to ``activity.record``.
 
