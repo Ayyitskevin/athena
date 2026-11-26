@@ -213,6 +213,8 @@ NOT_PEER_WRITTEN: dict[str, tuple[str, str]] = {
     "desk:.schema": (ID, "the desk's contract version"),
     "desk:.identity.name": (NAME, "the reader's own display name"),
     "desk:.identity.email": (ID, "the reader's own login email"),
+    "desk:.identity.last_run.run_id": (ID, "the reader's own newest run id"),
+    "desk:.identity.last_run.last_write_at": (ID, "a timestamp the server wrote"),
     "desk:.identity.role": (CLOSED, "the reader's role (admin, member, viewer)"),
     "desk:.identity.approval_required": (
         CLOSED,
