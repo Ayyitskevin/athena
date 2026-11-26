@@ -44,7 +44,7 @@ from datetime import UTC, datetime, timedelta
 import sqlite3
 from typing import Literal
 
-from athena.aegis import ready_queue, work_progress
+from athena.aegis import leases, ready_queue, work_progress
 from athena.core import access, clock
 
 #: A run that recorded real work within this window is moving. Thirty minutes is
@@ -307,6 +307,7 @@ def open_questions(
     *,
     actor: dict | None,
     asked_by: int | None = None,
+    answerable_by: int | None = None,
     now: datetime | None = None,
     limit: int = LANE_LIMIT,
     with_answers: bool = False,
@@ -325,11 +326,29 @@ def open_questions(
     claim answers nothing here, and a ``blocked`` yield is never marked: its
     question is about the work, not a reply the agent awaits. An answered
     question is still open (only a resume closes it), but it waits on the agent,
-    not on the operator. Off by default, so the desk's answer is unchanged."""
+    not on the operator. Off by default, so the desk's answer is unchanged.
+
+    ``answerable_by`` is the other side of a desk (AD5, D30): questions asked by
+    someone else on issues that account created, delegated or is assigned to,
+    the accounts that can answer them."""
     current = _now(now)
     vis_sql, vis_params = ("", []) if actor is None else _visibility(conn, actor)
     asker_sql = "" if asked_by is None else " AND ye.actor_id = ?"
     asker_params: list[object] = [] if asked_by is None else [asked_by]
+    if answerable_by is not None:
+        asker_sql += (
+            " AND ye.actor_id != ? AND (i.created_by = ? OR i.assignee_id = ? "
+            "OR EXISTS (SELECT 1 FROM issue_contributors ic "
+            "WHERE ic.issue_id = h.issue_id AND ic.added_by = ?))"
+        )
+        asker_params += [answerable_by] * 4
+        # A question on an issue the reader holds is a handoff it resumes, and
+        # the desk lists that under asks.claim_handoffs already.
+        asker_sql += (
+            " AND NOT EXISTS (SELECT 1 FROM issue_leases hl "
+            "WHERE hl.issue_id = h.issue_id AND hl.holder_id = ? AND hl.expires_at > ?)"
+        )
+        asker_params += [answerable_by, leases.clock_stamp(current)]
     base = (
         "FROM issue_claim_handoffs h "
         "JOIN activity ye ON ye.id = h.yield_event_id "

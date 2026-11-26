@@ -417,6 +417,9 @@ class _Plan:
     lists: dict[Path, int]  # rows kept, per list
     texts: dict[Path, int]  # characters kept, per long text outside a row
     cap: int | None = None  # characters kept by every text inside a row
+    # Lists kept WHOLE: their rows' texts are never capped either, so a list
+    # declared whole (the desk's identity scopes) reads exactly as sent.
+    whole: frozenset[Path] = frozenset()
 
 
 def _places(
@@ -468,20 +471,26 @@ def dotted(path: Path) -> str:
     return ".".join(str(step) for step in path)
 
 
-def _build(value: Any, path: Path, plan: _Plan, in_row: bool) -> Any:
+def _build(
+    value: Any, path: Path, plan: _Plan, in_row: bool, exempt: bool = False
+) -> Any:
     if isinstance(value, dict):
         return {
             key: inner
             if key == TRUNCATED_KEY
-            else _build(inner, (*path, key), plan, in_row)
+            else _build(inner, (*path, key), plan, in_row, exempt)
             for key, inner in value.items()
         }
     if isinstance(value, list):
         rows = value[: plan.lists.get(path, len(value))]
+        whole = exempt or path in plan.whole
         return [
-            _build(row, (*path, index), plan, True) for index, row in enumerate(rows)
+            _build(row, (*path, index), plan, True, whole)
+            for index, row in enumerate(rows)
         ]
     if isinstance(value, str):
+        if in_row and exempt:
+            return value
         if in_row:
             kept = len(value) if plan.cap is None else min(len(value), plan.cap)
         else:
@@ -545,7 +554,7 @@ def _render_plan(
                 parent = _get(fitted, path[:-1])
                 if isinstance(parent, dict):
                     _flag_cut_list(parent, str(path[-1]), kept)
-            if plan.cap is not None and not _nested(path):
+            if plan.cap is not None and not _nested(path) and path not in plan.whole:
                 first = _first_capped(whole[:kept], plan.cap)
                 if first is not None:
                     marks[f"{dotted(path)}[*]"] = {
@@ -616,6 +625,7 @@ def shrink(
     plan = _Plan(
         lists={path: len(v) for path, v in places if isinstance(v, list)},
         texts={path: len(v) for path, v in places if isinstance(v, str)},
+        whole=frozenset(path for path, rows in floors.items() if rows >= WHOLE),
     )
 
     def fits() -> bool:

@@ -239,6 +239,14 @@ NOT_PEER_WRITTEN: dict[str, tuple[str, str]] = {
         "the server's liveness classification",
     ),
     "desk:.asks.claim_handoffs.meaning": (SERVER, "fixed lane text"),
+    "desk:.asks.questions.items[].asked_by.name": (
+        NAME,
+        "the display name of the asker; the question carries authored_by",
+    ),
+    "desk:.asks.questions.items[].next.tool": (
+        SERVER,
+        "the tool that answers it, comment_on_issue, written by the desk",
+    ),
     "desk:.asks.claim_handoffs.items[].replies[].author.name": (
         NAME,
         "the display name of the reply's author; the reply carries authored_by",

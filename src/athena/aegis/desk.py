@@ -68,6 +68,7 @@ CONTROLS_LIMIT = 20
 DELEGATIONS_LIMIT = 20
 LEASES_LIMIT = 20
 HANDOFFS_LIMIT = 20
+QUESTIONS_LIMIT = 5
 WORKER_STOPS_LIMIT = 50
 NOTIFICATIONS_LIMIT = 10
 
@@ -366,6 +367,9 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
                 "clipped": handoffs["clipped"],
                 "meaning": CLAIM_HANDOFFS_MEANING,
             },
+            # Questions you can answer (AD5): another account's open blocking
+            # question on an issue you created, delegated or are assigned to.
+            "questions": _questions_for_me(conn, actor=actor, now=lease_now),
         },
         "work": {
             "protocol": dict(WORK_PROTOCOL),
@@ -438,6 +442,31 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
     return desk
 
 
+def _questions_for_me(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict:
+    """Open blocking questions another account asked on an issue this actor
+    created, delegated or is assigned to (AD5, D30), oldest first: the
+    accounts that can answer one. Each names the call that answers it; the
+    asker resumes its handoff once it has read the answer."""
+    lane = run_state.open_questions(
+        conn,
+        actor=actor,
+        answerable_by=int(actor["id"]),
+        now=now,
+        limit=QUESTIONS_LIMIT,
+    )
+    for item in lane["items"]:
+        item["next"] = {
+            "tool": "comment_on_issue",
+            "arguments": {"issue_id": item["issue"]["id"]},
+        }
+    return {
+        "items": lane["items"],
+        "total": lane["total"],
+        "limit": QUESTIONS_LIMIT,
+        "clipped": lane["clipped"],
+    }
+
+
 def _mark_authors(conn: sqlite3.Connection, desk: dict, actor: dict) -> None:
     """Give every desk object that holds another account's words its
     ``authored_by`` (core/authorship.py), as this actor may see it: each issue
@@ -455,6 +484,8 @@ def _mark_authors(conn: sqlite3.Connection, desk: dict, actor: dict) -> None:
     issue_refs.extend(item["issue"] for item in waiting["items"] if "issue" in item)
     issue_refs.extend(item["issue"] for item in waiting["not_offered"]["items"])
     issue_refs.extend(item["issue"] for item in work["waiting_on"]["items"])
+    asked_of_me = desk["asks"]["questions"]["items"]
+    issue_refs.extend(item["issue"] for item in asked_of_me)
     for overlap in office_lane["fence_overlaps"]:
         issue_refs.extend((overlap["your_issue"], overlap["issue"]))
     seats = [office_lane[key] for key in ("chair", "next_to_sit") if office_lane[key]]
@@ -470,6 +501,7 @@ def _mark_authors(conn: sqlite3.Connection, desk: dict, actor: dict) -> None:
     for seat in seats:
         seat[authorship.KEY] = authors[seat["issue_id"]]
     questions = [item for item in waiting["items"] if item["kind"] == "question"]
+    questions += asked_of_me
     askers = authorship.accounts(conn, (item["asked_by"]["id"] for item in questions))
     for item in questions:
         item[authorship.KEY] = askers.get(item["asked_by"]["id"])
