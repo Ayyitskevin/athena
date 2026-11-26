@@ -130,7 +130,9 @@ def account_is_eligible(target: dict | None, *, delegation: bool) -> bool:
     An account that does not exist, or that was removed, is refused: removal
     hides an account from every list, picker and lookup, so a write must not
     find it either (F9). Assignment then takes any account; delegation takes an
-    agent. Paused accounts are taken, as they always were.
+    agent. Paused accounts are taken, as they always were. The commands also
+    refuse an account that cannot see the issue's project
+    (:func:`_eligible_target`).
     :func:`eligible_accounts` lists only accounts this rule takes.
     """
     if target is None or target.get("removed_at"):
@@ -139,11 +141,23 @@ def account_is_eligible(target: dict | None, *, delegation: bool) -> bool:
 
 
 def _eligible_target(
-    conn: sqlite3.Connection, user_id: int, *, delegation: bool
+    conn: sqlite3.Connection,
+    user_id: int,
+    *,
+    delegation: bool,
+    project_id: int | None,
 ) -> dict:
-    """The target account, or the command's one refusal for it."""
+    """The target account, or the command's one refusal for it.
+
+    An account that cannot see the issue's project is refused with the same
+    answer as one that does not exist (decided 2026-11-26): work handed to
+    someone who cannot read it is never useful, and naming them in the answer
+    would disclose an account :func:`eligible_accounts` deliberately omits.
+    """
     target = users.get_user(conn, user_id)
-    if not account_is_eligible(target, delegation=delegation):
+    if not account_is_eligible(
+        target, delegation=delegation
+    ) or not access.can_see_project_or_backlog(conn, target, project_id):
         raise IssueCommandError(
             "invalid",
             NO_DELEGATION_TARGET_DETAIL if delegation else NO_ASSIGNMENT_TARGET_DETAIL,
@@ -176,9 +190,9 @@ def eligible_accounts(
     exactly like a missing one); then the caller must hold a write role. A row
     is an account :func:`account_is_eligible` takes for assignment (so never a
     removed one) and that can see the issue's project. Every listed account is
-    therefore accepted by assignment, and every listed agent by delegation; the
-    commands also accept an account that cannot see the issue, which this list
-    does not show. Paused accounts are listed, with no pause state.
+    therefore accepted by assignment, and every listed agent by delegation, and
+    the commands refuse every account this list omits. Paused accounts are
+    listed, with no pause state.
     """
     if actor is None:
         raise IssueCommandError("unauthorized", "authentication required")
@@ -823,7 +837,12 @@ def _update_issue(
 
         assignee_value = _nullable_int_value("assignee_id", assignee_id)
         if assignee_id is not UNSET and assignee_value is not None:
-            _eligible_target(conn, assignee_value, delegation=False)
+            _eligible_target(
+                conn,
+                assignee_value,
+                delegation=False,
+                project_id=final_project_id,
+            )
 
         title_value = _string_value("title", title)
         normalized_title = title_value.strip() if title_value is not None else None
@@ -1226,13 +1245,18 @@ def _add_contributor(
 ) -> tuple[list[dict], bool]:
     """The shared contributor write. Returns ``(contributors, changed)``."""
     with db.transaction(conn, immediate=True):
-        resolved, _ = _resolve_write_actor(
+        resolved, issue = _resolve_write_actor(
             conn, actor, issue_id, enforce_actor_policy=enforce_actor_policy
         )
         # Delegation (require_agent) and a plain contributor add apply the
-        # commands' one target rule; delegation answers a missing and a non-agent
-        # account alike.
-        _eligible_target(conn, user_id, delegation=require_agent)
+        # commands' one target rule; delegation answers a missing, a non-agent
+        # and a blind account alike.
+        _eligible_target(
+            conn,
+            user_id,
+            delegation=require_agent,
+            project_id=issue["project_id"],
+        )
         changed = contributors_data.add_contributor(
             conn, issue_id, user_id, resolved["id"], commit=False
         )

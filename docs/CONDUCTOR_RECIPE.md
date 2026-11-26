@@ -37,9 +37,10 @@ This member profile has no admin user directory. To find an account's ID, read
 that issue, as `accounts` of `{id, name, is_agent}` (pass `next_cursor` back as
 `cursor` while `has_more` is true). `assign_issue` takes every listed account
 and `delegate_issue` every listed one with `is_agent: true`; an account that
-cannot see the issue is not listed, so put it in the project before you hand it
-work. `delegate_issue` answers an ID that is missing, removed or not an agent
-alike. With the IDs supplied, skip the read. Administrative
+cannot see the issue is not listed and both writes refuse it, so put it in the
+project before you hand it work. `assign_issue` answers an ID that is missing,
+removed or blind to the project alike, and `delegate_issue` also answers a
+non-agent the same way. With the IDs supplied, skip the read. Administrative
 approvals, worker controls, budgets, fleet health and dispatch remain in their
 authorized surfaces. See [RUNTIME_RECIPE.md](RUNTIME_RECIPE.md) for runtime wiring
 and [AGENT_BOOT.md](AGENT_BOOT.md) for profile and boot details.

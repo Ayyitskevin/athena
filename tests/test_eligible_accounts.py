@@ -16,8 +16,10 @@ The contract pinned here (decision D19):
 - An issue the caller cannot see reads exactly like one that does not exist.
 - The list asks the commands' own rule: every listed account is accepted by
   ``assign_issue``, every listed agent by ``delegate_issue``, and a listed human
-  is refused delegation. The commands also take an account that cannot see the
-  issue, which the list leaves out (it lists who can work the issue).
+  is refused delegation. Every account the list leaves out is refused, so the
+  list and the commands are one rule: an account that cannot see the issue's
+  project is answered exactly like one that does not exist (decided
+  2026-11-26, docs/decisions/2026-11-26-owner-decisions.md).
 - A removed account is refused by every write that takes an account id, with
   the answer a missing id gets, and the list never shows it: removal hides an
   account from every list, picker and lookup, and a write no longer finds it.
@@ -248,9 +250,9 @@ def test_every_listed_account_is_one_the_commands_accept(tmp_path):
 
 def test_on_a_private_issue_only_who_can_see_it_is_listed(tmp_path):
     """The list is who can see and work the issue: a non-member of a private
-    project is not listed. Every listed account is still accepted by the
-    commands (a subset), and the commands' own acceptance of a non-member is
-    unchanged and pinned here."""
+    project is not listed. Every listed account is accepted by the commands,
+    and every unlisted one is refused with the answer a missing id gets, so a
+    refusal discloses nothing about who exists."""
     app, admin, cast, conductor = _world(tmp_path)
     try:
         project = _ok(
@@ -294,13 +296,34 @@ def test_on_a_private_issue_only_who_can_see_it_is_listed(tmp_path):
             if uid in listed:
                 assert assigned.status_code == 200, (account, assigned.text)
                 assert (delegated.status_code == 201) == listed[uid]["is_agent"]
-        # A non-member: not listed, and (unchanged) the command still takes it.
+            else:
+                assert assigned.status_code == 422, (account, assigned.text)
+                assert delegated.status_code == 422, (account, delegated.text)
+        # A non-member reads exactly like an id that never existed.
         human = _user_id(cast["human"])
         assert human not in listed
-        taken = conductor.put(
-            f"/issues/{private_issue()['id']}/assignee", json={"assignee_id": human}
+        target = private_issue()["id"]
+        blind = conductor.put(
+            f"/issues/{target}/assignee", json={"assignee_id": human}
         )
-        assert taken.status_code == 200
+        missing = conductor.put(
+            f"/issues/{target}/assignee", json={"assignee_id": 10**6}
+        )
+        assert (blind.status_code, blind.json()) == (
+            missing.status_code,
+            missing.json(),
+        )
+        assert blind.status_code == 422
+        blind_delegate = conductor.post(
+            f"/issues/{target}/delegate", json={"user_id": human}
+        )
+        missing_delegate = conductor.post(
+            f"/issues/{target}/delegate", json={"user_id": 10**6}
+        )
+        assert (blind_delegate.status_code, blind_delegate.json()) == (
+            missing_delegate.status_code,
+            missing_delegate.json(),
+        )
     finally:
         admin.__exit__(None, None, None)
 
