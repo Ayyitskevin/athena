@@ -99,6 +99,8 @@ Deliberately **not** gated:
 - **Audited.** Every step records an activity event atomically with its change:
   `approval_requested`, `approval_approved`, `approval_rejected`,
   `approval_consumed`, `approval_policy_set`, `approval_policy_cleared`.
+  `approval_consumed` is bookkeeping: it is in the trail and the feed and in
+  nobody's inbox, because the act it gated is its own event and notifies.
 - **Part of the run story.** The ask carries the requesting run's `run_id`, so a
   pause for a human decision appears in the run's lineage rather than floating
   outside it.

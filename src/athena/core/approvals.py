@@ -259,6 +259,9 @@ def require(
             target_id=target_id,
             detail=f"{action_kind} (approval #{live.id})",
             commit=False,
+            # Bookkeeping, not news (AD12, D34): the act it gated is its own
+            # event and notifies; the consumption stays in the trail only.
+            notify=False,
         )
         return
     rejected = _latest_rejection(

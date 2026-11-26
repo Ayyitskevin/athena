@@ -356,6 +356,53 @@ def record_edited(
         conn.commit()
 
 
+VERB_CHILDREN_DONE = "children_done"
+
+
+def _record_children_done(
+    conn: sqlite3.Connection, *, actor_id: int, child: dict
+) -> None:
+    """When the last open child of an issue closes, tell the parent's creator
+    and assignee once (AD12, D34): one ``children_done`` event on the parent,
+    delivered to their inboxes only, not to every watcher. It closes nothing:
+    closing the outcome stays its owner's act. Archived children do not count,
+    and a parent already closed or archived is told nothing. Reads the stored
+    ``status_closed`` verdict the child's own status write has just set."""
+    parent_id = child.get("parent_id")
+    if not parent_id:
+        return
+    parent = conn.execute(
+        "SELECT id, created_by, assignee_id, archived_at, status_closed "
+        "FROM issues WHERE id = ?",
+        (parent_id,),
+    ).fetchone()
+    if parent is None or parent["archived_at"] is not None or parent["status_closed"]:
+        return
+    counts = conn.execute(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(status_closed = 0), 0) AS open "
+        "FROM issues WHERE parent_id = ? AND archived_at IS NULL",
+        (parent_id,),
+    ).fetchone()
+    if int(counts["open"]) != 0:
+        return
+    event = activity.record(
+        conn,
+        actor_id=actor_id,
+        verb=VERB_CHILDREN_DONE,
+        target_kind="issue",
+        target_id=parent_id,
+        detail=f"all {int(counts['n'])} sub-issues done",
+        commit=False,
+        notify=False,
+    )
+    recipients = {
+        int(user_id)
+        for user_id in (parent["created_by"], parent["assignee_id"])
+        if user_id is not None and int(user_id) != actor_id
+    }
+    notifications.notify_users(conn, event_id=event["id"], user_ids=sorted(recipients))
+
+
 def record_status_change(
     conn: sqlite3.Connection,
     *,
@@ -437,6 +484,8 @@ def record_status_change(
             after_project_scope_key=after_scope_key,
             actor_kind=_actor_kind(conn, actor_id),
         )
+        if after_category == "done" and before_category != "done":
+            _record_children_done(conn, actor_id=actor_id, child=issue)
         if commit:
             conn.commit()
     except BaseException:
