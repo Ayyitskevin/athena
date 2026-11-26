@@ -236,8 +236,8 @@ def test_the_mcp_tool_passes_brief_only_when_asked():
         server.call_tool("get_issue_work_context", {"issue_id": 7, "brief": True})
     )
     assert client.calls == [
-        ("get_issue_work_context", ("ATH-7",), {}),
-        ("get_issue_work_context", ("7",), {"brief": True}),
+        ("get_issue_work_context", ("ATH-7",), {"lean": True}),
+        ("get_issue_work_context", ("7",), {"brief": True, "lean": True}),
     ]
 
 

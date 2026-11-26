@@ -178,6 +178,9 @@ def test_a_tool_body_check_is_one_object_with_the_same_code():
         "detail": "pass exactly one of ref or issue_id",
         "code": "invalid_arguments",
         "status_code": None,
+        # The tool's own check names no argument, so there is no example;
+        # next is the same call (AD9).
+        "next": refusal_codes.next_call("invalid_arguments", tool="get_issue"),
     }
 
 
@@ -253,7 +256,7 @@ def test_in_process_failures_raise_and_tool_failure_gives_the_wire_object():
     with pytest.raises(ToolError) as caught:
         asyncio.run(server.call_tool("get_issue", {}))
     (wire,) = _wire(server, [("get_issue", {})])
-    assert mcp_server.tool_failure(caught.value) == _one(wire)
+    assert mcp_server.tool_failure_for(server, "get_issue", caught.value) == _one(wire)
 
 
 def _bare_list() -> list:

@@ -431,7 +431,12 @@ def schema_types(schema: dict[str, Any]) -> set[str]:
     options = schema.get("anyOf") or [schema]
     if any("type" not in option for option in options):
         return set()
-    return {option["type"] for option in options}
+    allowed: set[str] = set()
+    for option in options:
+        kind = option["type"]
+        # A nullable plain type is listed as ``type: [X, "null"]`` (AD9).
+        allowed |= set(kind) if isinstance(kind, list) else {kind}
+    return allowed
 
 
 def type_matches(value: Any, schema: dict[str, Any]) -> bool:

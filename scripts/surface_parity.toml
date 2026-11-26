@@ -166,7 +166,10 @@ read and lets the assignment command refuse an ineligible choice.
 
 [[row]]
 kind = "read"
-api = ["aegis.lease_commands.report_field_docs"]
+api = [
+  "aegis.lease_commands.report_field_docs",
+  "aegis.lease_commands.report_item_schemas",
+]
 reason = """
 Documentation strings for the completion report's fields, published in the
 REST model's OpenAPI descriptions and the complete_claim tool's input schema.

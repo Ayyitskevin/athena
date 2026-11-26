@@ -33,6 +33,19 @@ HANDOFF_ARGUMENTS = {
 }
 
 
+def _options(schema: dict) -> list[dict]:
+    """A nullable argument's alternatives, however the listing writes it:
+    ``anyOf`` options, or one option per type of a ``type: [X, "null"]`` (AD9)
+    carrying the constraints beside it."""
+    if "anyOf" in schema:
+        return schema["anyOf"]
+    kinds = schema["type"] if isinstance(schema.get("type"), list) else [schema["type"]]
+    rest = {key: value for key, value in schema.items() if key != "type"}
+    return [
+        {**rest, "type": kind} if kind != "null" else {"type": "null"} for kind in kinds
+    ]
+
+
 def _client(tmp_path, name) -> tuple[TestClient, AthenaClient]:
     """A TestClient with a real admin bearer token set, wrapped in an AthenaClient.
     Returns both so a test can still bootstrap via the raw client if needed."""
@@ -2008,8 +2021,15 @@ def test_work_context_mcp_tool_forwards_only_the_issue_ref():
     server = build_server(client)
 
     asyncio.run(server.call_tool("get_issue_work_context", {"ref": "ATH-7"}))
+    asyncio.run(
+        server.call_tool("get_issue_work_context", {"ref": "ATH-7", "explain": True})
+    )
 
-    assert client.calls == [("get_issue_work_context", ("ATH-7",), {})]
+    # Lean by default on MCP (AD2, D29); explain=true is the call it always was.
+    assert client.calls == [
+        ("get_issue_work_context", ("ATH-7",), {"lean": True}),
+        ("get_issue_work_context", ("ATH-7",), {}),
+    ]
 
 
 def test_issue_history_mcp_tool_forwards_issue_id_and_limit():
@@ -2311,7 +2331,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         dispatch_list_schema = tools["list_dispatches"].inputSchema
         dispatch_work_item = next(
             option
-            for option in dispatch_list_schema["properties"]["work_item_id"]["anyOf"]
+            for option in _options(dispatch_list_schema["properties"]["work_item_id"])
             if option["type"] == "integer"
         )
         assert dispatch_work_item["minimum"] == 1
@@ -2329,7 +2349,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         for field_name in ("project_id", "sprint_id"):
             types = {
                 option["type"]
-                for option in placement_schema["properties"][field_name]["anyOf"]
+                for option in _options(placement_schema["properties"][field_name])
             }
             assert types == {"integer", "null"}
 
@@ -2337,12 +2357,12 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         assert "sprint" in list_schema["properties"]
         assert "sprint" not in set(list_schema.get("required", []))
         sprint_types = {
-            option["type"] for option in list_schema["properties"]["sprint"]["anyOf"]
+            option["type"] for option in _options(list_schema["properties"]["sprint"])
         }
         assert sprint_types == {"integer", "null"}
         sprint_integer = next(
             option
-            for option in list_schema["properties"]["sprint"]["anyOf"]
+            for option in _options(list_schema["properties"]["sprint"])
             if option["type"] == "integer"
         )
         assert sprint_integer["minimum"] == 0
@@ -2377,11 +2397,13 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         work_context_tool = tools["get_issue_work_context"]
         # Either name for the issue, neither required on its own: the tool
         # insists on exactly one at call time (tests/test_mcp_surface_slim.py);
-        # brief is the compact packet (tests/test_work_context_brief.py).
+        # brief is the compact packet (tests/test_work_context_brief.py);
+        # explain restores the fixed texts (tests/test_answer_glossary.py).
         assert set(work_context_tool.inputSchema["properties"]) == {
             "ref",
             "issue_id",
             "brief",
+            "explain",
         }
         assert "ref" not in work_context_tool.inputSchema.get("required", [])
         work_context_description = work_context_tool.description.lower()
@@ -2405,7 +2427,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         assert set(heartbeat_schema["properties"]) == {"run_id", "usage"}
         run_id_schema = next(
             option
-            for option in heartbeat_schema["properties"]["run_id"]["anyOf"]
+            for option in _options(heartbeat_schema["properties"]["run_id"])
             if option["type"] == "string"
         )
         assert run_id_schema["minLength"] == 1
@@ -2432,7 +2454,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         }
         schedule_at_schema = next(
             option
-            for option in automation_schema["properties"]["schedule_at"]["anyOf"]
+            for option in _options(automation_schema["properties"]["schedule_at"])
             if option["type"] == "string"
         )
         assert (
@@ -2440,9 +2462,9 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         )
         interval_schema = next(
             option
-            for option in automation_schema["properties"]["schedule_every_seconds"][
-                "anyOf"
-            ]
+            for option in _options(
+                automation_schema["properties"]["schedule_every_seconds"]
+            )
             if option["type"] == "integer"
         )
         assert interval_schema["minimum"] == automation.MIN_SCHEDULE_INTERVAL_SECONDS
@@ -2453,12 +2475,12 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             assert "idempotency_key" not in set(schema.get("required", []))
             key_types = {
                 option["type"]
-                for option in schema["properties"]["idempotency_key"]["anyOf"]
+                for option in _options(schema["properties"]["idempotency_key"])
             }
             assert key_types == {"string", "null"}
             string_schema = next(
                 option
-                for option in schema["properties"]["idempotency_key"]["anyOf"]
+                for option in _options(schema["properties"]["idempotency_key"])
                 if option["type"] == "string"
             )
             assert string_schema["minLength"] == 1
@@ -2497,12 +2519,15 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         }
         note_string = next(
             option
-            for option in yield_schema["properties"]["note"]["anyOf"]
+            for option in _options(yield_schema["properties"]["note"])
             if option["type"] == "string"
         )
         assert note_string["maxLength"] == 500
         assert yield_schema["properties"]["evidence"]["maxItems"] == 10
-        assert yield_schema["properties"]["evidence"]["items"]["maxLength"] == 1000
+        # A string, or (AD9) a completion evidence object.
+        evidence_text = yield_schema["properties"]["evidence"]["items"]["anyOf"][0]
+        assert evidence_text["type"] == "string"
+        assert evidence_text["maxLength"] == 1000
         resume_schema = tools["resume_claim_handoff"].inputSchema
         assert {
             "issue_id",

@@ -56,6 +56,29 @@ SCHEMA = "athena.ready_queue.v1"
 READY_LIMIT = 20
 MAX_READY_LIMIT = 50
 
+#: What the ready lane means, and what the lane of work it holds back means.
+#: The answer glossary (aegis/answer_glossary.py) serves both once; a lean desk
+#: omits them.
+READY_MEANING = (
+    "issues you could claim now, in claim order (delegated to you, then "
+    "priority, then oldest): visible, to-do or doing, no live lease, no "
+    "blocker that is not done (a blocker you cannot see still blocks), "
+    "you are the assignee, a delegated contributor or an admin, and not "
+    "awaiting an answer (the desk's not_offered says why). `total` counts "
+    "the same rule before `limit` and is what claim_next_ready can serve. "
+    "A read, not a reservation: the claim command decides between two "
+    "claimants."
+)
+NOT_OFFERED_MEANING = (
+    "issues claim_next_ready will not offer you yet, though every other "
+    "ready rule holds. awaiting_answer: the newest settlement is a "
+    "needs_input yield, offered to no account; completed_by_you: you "
+    "completed it, not offered back to you. Either lifts when another "
+    "account (not Automation) comments, changes its status or assignment, "
+    "or claims it; completed_by_you also when another account requests "
+    "your review on it. claim_issue still works directly."
+)
+
 _READY_CATEGORIES = ("todo", "doing")
 
 #: The acts that settle a possession (rule 6). Only the newest one counts.
@@ -553,16 +576,7 @@ def _ready_lane(
         "held_by_you": leases.count_active_leases_held_by(
             conn, holder_id=me, now=current
         ),
-        "meaning": (
-            "issues you could claim now, in claim order (delegated to you, then "
-            "priority, then oldest): visible, to-do or doing, no live lease, no "
-            "blocker that is not done (a blocker you cannot see still blocks), "
-            "you are the assignee, a delegated contributor or an admin, and not "
-            "awaiting an answer (the desk's not_offered says why). `total` counts "
-            "the same rule before `limit` and is what claim_next_ready can serve. "
-            "A read, not a reservation: the claim command decides between two "
-            "claimants."
-        ),
+        "meaning": READY_MEANING,
     }
 
 
@@ -632,15 +646,7 @@ def _not_offered_lane(
         "total": total,
         "limit": limit,
         "clipped": total > len(items),
-        "meaning": (
-            "issues claim_next_ready will not offer you yet, though every other "
-            "ready rule holds. awaiting_answer: the newest settlement is a "
-            "needs_input yield, offered to no account; completed_by_you: you "
-            "completed it, not offered back to you. Either lifts when another "
-            "account (not Automation) comments, changes its status or assignment, "
-            "or claims it; completed_by_you also when another account requests "
-            "your review on it. claim_issue still works directly."
-        ),
+        "meaning": NOT_OFFERED_MEANING,
     }
 
 

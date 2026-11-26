@@ -33,7 +33,7 @@
     {% endif %}
     {% if "evidence" in report %}
     <h4>Reported evidence references (not fetched)</h4>
-    <ul>{% for ref in report.evidence %}<li>{{ ref.kind }} · {{ ref.source }} · <code>{{ ref.ref }}</code> · reported scope {{ ref.scope }}{% if ref.digest %} · reported SHA-256 <code>{{ ref.digest }}</code>{% endif %}{% if ref.bytes is defined %} · reported {{ ref.bytes }} bytes{% endif %}{% if ref.locator %} · reported locator {{ ref.locator }}{% endif %}{% if checks %} · {{ checks[loop.index0] }}{% endif %}</li>{% endfor %}</ul>
+    <ul>{% for ref in report.evidence %}<li>{% if ref.kind == "command" %}command · <code>{{ ref.command }}</code> · reported outcome {{ ref.outcome }} · reported scope {{ ref.scope }}{% else %}{{ ref.kind }} · {{ ref.source }} · <code>{{ ref.ref }}</code> · reported scope {{ ref.scope }}{% endif %}{% if ref.digest %} · reported SHA-256 <code>{{ ref.digest }}</code>{% endif %}{% if ref.bytes is defined %} · reported {{ ref.bytes }} bytes{% endif %}{% if ref.locator %} · reported locator {{ ref.locator }}{% endif %}{% if checks %} · {{ checks[loop.index0] }}{% endif %}</li>{% endfor %}</ul>
     {% endif %}
     {% if "usage" in report %}
     <h4>Reported usage (not metered)</h4>

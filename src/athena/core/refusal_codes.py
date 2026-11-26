@@ -28,6 +28,11 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 
+#: A ``next`` whose tool is the one the refused call named (AD9): an argument
+#: refusal is resolved by the same call with its arguments corrected.
+SAME_TOOL = "(the tool called)"
+
+
 @dataclass(frozen=True, slots=True)
 class NextCall:
     """The MCP tool call that resolves a refusal, with a hint about arguments."""
@@ -549,7 +554,12 @@ _MCP_ENTRIES: tuple[McpRefusalCode, ...] = (
         code="invalid_arguments",
         meaning=(
             "The tool's arguments failed its own checks, so no request was sent; "
-            "the detail names each argument and the rule it broke."
+            "the detail names each argument and the rule it broke, `violations` "
+            "lists them by path and `examples` shows each one's shape."
+        ),
+        next=NextCall(
+            tool=SAME_TOOL,
+            hint="call it again with each named argument in the shape `examples` shows",
         ),
     ),
     McpRefusalCode(
@@ -632,11 +642,16 @@ def code_for_status(status_code: int) -> str:
     return "internal_error" if status_code >= 500 else "bad_request"
 
 
-def next_call(code: str | None) -> dict[str, str] | None:
-    """The resolving MCP call for a code, or None when the registry names none."""
+def next_call(code: str | None, *, tool: str | None = None) -> dict[str, str] | None:
+    """The resolving MCP call for a code, or None when the registry names none.
+    A ``next`` of the refused tool itself (``SAME_TOOL``) names ``tool``, the
+    call that was refused, when the caller knows it."""
     if code is None:
         return None
     entry = REFUSAL_CODES.get(code) or MCP_REFUSAL_CODES.get(code)
     if entry is None or entry.next is None:
         return None
-    return entry.next.public()
+    named = entry.next.public()
+    if entry.next.tool == SAME_TOOL and tool is not None:
+        named["tool"] = tool
+    return named

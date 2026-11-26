@@ -65,6 +65,16 @@ STATES: tuple[RunState, ...] = (
 #: Each lane here is a short list with its own total.
 LANE_LIMIT = 20
 
+#: What the desk's ``work.waiting_on_operator`` lane means. The answer glossary
+#: (aegis/answer_glossary.py) serves it once; a lean desk omits it.
+WAITING_ON_OPERATOR_MEANING = (
+    "what you asked a human and is still open: your blocking questions "
+    "nobody has resumed and your pending approvals, oldest first. Nothing "
+    "enforces a response time; do not re-ask what is already here. "
+    "`not_offered` lists work the ready lane holds back from you until "
+    "another account answers, with the reason."
+)
+
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 _CLAIM_ACTS = ("claimed", "lease_renewed", "claim_completed", "claim_yielded")
 _WORK_PLACEHOLDERS = ",".join("?" for _ in work_progress.SUBSTANTIVE_WORK_VERBS)
@@ -471,11 +481,5 @@ def waiting_on_operator(
         "not_offered": not_offered
         if not_offered is not None
         else ready_queue.build_not_offered(conn, actor=actor, now=current, limit=limit),
-        "meaning": (
-            "what you asked a human and is still open: your blocking questions "
-            "nobody has resumed and your pending approvals, oldest first. Nothing "
-            "enforces a response time; do not re-ask what is already here. "
-            "`not_offered` lists work the ready lane holds back from you until "
-            "another account answers, with the reason."
-        ),
+        "meaning": WAITING_ON_OPERATOR_MEANING,
     }

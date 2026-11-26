@@ -248,10 +248,13 @@ def test_mcp_tool_forwards_and_enforces_the_limit_bound():
     server = mcp_server.build_server(recorder)
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
     schema = tools["search_workspace"].inputSchema["properties"]["limit_per_kind"]
+    # A nullable integer: anyOf options, or type ["integer", "null"] (AD9).
+    options = schema.get("anyOf") or [schema]
     bounds = {
         (option.get("minimum"), option.get("maximum"))
-        for option in schema["anyOf"]
+        for option in options
         if option.get("type") == "integer"
+        or (isinstance(option.get("type"), list) and "integer" in option["type"])
     }
     assert bounds == {
         (workspace_search.MIN_LIMIT_PER_KIND, workspace_search.MAX_LIMIT_PER_KIND)

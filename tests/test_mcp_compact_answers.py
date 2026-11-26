@@ -80,6 +80,8 @@ def _value(schema: dict[str, Any], defs: dict[str, Any]) -> Any:
     if "enum" in schema:
         return schema["enum"][0]
     kind = schema.get("type")
+    if isinstance(kind, list):  # a nullable plain type, as the listing writes it
+        kind = next(k for k in kind if k != "null")
     if kind == "integer":
         return max(1, schema.get("minimum", 1))
     if kind == "boolean":

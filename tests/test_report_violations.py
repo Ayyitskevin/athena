@@ -172,16 +172,24 @@ def test_the_closed_sets_are_published_from_the_commands_constants(tmp_path):
         if tool.name == "complete_claim"
     )
     for field, words in closed.items():
+        # The two report lists publish their closed sets as a typed item
+        # schema (AD9); the others in their description.
         for published in (
-            body[field]["description"],
-            tool.inputSchema["properties"][field]["description"],
+            json.dumps(body[field]),
+            json.dumps(tool.inputSchema["properties"][field]),
         ):
             assert all(word in published for word in words), (field, published)
     # Documentation only: the REST fields still accept any JSON so the command,
     # not FastAPI, refuses a bad report (and never echoes it).
     for field in closed:
         assert "type" not in body[field]
-        assert body[field]["anyOf"] == [{}, {"type": "null"}]
+        if field in {"results", "evidence"}:
+            # AD9: the item shape is published (WithJsonSchema); FastAPI still
+            # validates nothing, so the command refuses by path.
+            assert body[field]["anyOf"][0]["type"] == "array"
+            assert body[field]["anyOf"][1] == {"type": "null"}
+        else:
+            assert body[field]["anyOf"] == [{}, {"type": "null"}]
 
 
 @pytest.mark.parametrize(

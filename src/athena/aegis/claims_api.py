@@ -401,7 +401,9 @@ class YieldClaimIn(BaseModel):
         min_length=1,
         max_length=lease_commands.MAX_HANDOFF_ATTEMPTED_WORK_CHARS,
     )
-    evidence: list[HandoffEvidenceItem] = Field(
+    # A string, or (AD9, D31) a completion evidence object the command checks
+    # and stores as one line.
+    evidence: list[HandoffEvidenceItem | dict[str, object]] = Field(
         max_length=lease_commands.MAX_HANDOFF_EVIDENCE_ITEMS
     )
     blocking_question: str = Field(

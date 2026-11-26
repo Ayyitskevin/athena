@@ -69,6 +69,14 @@ Kinds are `event`, `handoff`, `doc`, `file`, `manifest`, `attachment`, or
 numeric id: an attachment, or an imported forge commit or pull-request event
 (`docs/FORGE.md`).
 
+For a command you ran, use kind `command` with exactly `kind`, `command` (what
+you ran, at most 1,000 characters), `outcome` (what it printed, in your words,
+at most 500) and `scope`, for example `{kind: "command", command: "pytest -q",
+outcome: "12 passed", scope: "actual-run"}`. Both texts are scanned for
+credentials like every other report text. `yield_claim` also takes these
+evidence objects beside plain strings; the handoff stores each object as one
+line, such as `command (actual-run): pytest -q => 12 passed`.
+
 Validation of all of these is shape only. The one thing Athena checks is an
 `attachment` on the same issue that carries a `digest`: the history compares it
 with the SHA-256 (and `bytes`, if given) Athena stored when it received those

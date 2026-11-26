@@ -2,7 +2,7 @@
 
 Date: 2026-11-26. Baseline: `13585e5` (`main` after Wave 10 of
 [the in-use specification](ATHENA_IN_USE_SPEC.md)).
-Status: **specified; decisions accepted by standing instruction. Built: AD1 (#491); AD6, AD7, AD8 and the server halves of AD10 to AD13 (#492); AD3 and the MCP halves of AD10 to AD13 (begin_run in the seat profiles, close_status on complete_claim, grouped list_notifications, list_spaces, list_projects and list_fleet_seats). Next: AD2, then AD5, AD4, AD9.**
+Status: **specified; decisions accepted by standing instruction. Built: AD1 (#491); AD6, AD7, AD8 and the server halves of AD10 to AD13 (#492); AD3 and the MCP halves of AD10 to AD13 (#493); AD9 (typed argument shapes, refusals with examples, command evidence) and AD2 (lean desk and packet, one glossary). Next: AD5, AD4, and AD12's grouped desk preview.**
 Evidence: [reports/agent-day-2026-11-26.md](reports/agent-day-2026-11-26.md).
 Finding IDs such as `DAY-3` refer to that report. Requirement IDs begin `AD`.
 Decision IDs continue the in-use specification's, from D29.
@@ -87,11 +87,11 @@ script never mistypes a shape or looks around.
 
 | Measure | Baseline | Target |
 |---|---|---|
-| Tool-listing bytes, `seat` | 50,540 | ≤ 34,000 (now 33,916) |
-| Tool-listing bytes, `seat+knowledge` | 62,758 | ≤ 45,000 (now 43,455) |
-| Tool-listing bytes, `conductor` | 67,165 | ≤ 48,000 (now 47,133) |
-| Full desk bytes | 7,405 | ≤ 4,300 |
-| Full work-context bytes | 6,980 | ≤ 5,500 |
+| Tool-listing bytes, `seat` | 50,540 | ≤ 34,000 (now 33,856) |
+| Tool-listing bytes, `seat+knowledge` | 62,758 | ≤ 45,000 (now 43,122) |
+| Tool-listing bytes, `conductor` | 67,165 | ≤ 48,000 (now 46,779) |
+| Full desk bytes | 7,405 | ≤ 4,300 (now 3,254) |
+| Full work-context bytes | 6,980 | ≤ 5,500 (now 4,733) |
 | Seat calls for the day | 22 | ≤ 18 |
 | Seat calls made only to read a generation | 2 | 0 |
 | Seat calls to read the answer to its own question | 1 | 0 |

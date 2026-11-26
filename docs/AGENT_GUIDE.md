@@ -70,7 +70,10 @@ with the token scope the operation needs (`admin` holds every scope),
 `Idempotency-Key`, `If-Match` and `ETag`, the run headers, this refusal body, and
 404 and 428 where the operation can answer them.
 A failure that never reached Athena (a bad argument, say) is the same object, with
-`status_code` null and an MCP-side code such as `invalid_arguments`.
+`status_code` null and an MCP-side code such as `invalid_arguments`. That refusal
+lists each bad argument by path under `violations`, shows an example of each
+one's shape under `examples` (never the value you sent), and names the same tool
+in `next`.
 JSON write bodies refuse a field they do not declare (422 `validation_error`), so
 a misspelt field is never silently dropped. A filter whose values are a closed set
 (`kind` on search, `priority` on the issue list, `state` on dispatches) refuses an
@@ -111,6 +114,12 @@ Authorization: Bearer <token>
  "work":{"leases":{"items":[{"issue_id":1,"active":true,"generation":"aed1…",…}]}},
  "signals":{"unread_notifications":1,"events_since_cursor":null,"latest_visible_event_id":22}}
 ```
+
+That is the REST desk. Over MCP, `my_desk()` answers it lean
+(`athena.agent_desk.v3`): without each lane's fixed `meaning`, `protocol` and
+`semantics` and without null-valued keys, so a key you do not see is null. Those
+texts are read once from the resource `athena://answers/glossary`, and
+`my_desk(explain=true)` puts them back ([DESK.md](DESK.md)).
 
 The desk shows what is asked of you, what you hold, and what changed. It reserves
 nothing: it is orientation, not a lock. When you have handled events up to some id,

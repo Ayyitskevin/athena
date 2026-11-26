@@ -8,6 +8,7 @@ lease, readiness check, liveness signal, or replay contract.
 from __future__ import annotations
 
 from collections.abc import Callable
+import copy
 import sqlite3
 from typing import Any
 
@@ -47,6 +48,54 @@ READINESS_POINTER = (
     "(GET /desk/ready) does, for you: visible, to-do or doing, no live lease, no "
     "blocker that is not done, and claimable by you, bounded with its own total"
 )
+
+#: The packet's fixed explanations, identical on every read. The answer
+#: glossary (aegis/answer_glossary.py) serves them once and a lean packet
+#: omits them (AD2, D29).
+SEMANTICS = {
+    "snapshot": "current_visible_state",
+    "does_not_assert": [
+        "claimed",
+        "ready",
+        "unblocked",
+        "running",
+        "live",
+        "replay_safe",
+    ],
+    # This packet still asserts none of that. The read that does assert
+    # readiness, by a stated rule and with its own bound, is the ready lane.
+    "readiness": READINESS_POINTER,
+}
+PROTOCOL = {
+    "claim_one_issue": True,
+    "do_not_touch_other_work": True,
+    "complete_does_not_close_issue": True,
+}
+CLAIMANT_POLICY = (
+    "assignee, delegated contributor, or admin; creator alone is insufficient"
+)
+CLAIMANT_MEANING = (
+    "claimant policy snapshot, not authority or full claim eligibility; "
+    "write-time scope, visibility, ETag, generation and conflict checks still apply"
+)
+#: ``how_to_claim`` beside its per-reader ``claimant_prerequisite``.
+HOW_TO_CLAIM = {
+    "header": "If-Match",
+    "from": "issue_etag",
+    "not": "the work-context packet's top-level _etag",
+    "paths": (
+        "optional relative POSIX files; omitted/null retains on renewal, "
+        "[] means issue-only"
+    ),
+    "coordination_root": (
+        "with a catalog: a reviewed selector from the operator; "
+        "not authority or location proof"
+    ),
+    "path_fence": (
+        "rooted: a catalog root; lexical, root unknown: no catalog, compared "
+        "as written; unresolved: separation unproven; issue_only: none"
+    ),
+}
 
 GENERAL_LIMIT = 20
 REFERENCE_LIMIT = 10
@@ -761,21 +810,7 @@ def build_work_context(
         payload: dict[str, Any] = {
             "schema": SCHEMA,
             "scope": SCOPE,
-            "semantics": {
-                "snapshot": "current_visible_state",
-                "does_not_assert": [
-                    "claimed",
-                    "ready",
-                    "unblocked",
-                    "running",
-                    "live",
-                    "replay_safe",
-                ],
-                # This packet still asserts none of that. The read that does
-                # assert readiness, by a stated rule and with its own bound, is
-                # the ready lane.
-                "readiness": READINESS_POINTER,
-            },
+            "semantics": copy.deepcopy(SEMANTICS),
             "issue": {
                 "id": public_issue["id"],
                 "key": public_issue["key"],
@@ -804,15 +839,11 @@ def build_work_context(
             "seat_slug": fleet_roster.seat_slug_for_email(
                 conn, None if actor is None else actor.get("email")
             ),
-            "protocol": {
-                "claim_one_issue": True,
-                "do_not_touch_other_work": True,
-                "complete_does_not_close_issue": True,
-            },
+            "protocol": dict(PROTOCOL),
             "how_to_claim": {
                 "claimant_prerequisite": {
                     "satisfied_at_read": claimant_eligible,
-                    "policy": "assignee, delegated contributor, or admin; creator alone is insufficient",
+                    "policy": CLAIMANT_POLICY,
                     "next_operation": (
                         "you hold it: renew with claim_issue and your_lease.generation, "
                         "or complete_claim or yield_claim with it"
@@ -821,14 +852,9 @@ def build_work_context(
                         if claimant_eligible
                         else "request assignment or contributor delegation from an authorized actor"
                     ),
-                    "meaning": "claimant policy snapshot, not authority or full claim eligibility; write-time scope, visibility, ETag, generation and conflict checks still apply",
+                    "meaning": CLAIMANT_MEANING,
                 },
-                "header": "If-Match",
-                "from": "issue_etag",
-                "not": "the work-context packet's top-level _etag",
-                "paths": "optional relative POSIX files; omitted/null retains on renewal, [] means issue-only",
-                "coordination_root": "with a catalog: a reviewed selector from the operator; not authority or location proof",
-                "path_fence": "rooted: a catalog root; lexical, root unknown: no catalog, compared as written; unresolved: separation unproven; issue_only: none",
+                **HOW_TO_CLAIM,
             },
             "runbook": runbook_hints.runbook_narration(conn, issue["id"], actor=actor),
             # What was learned on this issue, its parent and its siblings (W5):

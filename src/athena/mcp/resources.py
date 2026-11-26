@@ -1,15 +1,20 @@
-"""The documents an MCP-only agent reads: the boot block, the loop guide and the
-glossary, served as MCP resources at fixed ``athena://`` URIs.
+"""The documents an MCP-only agent reads: the boot block, the loop guide, the
+glossary and the answer glossary, served as MCP resources at fixed
+``athena://`` URIs.
 
 An agent that reaches Athena only through ``athena-mcp`` cannot open the
 repository's ``docs/``, and ``docs/`` is not in the installed wheel. So the
-three documents travel as package data beside this module
+documents travel as package data beside this module
 (``mcp/documents/*.md``, pinned by the wheel-manifest gate the field guide's
 pages use) and are byte-identical copies of their ``docs/`` sources, which a
 test holds: edit ``docs/`` and copy the file over in the same change.
 
 A resource is read on request, so it costs a session nothing until an agent
-asks for it, unlike a tool description. Every profile serves all three.
+asks for it, unlike a tool description. Every profile serves all of them.
+
+The answer glossary is generated (``aegis/answer_glossary.py``, written by
+``scripts/generate_agent_api.py``): the fixed explanations a lean desk or
+work-context answer leaves out, read once instead of on every call (AD2).
 """
 
 from __future__ import annotations
@@ -57,6 +62,16 @@ DOCUMENTS: tuple[Document, ...] = (
         description=(
             "Every word in a tool name, and the contract terms, with what each "
             "is not the same as."
+        ),
+    ),
+    Document(
+        uri="athena://answers/glossary",
+        name="answer-glossary",
+        filename="ANSWER_GLOSSARY.md",
+        description=(
+            "The fixed explanations lean my_desk and get_issue_work_context "
+            "answers leave out, by schema and key path; explain=true returns "
+            "them inline."
         ),
     ),
 )

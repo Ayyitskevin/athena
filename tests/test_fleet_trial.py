@@ -185,8 +185,11 @@ class FleetAgent(McpAgent):
         newest unread notifications, and every unread one up to the newest it
         shows is acknowledged through that id. One that arrives after the desk
         read is newer than the bound and stays unread."""
+        # The desk is lean (AD2): an unread row has no read_at key at all.
         unread = [
-            row["id"] for row in desk["signals"]["notifications"] if not row["read_at"]
+            row["id"]
+            for row in desk["signals"]["notifications"]
+            if not row.get("read_at")
         ]
         if unread:
             await self.call("mark_notification_read", through_id=max(unread))

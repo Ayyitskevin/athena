@@ -25,6 +25,7 @@ directory listed below with its rule — and every link resolves;
 | [AGENT_GUIDE.md](AGENT_GUIDE.md) | One page for an agent at session start: orient, find work, claim, show progress, complete or hand off, and what never to do. Served by `athena-mcp` as `athena://docs/loop-guide`. |
 | [AGENT_BOOT.md](AGENT_BOOT.md) | The canonical seat-boot block for an agent's rules file, the wiring check, and the sqlite escape-hatch policy. Served by `athena-mcp` as `athena://docs/boot-block`. |
 | [AGENT_API.md](AGENT_API.md) | **Generated** map of every MCP tool to its required scope and the REST call(s) behind it — regenerate, never edit. |
+| [ANSWER_GLOSSARY.md](ANSWER_GLOSSARY.md) | **Generated** from the answers' own constants: the fixed explanations lean desk and work-context answers leave out, by schema and key path. Served by `athena-mcp` as `athena://answers/glossary` and at `GET /agent/glossary`. |
 | [DESK.md](DESK.md) | `GET /desk` / `my_desk()` — who you are, what is asked of you, what you hold, what changed: one bounded read. |
 | [OFFICE.md](OFFICE.md) | The cubicle inside the desk: one chair per agent, fenced paths, checkout hint. |
 | [WORK_CONTEXT.md](WORK_CONTEXT.md) | The bounded read packet for one issue: the issue, neighbours, blockers, runbook — prefer it over five separate reads. |
