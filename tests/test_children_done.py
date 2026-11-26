@@ -17,7 +17,15 @@ outcome was now done. Two changes answer it here:
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
-from support import ADMIN, add_user, bearer, bootstrap, make_app, onboard_agent
+from support import (
+    ADMIN,
+    add_user,
+    as_user,
+    bearer,
+    bootstrap,
+    make_app,
+    onboard_agent,
+)
 
 from athena.core import db
 
@@ -182,3 +190,53 @@ def test_an_approval_decision_accepts_the_state_it_produces(tmp_path):
             headers=ADMIN,
         )
         assert refused.status_code == 422
+
+
+def test_the_grouped_inbox_is_one_row_per_target_and_acknowledges_by_group(
+    tmp_path,
+):
+    """AD12: GET /notifications/grouped folds the rows on one target into one,
+    with the newest row whole, and its unread_ids acknowledge that group only."""
+    app, _ = make_app(tmp_path)
+    with TestClient(app) as client:
+        bootstrap(client)
+        owner = add_user(client, "owner@e.com", role="member")
+        busy = _issue(client, "Busy", assignee_id=owner["id"])
+        quiet = _issue(client, "Quiet", assignee_id=owner["id"])
+        for n in range(3):
+            said = client.post(
+                f"/issues/{busy['id']}/comments",
+                json={"body": f"note {n}"},
+                headers=ADMIN,
+            )
+            assert said.status_code == 201, said.text
+        said = client.post(
+            f"/issues/{quiet['id']}/comments", json={"body": "one"}, headers=ADMIN
+        )
+        assert said.status_code == 201, said.text
+        mine = as_user(owner["id"])
+        rows = client.get("/notifications", params={"unread": True}, headers=mine)
+        grouped = client.get(
+            "/notifications/grouped", params={"unread": True}, headers=mine
+        )
+        assert grouped.status_code == 200, grouped.text
+        body = grouped.json()
+        assert body["complete"] is True
+        assert body["rows_scanned"] == len(rows.json())
+        by_target = {item["target_id"]: item for item in body["items"]}
+        assert set(by_target) == {busy["id"], quiet["id"]}
+        assert by_target[busy["id"]]["count"] >= 3
+        assert body["items"][0]["target_id"] == quiet["id"]  # newest first
+        assert by_target[busy["id"]]["newest"]["id"] == max(
+            by_target[busy["id"]]["unread_ids"]
+        )
+        acked = client.post(
+            "/notifications/read_all",
+            json={"ids": by_target[busy["id"]]["unread_ids"]},
+            headers=mine,
+        )
+        assert acked.status_code == 200, acked.text
+        left = client.get(
+            "/notifications/grouped", params={"unread": True}, headers=mine
+        ).json()
+        assert [item["target_id"] for item in left["items"]] == [quiet["id"]]
