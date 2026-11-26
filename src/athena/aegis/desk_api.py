@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from athena.aegis import desk_commands, operator_since, ready_queue
+from athena.aegis import answer_glossary, desk_commands, operator_since, ready_queue
 from athena.core import desk_cursors, packet_time
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, personal_write_actor
@@ -78,6 +78,7 @@ def read_office(
 
 @router.get("/desk")
 def read_desk(
+    lean: bool = Query(False, description=answer_glossary.LEAN_QUERY),
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -88,9 +89,18 @@ def read_desk(
     # expiry with its seconds, from the one clock read the lanes were built at
     # (A13, core/packet_time.py).
     now = packet_time.clock()
-    return packet_time.stamp(
+    desk = packet_time.stamp(
         desk_commands.read_desk(conn, actor=actor, now=now), now=now
     )
+    return answer_glossary.lean(desk) if lean else desk
+
+
+@router.get(answer_glossary.ROUTE)
+def read_answer_glossary(actor: dict = Depends(current_actor)) -> dict:
+    """What lean desk and work-context answers leave out, by schema and path:
+    every fixed explanation, once. The MCP resource athena://answers/glossary
+    is the same markdown."""
+    return answer_glossary.document()
 
 
 @router.get("/desk/ready")

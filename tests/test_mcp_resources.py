@@ -29,6 +29,7 @@ EXPECTED = {
     "athena://docs/boot-block": "AGENT_BOOT.md",
     "athena://docs/loop-guide": "AGENT_GUIDE.md",
     "athena://docs/glossary": "GLOSSARY.md",
+    "athena://answers/glossary": "ANSWER_GLOSSARY.md",
 }
 PROFILES = ("full", "seat", "seat+knowledge", "conductor")
 
@@ -43,7 +44,7 @@ def _server(profile_name: str):
 
 
 @pytest.mark.parametrize("profile_name", PROFILES)
-def test_every_profile_serves_the_three_documents_over_the_protocol(profile_name):
+def test_every_profile_serves_its_documents_over_the_protocol(profile_name):
     async def play():
         async with mcp_sessions(_server(profile_name)) as (session,):
             listed = (await session.list_resources()).resources

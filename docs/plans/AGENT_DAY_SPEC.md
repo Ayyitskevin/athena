@@ -87,11 +87,11 @@ script never mistypes a shape or looks around.
 
 | Measure | Baseline | Target |
 |---|---|---|
-| Tool-listing bytes, `seat` | 50,540 | ≤ 34,000 (now 33,758) |
-| Tool-listing bytes, `seat+knowledge` | 62,758 | ≤ 45,000 (now 43,024) |
-| Tool-listing bytes, `conductor` | 67,165 | ≤ 48,000 (now 46,681) |
-| Full desk bytes | 7,405 | ≤ 4,300 |
-| Full work-context bytes | 6,980 | ≤ 5,500 |
+| Tool-listing bytes, `seat` | 50,540 | ≤ 34,000 (now 33,856) |
+| Tool-listing bytes, `seat+knowledge` | 62,758 | ≤ 45,000 (now 43,122) |
+| Tool-listing bytes, `conductor` | 67,165 | ≤ 48,000 (now 46,779) |
+| Full desk bytes | 7,405 | ≤ 4,300 (now 3,254) |
+| Full work-context bytes | 6,980 | ≤ 5,500 (now 4,733) |
 | Seat calls for the day | 22 | ≤ 18 |
 | Seat calls made only to read a generation | 2 | 0 |
 | Seat calls to read the answer to its own question | 1 | 0 |

@@ -107,6 +107,18 @@ own tool for delegations (`list_my_delegated_work`), notifications
 one place of a fresh desk read: a list's rows or a text from `offset`. REST
 `GET /desk` is not cut.
 
+**Over MCP the desk is lean; `explain=true` is the full desk** (AD2, D29). The
+full desk (`schema: athena.agent_desk.v2`) repeats the same explanations on
+every read: each lane's `meaning`, the work protocol under `work.protocol` and
+again under `office.protocol`, and `office.semantics`. `my_desk()` answers
+without them and without any key whose value is null, as
+`schema: athena.agent_desk.v3`; nothing else differs. A key absent from it is
+null (no `cursor` means no cursor yet, no `identity.notebook` means none). The
+texts are in the [answer glossary](ANSWER_GLOSSARY.md), by path, read once: the
+MCP resource `athena://answers/glossary`, or `GET /agent/glossary`.
+`my_desk(explain=true)` answers the full desk, exactly as before. REST
+`GET /desk` answers the full desk unless you send `?lean=true`.
+
 **One dialect.** Every lane is present when empty, every timestamp is RFC 3339
 UTC (`2026-11-21T18:19:13Z`), and every `<x>expires_at` (a lease, a chair, a run
 control, `lapsed_oldest_expires_at`) has `<x>expires_in_seconds` beside it, counted

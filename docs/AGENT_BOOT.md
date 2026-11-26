@@ -149,8 +149,13 @@ read current full context before work. See [ATOMIC_PICKUP_SPEC.md](ATOMIC_PICKUP
 
 ## Read less per issue: `brief=true`
 
-The full work-context packet carries the protocol, how-to-claim and runbook
-blocks on every call. Once you have read them, re-read an issue with
+Over MCP the packet is lean by default: the fixed explanations (`semantics`,
+`protocol`, the fixed half of `how_to_claim`) and every null-valued key are
+left out, to be read once from the resource `athena://answers/glossary`;
+`explain=true` puts them back ([WORK_CONTEXT.md](WORK_CONTEXT.md#lean-packets)).
+The desk is lean the same way ([DESK.md](DESK.md)). The full packet still
+carries the runbook, comments, activity and handoff blocks on every call. Once
+you have read them, re-read an issue with
 `get_issue_work_context(issue_id=..., brief=true)` (REST:
 `GET /issues/{ref}/work-context?brief=true`). The answer keeps `issue`,
 `issue_etag`, `dependencies`, `warnings` and `work_order`, the same values as the full packet

@@ -77,6 +77,52 @@ NOTIFICATIONS_LIMIT = 10
 #: reporting a precise-looking total it did not compute.
 EVENTS_SINCE_CAP = 500
 
+#: The fixed explanations the desk's own lanes carry. Each is identical on every
+#: read, so the answer glossary (aegis/answer_glossary.py) serves them once and
+#: a lean desk (athena.agent_desk.v3) omits them (AD2, D29).
+#: Wording matches RUN_CONTROLS.md: a control is a recorded request, and "open"
+#: means nobody has answered it yet.
+RUN_CONTROLS_MEANING = "asked of you and not yet answered"
+WORKER_KILL_MEANING = (
+    "the operator asked these workers to stop; Athena cannot "
+    "signal a process, so honoring it is yours to do"
+)
+CLAIM_HANDOFFS_MEANING = "context handed to you that you have not acknowledged"
+WORK_PROTOCOL = {
+    "claim_one_issue": True,
+    "do_not_touch_other_work": True,
+    "complete_does_not_close_issue": True,
+    "meaning": (
+        "The desk is orientation, not a lock. Claim at most one "
+        "issue. Do not edit files another active lease has fenced. "
+        "complete_claim releases the lease only."
+    ),
+}
+WAITING_ON_MEANING = (
+    "issues you delegated that are waiting on their delegate: "
+    + work_progress.UNCLAIMED_DELEGATIONS_MEANING
+)
+LEASES_MEANING = (
+    "`items` are the issues you hold at this read; `active` is "
+    "the clock's verdict, not a stored state, and `total` "
+    "counts the same instant. `lapsed` are leases the clock "
+    "already released, including done issues (`issue_done`). "
+    "These are your own residual rows, not active possession. "
+    "`lapsed_total` counts them before the shared `limit`; "
+    "`lapsed_clipped` says whether rows are omitted. "
+    "`lapsed_oldest_expires_at` is null when empty or clipped "
+    "(unknown when clipped); total/clipped distinguish these cases. "
+    "Claim order does not establish oldest expiry. "
+    "Holders settle their own rows deliberately with complete_claim "
+    "and the observed generation; an admin alone settles another "
+    "actor's expired row, by generation. Reading changes nothing. "
+    "complete_claim releases the "
+    "lease and does not mark the issue done. declared_paths is "
+    "the optional file fence. path_fence: rooted (a catalog root, "
+    "not a verified location), lexical, root unknown (no catalog), "
+    "unresolved (conflicts conservatively) or issue_only (no files)."
+)
+
 
 def _last_run(conn: sqlite3.Connection, user_id: int) -> dict | None:
     """The run of this account's newest run-tagged event, and when it wrote."""
@@ -295,9 +341,7 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
                 "items": open_controls,
                 "limit": CONTROLS_LIMIT,
                 "clipped": len(open_controls) == CONTROLS_LIMIT,
-                # Wording matches RUN_CONTROLS.md: a control is a recorded
-                # request, and "open" means nobody has answered it yet.
-                "meaning": "asked of you and not yet answered",
+                "meaning": RUN_CONTROLS_MEANING,
             },
             "worker_kill_requests": {
                 "items": [
@@ -314,29 +358,17 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
                 "total": stop_total,
                 "limit": WORKER_STOPS_LIMIT,
                 "clipped": stop_total > len(unanswered_workers),
-                "meaning": (
-                    "the operator asked these workers to stop; Athena cannot "
-                    "signal a process, so honoring it is yours to do"
-                ),
+                "meaning": WORKER_KILL_MEANING,
             },
             "claim_handoffs": {
                 "items": handoffs["items"],
                 "limit": HANDOFFS_LIMIT,
                 "clipped": handoffs["clipped"],
-                "meaning": "context handed to you that you have not acknowledged",
+                "meaning": CLAIM_HANDOFFS_MEANING,
             },
         },
         "work": {
-            "protocol": {
-                "claim_one_issue": True,
-                "do_not_touch_other_work": True,
-                "complete_does_not_close_issue": True,
-                "meaning": (
-                    "The desk is orientation, not a lock. Claim at most one "
-                    "issue. Do not edit files another active lease has fenced. "
-                    "complete_claim releases the lease only."
-                ),
-            },
+            "protocol": dict(WORK_PROTOCOL),
             "delegations": {
                 "items": inbox.get("items", []),
                 "limit": DELEGATIONS_LIMIT,
@@ -360,10 +392,7 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
                 "limit": DELEGATIONS_LIMIT,
                 "clipped": waiting_on["clipped"],
                 "older_than_hours": waiting_on["older_than_hours"],
-                "meaning": (
-                    "issues you delegated that are waiting on their delegate: "
-                    + waiting_on["meaning"]
-                ),
+                "meaning": WAITING_ON_MEANING,
             },
             "leases": {
                 "items": held,
@@ -379,26 +408,7 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
                     if lapsed_total == len(lapsed)
                     else None
                 ),
-                "meaning": (
-                    "`items` are the issues you hold at this read; `active` is "
-                    "the clock's verdict, not a stored state, and `total` "
-                    "counts the same instant. `lapsed` are leases the clock "
-                    "already released, including done issues (`issue_done`). "
-                    "These are your own residual rows, not active possession. "
-                    "`lapsed_total` counts them before the shared `limit`; "
-                    "`lapsed_clipped` says whether rows are omitted. "
-                    "`lapsed_oldest_expires_at` is null when empty or clipped "
-                    "(unknown when clipped); total/clipped distinguish these cases. "
-                    "Claim order does not establish oldest expiry. "
-                    "Holders settle their own rows deliberately with complete_claim "
-                    "and the observed generation; an admin alone settles another "
-                    "actor's expired row, by generation. Reading changes nothing. "
-                    "complete_claim releases the "
-                    "lease and does not mark the issue done. declared_paths is "
-                    "the optional file fence. path_fence: rooted (a catalog root, "
-                    "not a verified location), lexical, root unknown (no catalog), "
-                    "unresolved (conflicts conservatively) or issue_only (no files)."
-                ),
+                "meaning": LEASES_MEANING,
             },
         },
         "signals": {

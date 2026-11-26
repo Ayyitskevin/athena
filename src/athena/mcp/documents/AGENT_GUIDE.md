@@ -115,6 +115,12 @@ Authorization: Bearer <token>
  "signals":{"unread_notifications":1,"events_since_cursor":null,"latest_visible_event_id":22}}
 ```
 
+That is the REST desk. Over MCP, `my_desk()` answers it lean
+(`athena.agent_desk.v3`): without each lane's fixed `meaning`, `protocol` and
+`semantics` and without null-valued keys, so a key you do not see is null. Those
+texts are read once from the resource `athena://answers/glossary`, and
+`my_desk(explain=true)` puts them back ([DESK.md](DESK.md)).
+
 The desk shows what is asked of you, what you hold, and what changed. It reserves
 nothing: it is orientation, not a lock. When you have handled events up to some id,
 record it with `advance_desk_cursor(after_id)` / `POST /desk/cursor` `{"after_id": N}`.

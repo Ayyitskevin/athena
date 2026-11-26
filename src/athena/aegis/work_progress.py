@@ -78,6 +78,22 @@ STALE_WORK_DAYS = 7
 #: it; past that, the hand-off has most likely been missed, not queued.
 DELEGATION_UNCLAIMED_HOURS = 24
 
+#: What a held claim's progress block means. The answer glossary
+#: (aegis/answer_glossary.py) serves this text once; a lean desk omits it.
+PROGRESS_MEANING = (
+    "last_work_at is the holder's latest recorded work on this issue "
+    "(edit, status change, comment, attachment, link, completion). Check-ins "
+    "and lease renewals are shown separately and never reset it; unknown "
+    "means no work is recorded, not that the work is fresh."
+)
+#: What the unclaimed-delegations lane means (the desk's ``work.waiting_on``).
+UNCLAIMED_DELEGATIONS_MEANING = (
+    f"delegations older than {DELEGATION_UNCLAIMED_HOURS}h that the delegate "
+    "has neither claimed nor recorded work on since, oldest first; work by "
+    "anyone else does not count as pickup, and done or archived issues are "
+    "not waiting"
+)
+
 #: Each lane is a short list with its own total, like the desk's lanes.
 LANE_LIMIT = 20
 
@@ -212,12 +228,7 @@ def progress_for(
         "stale_after_days": STALE_WORK_DAYS,
         "last_checkin_at": checkin_at,
         "last_lease_activity_at": lease_activity_at,
-        "meaning": (
-            "last_work_at is the holder's latest recorded work on this issue "
-            "(edit, status change, comment, attachment, link, completion). Check-ins "
-            "and lease renewals are shown separately and never reset it; unknown "
-            "means no work is recorded, not that the work is fresh."
-        ),
+        "meaning": PROGRESS_MEANING,
     }
 
 
@@ -473,12 +484,7 @@ def unclaimed_delegations(
         "limit": limit,
         "clipped": total > len(items),
         "older_than_hours": DELEGATION_UNCLAIMED_HOURS,
-        "meaning": (
-            f"delegations older than {DELEGATION_UNCLAIMED_HOURS}h that the delegate "
-            "has neither claimed nor recorded work on since, oldest first; work by "
-            "anyone else does not count as pickup, and done or archived issues are "
-            "not waiting"
-        ),
+        "meaning": UNCLAIMED_DELEGATIONS_MEANING,
     }
 
 

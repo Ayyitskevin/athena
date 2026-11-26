@@ -642,7 +642,7 @@ def test_the_issue_read_schemas_offer_both_names_and_require_neither():
     tools = _tools(None)
     expected = {
         "get_issue": {"ref", "issue_id", "body_offset"},
-        "get_issue_work_context": {"ref", "issue_id", "brief"},
+        "get_issue_work_context": {"ref", "issue_id", "brief", "explain"},
     }
     for name, properties in expected.items():
         schema = tools[name].inputSchema

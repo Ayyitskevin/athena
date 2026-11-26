@@ -11,10 +11,11 @@ import sqlite3
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Response
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, TypeAdapter
 
 from athena.aegis import handoff_replies
-from athena.aegis import work_context, work_order
+from athena.aegis import answer_glossary, work_context, work_order
 from athena.aegis.review_queue_models import IssueReviewTracking, ReviewRequest
 from athena.core import authorship
 from athena.core.authorship import AuthoredBy
@@ -445,10 +446,13 @@ class IssueWorkContextBriefOut(BaseModel):
     )
 
 
-@router.get(
-    "/{ref}/work-context",
-    response_model=IssueWorkContextOut | IssueWorkContextBriefOut,
-)
+IssueWorkContextAnswer = IssueWorkContextOut | IssueWorkContextBriefOut
+#: The response model as the route serializes it, for the lean answer: lean is
+#: taken over exactly the bytes the full answer would have been.
+_ANSWER: TypeAdapter[IssueWorkContextAnswer] = TypeAdapter(IssueWorkContextAnswer)
+
+
+@router.get("/{ref}/work-context", response_model=IssueWorkContextAnswer)
 def show_issue_work_context(
     ref: str,
     response: Response,
@@ -460,9 +464,10 @@ def show_issue_work_context(
             "been read"
         ),
     ),
+    lean: bool = Query(False, description=answer_glossary.LEAN_QUERY),
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> dict:
+) -> dict | JSONResponse:
     """Return one visibility-safe, bounded snapshot for an agent or operator."""
     payload = work_context.build_work_context(conn, ref, actor=actor, brief=brief)
     if payload is None:
@@ -474,6 +479,13 @@ def show_issue_work_context(
             code="not_found",
         )
     packet = work_context.agent_packet(payload)
-    response.headers.update(_PRIVATE_HEADERS)
-    response.headers["ETag"] = work_context.context_etag(packet)
+    headers = {**_PRIVATE_HEADERS, "ETag": work_context.context_etag(packet)}
+    if lean:
+        # The tag is the snapshot's either way: lean changes the shape, not
+        # the state it shows.
+        full = _ANSWER.dump_python(
+            _ANSWER.validate_python(packet), mode="json", by_alias=True
+        )
+        return JSONResponse(answer_glossary.lean(full), headers=headers)
+    response.headers.update(headers)
     return packet

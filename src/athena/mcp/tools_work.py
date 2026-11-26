@@ -250,9 +250,9 @@ def register_work_tools(tool, mutation_tool, client) -> None:
 
     @tool(scope=READ_ONLY, profiles=SEAT)
     def get_issue_lease(issue_id: int) -> dict | None:
-        """Who holds this issue's lease: {holder_id, holder_name, claimed_at,
-        expires_at, generation, active, open_claim_handoff}, or {found: false}.
-        active=false is an expired, reclaimable lease."""
+        """Who holds this issue's lease (generation, expiry,
+        open_claim_handoff), or {found: false}; active=false: expired,
+        reclaimable."""
         return client.get_issue_lease(issue_id)
 
     # Not idempotent: a repeat with the generation renews the lease.

@@ -246,9 +246,13 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         )
 
     @tool(scope=READ_ONLY, profiles=SEAT)
-    def my_desk(section: AnswerSection | None = None, offset: ListOffset = 0) -> dict:
+    def my_desk(
+        section: AnswerSection | None = None,
+        offset: ListOffset = 0,
+        explain: bool = False,
+    ) -> dict:
         """START HERE. Your desk in one bounded read: `identity` (role,
-        scopes, budget, actions needing approval), `asks` (run controls,
+        scopes, budget, approvals needed), `asks` (run controls,
         kill requests, handoffs to acknowledge), `work` (delegations, your
         leases; work.leases.lapsed are expired rows only complete_claim
         settles), `signals` (unread notifications, events past your cursor).
@@ -256,10 +260,11 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
 
         The loop: `my_desk()` -> `claim_next_ready()` -> act ->
         `complete_claim(...)` -> `wait_for_events(after=<cursor>, wait=0)` ->
-        `advance_desk_cursor(after_id=<last id you handled>)`. Your tools
+        `advance_desk_cursor(after_id=<last handled id>)`. Your tools
         follow ATHENA_MCP_PROFILE (athena://docs/boot-block); the operator
-        widens it. section and offset read on where `_truncated` cut."""
-        desk = client.my_desk()
+        widens it. section and offset read on where `_truncated` cut.
+        explain=true inlines athena://answers/glossary."""
+        desk = client.my_desk() if explain else client.my_desk(lean=True)
         for item in desk.get("work", {}).get("delegations", {}).get("items", []):
             item["issue"] = results.summary(item["issue"])
         if section is None:

@@ -10,6 +10,7 @@ spawn a process, or invent a git remote.
 
 from __future__ import annotations
 
+import copy
 from datetime import datetime
 import sqlite3
 
@@ -36,6 +37,13 @@ PROTOCOL = {
         "Sit in at most one chair. Claim that issue. Fence files with "
         "paths. complete_claim stands you up; it does not close the issue."
     ),
+}
+#: What the office does not claim to know. The answer glossary
+#: (aegis/answer_glossary.py) serves it and PROTOCOL once; a lean desk omits
+#: both from its ``office``.
+SEMANTICS = {
+    "snapshot": "this_actor_right_now",
+    "does_not_assert": ["alive", "running", "repo_exists", "branch_exists"],
 }
 
 
@@ -164,10 +172,7 @@ def _build_office(
         "fence": leases.fence_basis(),
         "warnings": warnings,
         "fence_overlaps": fence_overlaps_list,
-        "semantics": {
-            "snapshot": "this_actor_right_now",
-            "does_not_assert": ["alive", "running", "repo_exists", "branch_exists"],
-        },
+        "semantics": copy.deepcopy(SEMANTICS),
     }
 
 

@@ -55,3 +55,8 @@ earns = "A conductor that is not an admin can find the seat slug assign-seat tak
 change = "Agent day, AD11: list_fleet_seats on the conductor profile"
 tools = 1
 earns = "A conductor that is not an admin learns the seat slugs assign_issue_to_seat takes instead of guessing and being refused 'unknown seat'."
+
+[[change]]
+change = "Agent day, AD2: GET /agent/glossary"
+routes = 1
+earns = "An agent reads once, by schema and key path, the fixed explanations that lean desk and work-context answers no longer repeat on every call."

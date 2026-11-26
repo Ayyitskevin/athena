@@ -82,7 +82,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `get_issue` | `GET /issues/{ref}` | read-only | Get one issue by issue_id or by ref ('12' or 'ATH-12'); pass one. Its … |
 | `get_issue_comment` | `GET /issues/{issue_id}/comments/{comment_id}` | read-only | One comment whole; a long body is cut and body_offset reads on. |
 | `get_issue_history` | `GET /issues/{issue_id}/history` | read-only | One issue's bounded run narrative; each item cites its source and a … |
-| `get_issue_lease` | `GET /issues/{issue_id}/lease` | read-only | Who holds this issue's lease: {holder_id, holder_name, claimed_at, … |
+| `get_issue_lease` | `GET /issues/{issue_id}/lease` | read-only | Who holds this issue's lease (generation, expiry, … |
 | `get_issue_prior_text` | `GET /issues/{issue_id}/prior-texts/{event_id}` | read-only | The title and body one edit replaced, as they were. event_id is the … |
 | `get_issue_runbook` | `GET /issues/{issue_id}/runbook` | read-only | The issue's runbook page of earlier runs' learnings, or {found: |
 | `get_issue_state` | `GET /issues/{issue_id}/state` | read-only | Reconstruct an issue's lifecycle state from the activity log. Pass … |

@@ -17,9 +17,14 @@ token scope and which REST call it performs — from the code itself:
 - the refusal-code table comes from ``athena.core.refusal_codes``, the one
   registry every REST refusal's ``code`` is drawn from.
 
+It also writes docs/ANSWER_GLOSSARY.md and its packaged copy
+(``src/athena/mcp/documents/``, served as ``athena://answers/glossary``) from
+``athena.aegis.answer_glossary``: the fixed explanations lean desk and
+work-context answers leave out (AD2).
+
 Usage:
-    python scripts/generate_agent_api.py            # rewrite docs/AGENT_API.md
-    python scripts/generate_agent_api.py --check    # exit 1 if the doc drifted
+    python scripts/generate_agent_api.py            # rewrite the documents
+    python scripts/generate_agent_api.py --check    # exit 1 if one drifted
 
 ``tests/test_agent_api_doc.py`` runs the check, so the gate fails when the
 committed doc no longer matches the code.
@@ -36,6 +41,10 @@ REPO = Path(__file__).resolve().parent.parent
 TOOL_MODULES = sorted((REPO / "src" / "athena" / "mcp").glob("tools_*.py"))
 CLIENT = REPO / "src" / "athena" / "mcp" / "client.py"
 DOC = REPO / "docs" / "AGENT_API.md"
+GLOSSARY_DOCS = (
+    REPO / "docs" / "ANSWER_GLOSSARY.md",
+    REPO / "src" / "athena" / "mcp" / "documents" / "ANSWER_GLOSSARY.md",
+)
 
 HTTP_VERBS = {"get", "post", "put", "patch", "delete"}
 
@@ -381,20 +390,36 @@ def refusal_code_lines() -> list[str]:
     return lines
 
 
+def render_answer_glossary() -> str:
+    """docs/ANSWER_GLOSSARY.md, from the constants the answers carry."""
+    sys.path.insert(0, str(REPO / "src"))
+    from athena.aegis import answer_glossary  # noqa: PLC0415 — after sys.path
+
+    return answer_glossary.render()
+
+
 def main() -> int:
-    content = render()
+    documents = [(DOC, render())]
+    glossary = render_answer_glossary()
+    documents += [(path, glossary) for path in GLOSSARY_DOCS]
     if "--check" in sys.argv[1:]:
-        current = DOC.read_text() if DOC.exists() else ""
-        if current != content:
+        stale = [
+            path
+            for path, content in documents
+            if (path.read_text() if path.exists() else "") != content
+        ]
+        for path in stale:
             sys.stderr.write(
-                "docs/AGENT_API.md is stale — regenerate with "
+                f"{path.relative_to(REPO)} is stale — regenerate with "
                 "`python scripts/generate_agent_api.py`\n"
             )
+        if stale:
             return 1
-        print("docs/AGENT_API.md matches the code")
+        print("docs/AGENT_API.md and the answer glossary match the code")
         return 0
-    DOC.write_text(content)
-    print(f"wrote {DOC.relative_to(REPO)} ({len(content.splitlines())} lines)")
+    for path, content in documents:
+        path.write_text(content)
+        print(f"wrote {path.relative_to(REPO)} ({len(content.splitlines())} lines)")
     return 0
 
 

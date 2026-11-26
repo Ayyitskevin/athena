@@ -56,6 +56,7 @@ from support import (
 )
 
 from athena import demo
+from athena.aegis import answer_glossary
 from athena.core import db, token_commands, users
 from athena.main import create_app
 from athena.mcp import server as mcp_server
@@ -566,6 +567,67 @@ def test_ad3_each_profiles_listing_is_within_its_target(day):
     assert over == {}, measured
 
 
+# AD2: the most bytes the desk and the work context an MCP session reads by
+# default may cost at the demo seed, the specification's targets. Measured as
+# the day measures them (Sol's first desk, the packet of the issue it holds).
+AD2_TARGETS = {"desk_full_bytes": 4_300, "work_context_full_bytes": 5_500}
+
+
+def test_ad2_the_desk_and_the_work_context_are_within_their_targets(day):
+    play(day, the_day)
+    measured = {name: day.sizes[name] for name in AD2_TARGETS}
+    over = {
+        name: f"{measured[name]} > {target}"
+        for name, target in AD2_TARGETS.items()
+        if measured[name] > target
+    }
+    assert over == {}, measured
+
+
+def test_ad2_explain_answers_the_full_answer_and_the_default_is_its_lean_shape(day):
+    """explain=true answers what my_desk and get_issue_work_context answered
+    before AD2, the REST default; the default answer is exactly that answer's
+    lean shape (answer_glossary.lean), named by the lean schema."""
+    issue_id = day.seeded["ids"]["command_issue"]
+    reads = {
+        "desk": ("my_desk", {}, "/desk"),
+        "packet": (
+            "get_issue_work_context",
+            {"issue_id": issue_id},
+            f"/issues/{issue_id}/work-context",
+        ),
+        "brief": (
+            "get_issue_work_context",
+            {"issue_id": issue_id, "brief": True},
+            f"/issues/{issue_id}/work-context?brief=true",
+        ),
+    }
+
+    async def scene(day: Day, agents: dict[str, DayAgent]) -> None:
+        seat = agents["seat"]
+        for name, (tool, arguments, _route) in reads.items():
+            day.facts[name] = (
+                await seat.call(tool, explain=True, **arguments),
+                await seat.call(tool, **arguments),
+            )
+
+    play(day, scene)
+    seat_rest = client_as(day.app, token=day.seeded["agent_token"])
+    for name, (_tool, _arguments, route) in reads.items():
+        explained, default = day.facts[name]
+        response = seat_rest.get(route)
+        rest = day.ok(response)
+        if "ETag" in response.headers:
+            assert explained.pop("_etag") == response.headers["ETag"], name
+            assert default.pop("_etag") == response.headers["ETag"], name
+        assert explained == rest, name
+        shape = answer_glossary.SHAPES[explained["schema"]]
+        assert default["schema"] == shape.lean_schema, name
+        assert default == answer_glossary.lean(explained), name
+    assert day.facts["desk"][0]["schema"] == "athena.agent_desk.v2"
+    assert day.facts["desk"][1]["schema"] == "athena.agent_desk.v3"
+
+
 # --- the requirements the day is waiting on -----------------------------------------
 
 
@@ -629,7 +691,8 @@ def test_ad8_the_packet_knows_its_reader_holds_the_lease(day):
     packet = day.facts["held_packet"]
     mine = packet["your_lease"]
     assert len(mine["generation"]) == 32 and mine["until"].endswith("Z"), mine
-    assert mine["open_handoff_token"] is None
+    # Lean (AD2): a null key is left out, so no open handoff reads as absent.
+    assert "open_handoff_token" not in mine
     assert packet["how_to_claim"]["claimant_prerequisite"]["next_operation"].startswith(
         "you hold it"
     )

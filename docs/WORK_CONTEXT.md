@@ -5,7 +5,9 @@ an operator or agent the issue, nearby work, supporting knowledge, and recent
 history in one visibility-safe snapshot. It is a read model, not a work claim or
 an execution-state protocol.
 
-The public schema is `athena.issue_work_context.v1`.
+The public schema is `athena.issue_work_context.v1`. Its lean shape,
+`athena.issue_work_context.v2`, is the MCP default (see
+[Lean packets](#lean-packets)).
 
 `protocol.claim_one_issue=true` is agent coordination guidance, not a server
 quota limiting each actor to one claim. The claim command enforces per-issue
@@ -22,7 +24,7 @@ browser adapters do not run parallel composition queries, and MCP calls REST.
 | Consumer | Surface | Result |
 |---|---|---|
 | REST client | `GET /issues/{ref}/work-context` | JSON packet plus a strong context `ETag` header |
-| MCP agent | `get_issue_work_context` with `{"ref": "<id-or-key>"}` | The same JSON packet; the official client adds the HTTP context tag as `_etag` |
+| MCP agent | `get_issue_work_context` with `{"ref": "<id-or-key>"}` | The same packet, lean unless `explain=true`; the official client adds the HTTP context tag as `_etag` |
 | Browser operator | `GET /aegis/issues/{ref}/work-context` | Read-only HTML rendering of the same packet |
 
 `ref` accepts a numeric issue id such as `12` or a project key such as
@@ -65,7 +67,29 @@ tool: get_issue_work_context
 arguments: {"ref": "ATH-7"}
 ```
 
-The tool accepts only `ref`. It performs no claim, heartbeat, or write.
+The tool takes `ref` or `issue_id` (one of them), `brief` and `explain`. It
+performs no claim, heartbeat, or write.
+
+### Lean packets
+
+The full packet carries the same explanations on every read: `semantics` (with
+`readiness`), `protocol`, and the fixed half of `how_to_claim` (its `policy`,
+`meaning`, `header`, `from`, `not`, `paths`, `coordination_root` and
+`path_fence`), beside keys whose value is null. The lean packet
+(`schema: athena.issue_work_context.v2`) is the same packet without those texts
+and without any null-valued key; nothing else differs. A key absent from it is
+null. `how_to_claim.claimant_prerequisite` keeps `satisfied_at_read` and
+`next_operation`, which are this reader's. The brief packet carries none of the
+texts, so lean it only drops its null keys.
+
+- MCP: `get_issue_work_context` answers lean, full or brief;
+  `explain=true` answers the full packet, exactly as before.
+- REST: `GET /issues/{ref}/work-context` answers the full packet unless you
+  send `?lean=true` (with or without `brief=true`). Both carry the same `ETag`:
+  the tag is the snapshot's, not the shape's.
+- The texts are in the [answer glossary](ANSWER_GLOSSARY.md), by path, read
+  once: the MCP resource `athena://answers/glossary`, or `GET /agent/glossary`
+  (AD2, D29).
 
 ## Snapshot and visibility semantics
 
@@ -118,7 +142,7 @@ The top-level object contains:
 
 | Field | Meaning |
 |---|---|
-| `schema` | Exact schema id, `athena.issue_work_context.v1` |
+| `schema` | Exact schema id, `athena.issue_work_context.v1` (lean: `athena.issue_work_context.v2`) |
 | `scope` | Exact scope id, `visible_to_request_actor` |
 | `semantics` | Snapshot kind and explicit assertions not made |
 | `issue` | Root issue summary and bounded description |

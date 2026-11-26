@@ -365,14 +365,21 @@ class AthenaClient:
     def get_issue(self, ref: str) -> Any:
         return self._result(self._client.get(f"/issues/{ref}"))
 
-    def get_issue_work_context(self, ref: str, *, brief: bool = False) -> Any:
+    def get_issue_work_context(
+        self, ref: str, *, brief: bool = False, lean: bool = False
+    ) -> Any:
         """Get the bounded work-context packet for one visible issue. ``brief``
-        keeps only the issue, its ETag, dependencies, warnings and work order."""
-        if brief:
+        keeps only the issue, its ETag, dependencies, warnings and work order;
+        ``lean`` drops the fixed explanations and null keys (the answer
+        glossary lists what)."""
+        params = {
+            name: "true"
+            for name, wanted in (("brief", brief), ("lean", lean))
+            if wanted
+        }
+        if params:
             return self._result(
-                self._client.get(
-                    f"/issues/{ref}/work-context", params={"brief": "true"}
-                )
+                self._client.get(f"/issues/{ref}/work-context", params=params)
             )
         return self._result(self._client.get(f"/issues/{ref}/work-context"))
 
@@ -1782,9 +1789,12 @@ class AthenaClient:
             json=self._params(project_id=project_id, title=title),
         )
 
-    def my_desk(self) -> Any:
+    def my_desk(self, *, lean: bool = False) -> Any:
         """Your desk: identity, what is asked of you, what you hold, and what
-        changed since your cursor. Includes `office` (the one-chair cubicle)."""
+        changed since your cursor. Includes `office` (the one-chair cubicle).
+        ``lean`` drops the fixed explanations and null keys."""
+        if lean:
+            return self._result(self._client.get("/desk", params={"lean": "true"}))
         return self._result(self._client.get("/desk"))
 
     def ready_work(self, *, limit: int | None = None) -> Any:

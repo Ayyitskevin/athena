@@ -2021,8 +2021,15 @@ def test_work_context_mcp_tool_forwards_only_the_issue_ref():
     server = build_server(client)
 
     asyncio.run(server.call_tool("get_issue_work_context", {"ref": "ATH-7"}))
+    asyncio.run(
+        server.call_tool("get_issue_work_context", {"ref": "ATH-7", "explain": True})
+    )
 
-    assert client.calls == [("get_issue_work_context", ("ATH-7",), {})]
+    # Lean by default on MCP (AD2, D29); explain=true is the call it always was.
+    assert client.calls == [
+        ("get_issue_work_context", ("ATH-7",), {"lean": True}),
+        ("get_issue_work_context", ("ATH-7",), {}),
+    ]
 
 
 def test_issue_history_mcp_tool_forwards_issue_id_and_limit():
@@ -2390,11 +2397,13 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         work_context_tool = tools["get_issue_work_context"]
         # Either name for the issue, neither required on its own: the tool
         # insists on exactly one at call time (tests/test_mcp_surface_slim.py);
-        # brief is the compact packet (tests/test_work_context_brief.py).
+        # brief is the compact packet (tests/test_work_context_brief.py);
+        # explain restores the fixed texts (tests/test_answer_glossary.py).
         assert set(work_context_tool.inputSchema["properties"]) == {
             "ref",
             "issue_id",
             "brief",
+            "explain",
         }
         assert "ref" not in work_context_tool.inputSchema.get("required", [])
         work_context_description = work_context_tool.description.lower()

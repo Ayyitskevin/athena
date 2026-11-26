@@ -24,6 +24,15 @@ NOTEBOOK_LABEL = "agent-notebook"
 #: "remember next time" notes; the page itself is one read away for the rest.
 NOTEBOOK_EXCERPT_LINES = 12
 
+#: What the desk's notebook lane means. The answer glossary
+#: (aegis/answer_glossary.py) serves it once; a lean desk omits it.
+NOTEBOOK_MEANING = (
+    "your notebook page: the first lines are shown; read the page for the "
+    "rest. Append at session end with an If-Match edit of the page, so a "
+    "parallel session cannot clobber it. Nothing summarises it, and it is "
+    "not a runbook."
+)
+
 
 def notebook_space_key(user_id: int) -> str:
     """The preferred key for an agent's notebook space (a taken key falls back)."""
@@ -64,10 +73,5 @@ def desk_lane(conn: sqlite3.Connection, actor: dict) -> dict | None:
         "excerpt_lines": min(len(lines), NOTEBOOK_EXCERPT_LINES),
         "total_lines": len(lines),
         "excerpt_truncated": len(lines) > NOTEBOOK_EXCERPT_LINES,
-        "meaning": (
-            "your notebook page: the first lines are shown; read the page for the "
-            "rest. Append at session end with an If-Match edit of the page, so a "
-            "parallel session cannot clobber it. Nothing summarises it, and it is "
-            "not a runbook."
-        ),
+        "meaning": NOTEBOOK_MEANING,
     }

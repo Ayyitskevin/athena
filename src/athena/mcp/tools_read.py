@@ -407,20 +407,24 @@ def register_read_tools(tool, mutation_tool, client) -> None:
     # and three events; 32,000 leaves it 16,936. The rest is one get_issue away.
     @tool(scope=READ_ONLY, profiles=SEAT, budget=32_000)
     def get_issue_work_context(
-        ref: str | None = None, issue_id: int | None = None, brief: bool = False
+        ref: str | None = None,
+        issue_id: int | None = None,
+        brief: bool = False,
+        explain: bool = False,
     ) -> dict:
         """A bounded, current packet: one visible issue and its
         visible supporting docs, by issue_id or ref; pass one. brief=true keeps
-        issue, issue_etag, dependencies, warnings and work_order, for a
-        re-read. work_order says which of the six body parts are present
-        and missing; check success_criteria before you claim.
-        claim_handoffs.open is the handoff awaiting resume. Not a claim or
-        lease; it does not guarantee readiness, unblocked status, liveness or
-        replayability."""
-        reference = _issue_ref(ref, issue_id)
-        if brief:
-            return client.get_issue_work_context(reference, brief=True)
-        return client.get_issue_work_context(reference)
+        issue, issue_etag, dependencies, warnings and work_order. work_order
+        names the six body parts present and missing; check success_criteria
+        before you claim. claim_handoffs.open is the handoff awaiting resume.
+        Not a claim or lease; it does not guarantee readiness, unblocked
+        status, liveness or replayability. explain=true inlines
+        athena://answers/glossary."""
+        # explain=true makes exactly the call this tool made before AD2.
+        options = {"brief": True} if brief else {}
+        if not explain:
+            options["lean"] = True
+        return client.get_issue_work_context(_issue_ref(ref, issue_id), **options)
 
     @tool(scope=READ_ONLY, profiles=CONDUCTOR)
     def get_issue_history(
