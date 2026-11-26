@@ -166,7 +166,10 @@ in the cockpit), the token commands acting as the account their callers record
 issue's project, and an administrator's audited removal of a kept prior text
 (migration 0095). What is left needs facts only the owner has: what "Astra"
 names, whether `AGENTS.md`'s fallback rules match the machine handbook, and an
-operated instance for D9, which keeps B11 blocked. Each requirement that removes calls lowers the fleet trial's ceilings
+operated instance for D9, which keeps B11 blocked. The next specification,
+written after the lead used Athena as an agent for a working session, is
+[AGENT_DAY_SPEC.md](AGENT_DAY_SPEC.md): what one agent's day costs, the next
+move named, and the delegation loop closed. Each requirement that removes calls lowers the fleet trial's ceilings
 in the same commit.
 
 **How work is done here.** One requirement, one commit, with the test that
