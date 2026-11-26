@@ -18,6 +18,7 @@ the answer says what the radio did.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from typing import Literal
 
@@ -34,6 +35,35 @@ from athena.core.request_models import RequestBody
 from athena.workflows import fleet_assign_commands
 
 router = APIRouter(prefix="/issues", tags=["workflows"])
+
+logger = logging.getLogger("athena")
+
+#: What a bearer caller is told when the radio or its receipt failed. The
+#: underlying reason can carry a key file's path, an OS error or the Buzz CLI's
+#: stderr: the operator's log keeps it, the API answer does not.
+RADIO_FAILED_DETAIL = "the radio failed; the server log has the reason"
+RECEIPT_FAILED_DETAIL = "the receipt was not recorded; the server log has the reason"
+
+
+def _without_failure_reasons(assigned: dict, issue_id: int) -> dict:
+    """The command's answer with a failed radio's or receipt's own reason
+    replaced by a fixed sentence, logged for the operator instead."""
+    radio = dict(assigned["radio"])
+    receipt = dict(assigned["receipt"])
+    if radio.get("status") == "failed":
+        logger.warning(
+            "seat assign of issue %s: radio failed: %s", issue_id, radio.get("detail")
+        )
+        radio["detail"] = RADIO_FAILED_DETAIL
+    if receipt.get("status") == "failed":
+        logger.warning(
+            "seat assign of issue %s: receipt failed: %s",
+            issue_id,
+            receipt.get("detail"),
+        )
+        receipt["detail"] = RECEIPT_FAILED_DETAIL
+    return {**assigned, "radio": radio, "receipt": receipt}
+
 
 STATUS_BY_KIND: dict[str, int] = {
     "invalid": 422,
@@ -121,4 +151,4 @@ def assign_issue_to_seat(
     current = issues.get_issue(conn, int(assigned["issue_id"]))
     assert current is not None
     response.headers["ETag"] = issue_etags.current_etag(conn, current)
-    return assigned
+    return _without_failure_reasons(assigned, issue_id)

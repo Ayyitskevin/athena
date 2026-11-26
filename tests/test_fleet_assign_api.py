@@ -279,24 +279,30 @@ def test_a_seat_the_command_will_not_take_is_refused_with_a_code(
     assert pings == []
 
 
-def test_a_failed_radio_never_rolls_back_the_assign(tmp_path, monkeypatch):
+def test_a_failed_radio_never_rolls_back_the_assign(tmp_path, monkeypatch, caplog):
+    # The radio's own reason can name a key file's path or carry the CLI's
+    # stderr: the server log keeps it, the bearer caller gets a fixed sentence.
+    reason = "cannot read key file: [Errno 13] Permission denied: '/etc/buzz/k'"
     monkeypatch.setattr(
         buzz_radio,
         "send_assignment",
-        lambda **kwargs: {"status": "failed", "detail": "buzz cli failed"},
+        lambda **kwargs: {"status": "failed", "detail": reason},
     )
     app, db_file = make_app(tmp_path)
     with TestClient(app) as client:
         cast = _world(client)
         as_conductor = bearer(cast["conductor"])
         issue = _issue(client, as_conductor)
-        answer = _assign(client, issue["id"], as_conductor)
+        with caplog.at_level("WARNING", logger="athena"):
+            answer = _assign(client, issue["id"], as_conductor)
         assert answer.status_code == 200, answer.text
         assert answer.json()["radio"] == {
             "status": "failed",
-            "detail": "buzz cli failed",
+            "detail": "the radio failed; the server log has the reason",
             "permalink": None,
         }
+        assert "/etc/buzz" not in answer.text
+        assert any(reason in record.getMessage() for record in caplog.records)
         assert answer.json()["receipt"]["status"] == "skipped"
         assert (
             client.get(f"/issues/{issue['id']}", headers=ADMIN).json()["assignee_id"]
