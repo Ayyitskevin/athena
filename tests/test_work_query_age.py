@@ -21,7 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 from support import lapse_lease
 
-from athena.aegis import issue_query, work_progress
+from athena.aegis import issue_query
 from athena.core import db, work_query
 from athena.main import create_app
 
@@ -332,7 +332,10 @@ def test_a_hidden_projects_items_stay_hidden_in_results_counts_and_find(tmp_path
         assert "public idle" in page and "hidden idle" in page
 
 
-def test_the_idle_read_is_indexed_per_issue_not_a_scan_of_the_trail(tmp_path):
+def test_the_idle_read_is_the_stored_keys_index_not_the_trail(tmp_path):
+    """The idle key is stored on the issue (0096), so the read seeks its index
+    and never touches the activity trail; tests/test_issue_idle_key.py pins the
+    plan of every idle shape, with and without statistics."""
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
@@ -352,12 +355,9 @@ def test_the_idle_read_is_indexed_per_issue_not_a_scan_of_the_trail(tmp_path):
         )
     )
     conn.close()
-    assert "idx_activity_target" in plan, plan
-    # Positive control: the activity table is never scanned whole.
-    assert "SCAN activity" not in plan and "SCAN wa" not in plan, plan
-    assert (
-        work_progress.SUBSTANTIVE_WORK_VERBS
-    )  # the same verb list as the progress view
+    assert "USING INDEX idx_issues_idle (archived_at=? AND <expr><?)" in plan, plan
+    assert "activity" not in plan and " wa " not in plan, plan
+    assert "TEMP B-TREE" not in plan, plan
 
 
 # ── the browser search speaks the grammar ───────────────────────────────────

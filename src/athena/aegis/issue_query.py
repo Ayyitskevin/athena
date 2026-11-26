@@ -18,10 +18,13 @@ through the count.
 **Every value is a parameter.** Column and table names are literals chosen from
 closed tables in this module; user input is only ever bound.
 
-**"Closed" is a category, not a name.** ``is:open``/``is:closed`` resolve through
-``statuses.category_sql`` — the same generated expression the fleet views use — so
-a project whose done state is called ``shipped`` behaves correctly, and there is
-no second definition of closed-ness to drift.
+**"Closed" is a category, not a name.** ``is:open``/``is:closed`` read
+``issues.status_closed``, which is ``statuses.category_sql``'s verdict — the same
+generated expression the fleet views use — stored by migration 0096's triggers
+whenever an issue's status or project, or its project's status rows, change. A
+project whose done state is called ``shipped`` behaves correctly, and the stored
+verdict is pinned to the expression by tests/test_issue_idle_key.py, so the two
+cannot drift. It is stored so the idle sort's index can lead with it.
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 import sqlite3
 
-from athena.aegis import issues, leases, ready_queue, statuses, work_progress
+from athena.aegis import issues, leases, ready_queue, statuses
 from athena.core import clock, work_query
 from athena.core.work_query import Query
 
@@ -39,7 +42,18 @@ _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 # view's own verb list), or creation when nothing was ever recorded. Check-ins and
 # lease renewals are not in that list, so a run that keeps reporting while nothing
 # moves stays idle. Never NULL, so comparisons and ordering need no NULL rule.
-_IDLE_ANCHOR = f"COALESCE({work_progress.last_work_sql('i.id')}, i.created_at)"
+#
+# ``i.last_work_at`` is work_progress.last_work_sql's value for the issue, stored
+# by migration 0096's triggers in the same statement as the activity row that
+# moves it. This expression is the key of ``idx_issues_idle`` and
+# ``idx_issues_closed_idle``: SQLite matches an indexed expression by its form,
+# so it is not reworded without a migration that re-creates both indexes.
+_IDLE_ANCHOR = "COALESCE(i.last_work_at, i.created_at)"
+
+# Open and closed, as stored (see the module docstring). The idle indexes lead
+# with this column, so ``is:open sort:idle-desc`` seeks the open issues alone.
+_IS_OPEN = "i.status_closed = 0"
+_IS_CLOSED = "i.status_closed = 1"
 
 # A live lease, by the clock: the lease module's own "active" verdict.
 _LIVE_LEASE = leases.live_lease_sql("i.id")
@@ -207,9 +221,9 @@ def _term_sql(
     if field == "is":
         params: list = []
         if value == "open":
-            clause = f"{_CATEGORY} != 'done'"
+            clause = _IS_OPEN
         elif value == "closed":
-            clause = f"{_CATEGORY} = 'done'"
+            clause = _IS_CLOSED
         elif value == "archived":
             clause = "i.archived_at IS NOT NULL"
         elif value in ("claimed", "unclaimed"):

@@ -101,6 +101,7 @@ makes a hot statement stop reading history adds its row here, with the test.
 | The `is:ready` query atom (`ready_queue.ready_clause`), over the same open candidates | `GET /issues?q=is:ready`, saved filters | `tests/test_ready_open_candidates.py` (its work; its plan is the calling query's) |
 | The project brief's latest completion per issue (`project_brief._build`), one seek of each issue's own trail down `idx_activity_target` | `GET /projects/{id}/brief` | `tests/test_history_bounded_reads.py` (its plan, and its work as other projects' history grows) |
 | Full-text search (`search.search`): the newest `RANK_WINDOW` matching entries, each one's visibility and archive state asked of its own row by key | `GET /search`, `GET /issues/search`, `GET /search/workspace` (plain words), `/find` | `tests/test_history_bounded_reads.py` (its plan, its work as a common word's history grows, and the window) |
+| The idle sort (`issue_query`, `sort:idle-desc` with or without `is:open`, `is:closed` and `idle:`): the stored key (0096) read off `idx_issues_idle` or `idx_issues_closed_idle` | `GET /issues?q=…sort:idle-desc`, `/find`, saved filters | `tests/test_issue_idle_key.py` (its plan, its work as issues it does not show are added, and the stored key against the trail) |
 
 `search.RANK_WINDOW` is 1,000: a search ranks the 1,000 newest matching
 entries the caller may see, of the kind asked for and not archived. A word in
@@ -152,13 +153,15 @@ Each is a condition, with what it costs; none changes an answer.
   see, that is archived, or that is not of the kind asked for, so it walks
   past all of those before filling. A `kind=page` search for a word that
   thousands of newer issues contain reads those issues' entries first.
-- **The idle sort is not bounded** (`sort:idle-desc`, `idle:` atoms). Its key
-  is each issue's newest native work event, read per issue down
-  `idx_activity_target`, for every issue the query matches, closed ones
-  included, and the whole set is sorted before the page is taken. No existing
-  index orders issues by that key. Bounding it needs a stored per-issue
-  last-work time with an index, kept by the recorder or a trigger and
-  backfilled by a migration, and even then `is:open sort:idle-desc` would walk
-  past every closed issue, which are the most idle. A partial index of native
-  work events by (target, time) halves the per-issue cost and leaves it linear.
-  Neither is built; the choice is the owner's.
+- **An `idle:` atom under another sort** (`is:open idle:>14d`, sorted
+  newest first). The idle key is stored (0096), but the plan walks the sort's
+  own order and reads each issue's stored key, so a filter that matches few
+  issues walks the rest: 0.25 M steps at 50,000 issues for no match, from
+  5.2 M when each issue's trail was read. With `sort:idle-desc` it is a range
+  of the idle index and stops at the page.
+- **`is:archived sort:idle-desc`.** Both idle indexes lead with `archived_at`
+  for the default "not archived"; the archived issues are sorted when asked
+  for.
+- **A later page of the idle sort.** A cursor resumes after the last row's key
+  with an OR of comparisons, which the plan filters rather than seeks, so page
+  N walks the N-1 pages before it in index order (no trail, no sort).

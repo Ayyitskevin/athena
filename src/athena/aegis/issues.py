@@ -131,6 +131,11 @@ def priorities_for_ids(conn: sqlite3.Connection, issue_ids: set[int]) -> dict[in
     return {row["id"]: row["priority"] for row in rows}
 
 
+#: Columns migration 0096 stores for the work query's idle indexes
+#: (issue_query): kept by triggers, read only by that query.
+_INDEX_ONLY_COLUMNS = ("last_work_at", "status_closed")
+
+
 def _to_issue(row: sqlite3.Row) -> dict:
     """Turn a _SELECT row into an issue dict, adding the computed display key.
 
@@ -140,6 +145,10 @@ def _to_issue(row: sqlite3.Row) -> dict:
     in the one place every read funnels through, so the API and the web view can
     never disagree on an issue's key."""
     issue = dict(row)
+    # The idle sort's stored keys (0096) are index keys, not issue fields: an
+    # issue read through any surface keeps the shape it had before them.
+    for key in _INDEX_ONLY_COLUMNS:
+        issue.pop(key, None)
     if issue.get("assignee_is_agent") is not None:
         issue["assignee_is_agent"] = bool(issue["assignee_is_agent"])
     if issue.get("project_key") and issue.get("project_seq") is not None:
