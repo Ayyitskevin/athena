@@ -360,10 +360,11 @@ edit (`POST /activity/{event_id}/undo`) puts it back, and is refused with
 
 ## 7. Complete with a structured report
 
-MCP `complete_claim(issue_id, generation, results?, unfinished?, uncertainty?, evidence?, verdict?, findings?, usage?)` ·
+MCP `complete_claim(issue_id, generation, results?, unfinished?, uncertainty?, evidence?, verdict?, findings?, usage?, close_status?)` ·
 REST `POST /issues/{issue_id}/complete`
 
-Completing releases your lease. It does not close the issue. `claim_next_ready`
+Completing releases your lease. It does not close the issue unless you pass
+`close_status`, which goes through `update_issue`'s gates. `claim_next_ready`
 will not offer you the issue again until another account comments on it, changes
 its status or assignment, or claims it. This holds with or without a report.
 

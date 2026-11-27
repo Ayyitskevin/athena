@@ -286,7 +286,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         unknown" with no root catalog, "same root" with one.
 
         RESERVES NOTHING. Claim through claim_issue. complete_claim stands
-        you up; it does not close the issue."""
+        you up; it closes the issue only with close_status."""
         return client.my_office()
 
     @tool(scope=READ_ONLY, profiles=CONDUCTOR)
@@ -531,9 +531,9 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         handoff: dict | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Complete a control addressed to your run: for steer and
-        request_cancel, a summary of what you did; for request_fresh_context,
-        handoff = {summary, unresolved_questions, athena_refs, evidence_refs},
+        """Complete a control addressed to your run: steer and
+        request_cancel require summary, what you did; request_fresh_context
+        takes handoff = {summary, unresolved_questions, athena_refs, evidence_refs},
         short strings, never transcripts. Recorded as your claim."""
         return client.complete_run_control(
             control_id,

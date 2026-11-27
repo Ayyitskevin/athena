@@ -1,0 +1,1 @@
+- MCP tools refuse an argument they do not take (`invalid_arguments`, with `valid_arguments` naming the ones they do) instead of dropping it in silence.

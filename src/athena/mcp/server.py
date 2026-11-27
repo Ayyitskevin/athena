@@ -312,12 +312,13 @@ SERVER_INSTRUCTIONS = (
     "truncated, next}; when truncated is true, repeat the call with the "
     "arguments in next. A call with nothing to return answers {found: false} "
     "or {applied: true}. An answer cut to its size budget names each cut under "
-    "_truncated, with the tool call that reads the rest.\n\n"
+    "_truncated, with the tool call that reads the rest. An argument a tool "
+    "does not take is refused, never ignored.\n\n"
     "Leases: claim_issue acquires a free or expired lease. Calling it again "
     "while you hold the issue is a renewal and needs your current generation "
     "(the 428 names it); without paths or a root it needs no if_match. "
-    "complete_claim releases the lease and does NOT close "
-    "the issue; update_issue with a status does."
+    "complete_claim releases the lease; it closes the issue only with "
+    "close_status, through update_issue's gates."
 )
 RETRY_POINTER = "Retry keys and ETags: see the server instructions."
 
@@ -1136,6 +1137,7 @@ def build_server(
         listed = mcp._tool_manager.get_tool(name)  # noqa: SLF001
         assert listed is not None, name
         listed.parameters = listed_schema(listed.parameters)
+        _refuse_unknown_arguments(listed)
         return registered_tool
 
     _register_all(*_decorators(register), client)
@@ -1152,6 +1154,24 @@ def build_server(
 # Every session reads the listing before its first call, so it carries what
 # decides a call and nothing a client cannot use. Both trims happen here, once,
 # for every tool.
+
+
+def _refuse_unknown_arguments(tool: Any) -> None:
+    """An argument the tool does not take is refused, never dropped.
+
+    FastMCP's argument model ignores an unknown key, so ``update_issue(
+    assignee_id=2)`` answered "no fields to update" and a misspelt optional
+    argument (``close_satus``) did nothing without a word. The model that
+    validates each call now forbids extra keys; an unknown argument is an
+    ``invalid_arguments`` refusal naming it and the arguments the tool takes.
+    The listed schema is unchanged: the server instructions say it once."""
+    model = tool.fn_metadata.arg_model
+    strict = type(
+        model.__name__,
+        (model,),
+        {"model_config": {**model.model_config, "extra": "forbid"}},
+    )
+    tool.fn_metadata = tool.fn_metadata.model_copy(update={"arg_model": strict})
 
 
 def _listed_description(
@@ -1434,6 +1454,9 @@ def with_examples(failure: dict[str, Any], tool: str, schema: Any) -> dict[str, 
     answer = dict(failure)
     if examples:
         answer["examples"] = examples
+    if any(name not in properties for name in names):
+        # An argument the tool does not take: say which ones it does.
+        answer["valid_arguments"] = sorted(properties)
     answer["next"] = refusal_codes.next_call("invalid_arguments", tool=tool)
     return answer
 

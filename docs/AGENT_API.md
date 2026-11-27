@@ -194,7 +194,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `acknowledge_run_control` | `POST /run-controls/{control_id}/acknowledge` | idempotent | Record that you read a control addressed to your run: a receipt … |
 | `advance_desk_cursor` | `POST /desk/cursor` | idempotent | Record that you have handled every visible event up to `after_id`: |
 | `clear_watch_preference` | `DELETE /watches/{target_kind}/{target_id}/preference` | destructive, idempotent | Delete YOUR preference for a watch, restoring target/default priority. |
-| `complete_run_control` | `POST /run-controls/{control_id}/complete` | idempotent | Complete a control addressed to your run: for steer and … |
+| `complete_run_control` | `POST /run-controls/{control_id}/complete` | idempotent | Complete a control addressed to your run: steer and … |
 | `decline_run_control` | `POST /run-controls/{control_id}/decline` | idempotent | Decline a control addressed to your run, with the reason the operator … |
 | `heartbeat_agent_run` | `PUT /agent-runs/heartbeat` | additive | Say you are still working on this session's run (omit run_id); call … |
 | `link_mention` | `POST /{base}/{source_id}/link-mention` | additive | Rewrite the SOURCE document so its first unlinked mention of the target … |
@@ -311,7 +311,7 @@ with `isError` true and `status_code` null.
 
 | Code | Status | Meaning | Next |
 |---|---|---|---|
-| `invalid_arguments` | none | The tool's arguments failed its own checks, so no request was sent; the detail names each argument and the rule it broke, `violations` lists them by path and `examples` shows each one's shape. | `(the tool called)`: call it again with each named argument in the shape `examples` shows |
+| `invalid_arguments` | none | The tool's arguments failed its own checks, so no request was sent; the detail names each argument and the rule it broke, `violations` lists them by path, `examples` shows each one's shape and `valid_arguments` the names the tool takes when one is not among them. | `(the tool called)`: call it again with the arguments corrected: `violations` names each, `examples` shows its shape, `valid_arguments` the names |
 | `unknown_tool` | none | No tool of that name is registered in this session's profile. |  |
 | `coordination_root_unconfirmed` | none | The claim's answer did not confirm the coordination root you sent; the claim may already exist. Read the lease before acting. | `get_issue_lease`: issue_id; do not retry the claim without its root |
 | `athena_no_response` | none | Athena did not answer (refused, reset or timed out); whether a write applied is unknown. Read the target's state before retrying. |  |

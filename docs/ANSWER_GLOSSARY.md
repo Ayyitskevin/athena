@@ -30,7 +30,7 @@ The lean `athena.agent_desk.v2`: `my_desk` (MCP, by default) and `GET /desk?lean
 - `office.protocol.claim_one_issue`: `true`
 - `office.protocol.do_not_touch_other_work`: `true`
 - `office.protocol.complete_does_not_close_issue`: `true`
-- `office.protocol.meaning`: Sit in at most one chair. Claim that issue. Fence files with paths. complete_claim stands you up; it does not close the issue.
+- `office.protocol.meaning`: Sit in at most one chair. Claim that issue. Fence files with paths. complete_claim stands you up; it closes the issue only with close_status.
 - `office.semantics.snapshot`: this_actor_right_now
 - `office.semantics.does_not_assert`: `["alive", "running", "repo_exists", "branch_exists"]`
 

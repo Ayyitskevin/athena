@@ -696,6 +696,14 @@ def complete_control(
                     "invalid",
                     "only request_fresh_context completions carry a handoff",
                 )
+            if summary is None or (isinstance(summary, str) and not summary.strip()):
+                # Named per kind: the one field that differs from a fresh-context
+                # completion, which carries its summary inside the handoff.
+                raise RunControlCommandError(
+                    "invalid",
+                    f"completing a {row['kind']} control requires a summary "
+                    "of what you did",
+                )
             result_summary = _bounded_text(
                 summary,
                 field="summary",
