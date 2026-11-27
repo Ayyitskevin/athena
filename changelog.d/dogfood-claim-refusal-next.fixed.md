@@ -1,0 +1,1 @@
+- A claim refused because the caller is not a claimant names a next move (`comment_on_issue`, to ask a conductor or the operator for the issue); the permission itself is unchanged. Texts that said `complete_claim` never closes an issue now name `close_status`.

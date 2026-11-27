@@ -168,6 +168,30 @@ def test_a_bad_argument_is_one_object_that_names_the_argument_not_its_value():
     }
 
 
+def test_every_tool_refuses_an_argument_it_does_not_take():
+    # WHY: the dogfood found get_issue(bogus_argument=1) answered as if the
+    # argument were not there, and update_issue(assignee_id=2) said "no fields to
+    # update": a misspelt or wrong-tool argument was dropped in silence. Every
+    # tool now refuses it before any request, naming the arguments it does take.
+    sent = []
+    server = mcp_server.build_server(_mocked(sent.append))
+    listed = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    calls = [(name, {"not_an_argument": 1}) for name in sorted(listed)]
+    results = _wire(server, calls)
+    assert sent == []
+    for (name, _), result in zip(calls, results, strict=True):
+        assert result.isError is True, name
+        failure = _one(result)
+        assert failure["code"] == "invalid_arguments", name
+        assert {
+            "path": "not_an_argument",
+            "message": "Extra inputs are not permitted",
+        } in (failure["violations"]), name
+        assert failure["valid_arguments"] == sorted(
+            listed[name].inputSchema.get("properties", {})
+        ), name
+
+
 def test_a_tool_body_check_is_one_object_with_the_same_code():
     sent = []
     server = mcp_server.build_server(_mocked(sent.append))

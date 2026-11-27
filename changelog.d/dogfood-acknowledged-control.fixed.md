@@ -1,0 +1,1 @@
+- The desk's first move for an acknowledged run control is `complete_run_control`, not another acknowledgement; completing a steer or cancel without a summary says which field its kind needs.

@@ -308,6 +308,7 @@ def open_questions(
     actor: dict | None,
     asked_by: int | None = None,
     answerable_by: int | None = None,
+    operator_fallback: bool = False,
     now: datetime | None = None,
     limit: int = LANE_LIMIT,
     with_answers: bool = False,
@@ -330,16 +331,29 @@ def open_questions(
 
     ``answerable_by`` is the other side of a desk (AD5, D30): questions asked by
     someone else on issues that account created, delegated or is assigned to,
-    the accounts that can answer them."""
+    the accounts that can answer them.
+
+    ``operator_fallback`` (an admin reader) adds the questions no account but
+    the asker could answer that way: the asker created the issue, or nobody
+    did, it is assigned to the asker or nobody, and only the asker added a
+    contributor. Without it such a question reached no desk at all."""
     current = _now(now)
     vis_sql, vis_params = ("", []) if actor is None else _visibility(conn, actor)
     asker_sql = "" if asked_by is None else " AND ye.actor_id = ?"
     asker_params: list[object] = [] if asked_by is None else [asked_by]
     if answerable_by is not None:
+        orphan_sql = (
+            " OR (COALESCE(i.created_by, ye.actor_id) = ye.actor_id "
+            "AND COALESCE(i.assignee_id, ye.actor_id) = ye.actor_id "
+            "AND NOT EXISTS (SELECT 1 FROM issue_contributors oc "
+            "WHERE oc.issue_id = h.issue_id AND oc.added_by != ye.actor_id))"
+            if operator_fallback
+            else ""
+        )
         asker_sql += (
             " AND ye.actor_id != ? AND (i.created_by = ? OR i.assignee_id = ? "
             "OR EXISTS (SELECT 1 FROM issue_contributors ic "
-            "WHERE ic.issue_id = h.issue_id AND ic.added_by = ?))"
+            f"WHERE ic.issue_id = h.issue_id AND ic.added_by = ?){orphan_sql})"
         )
         asker_params += [answerable_by] * 4
         # A question on an issue the reader holds is a handoff it resumes, and

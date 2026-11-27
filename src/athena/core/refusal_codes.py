@@ -555,11 +555,15 @@ _MCP_ENTRIES: tuple[McpRefusalCode, ...] = (
         meaning=(
             "The tool's arguments failed its own checks, so no request was sent; "
             "the detail names each argument and the rule it broke, `violations` "
-            "lists them by path and `examples` shows each one's shape."
+            "lists them by path, `examples` shows each one's shape and "
+            "`valid_arguments` the names the tool takes when one is not among them."
         ),
         next=NextCall(
             tool=SAME_TOOL,
-            hint="call it again with each named argument in the shape `examples` shows",
+            hint=(
+                "call it again with the arguments corrected: `violations` names "
+                "each, `examples` shows its shape, `valid_arguments` the names"
+            ),
         ),
     ),
     McpRefusalCode(

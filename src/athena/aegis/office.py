@@ -35,7 +35,8 @@ PROTOCOL = {
     "complete_does_not_close_issue": True,
     "meaning": (
         "Sit in at most one chair. Claim that issue. Fence files with "
-        "paths. complete_claim stands you up; it does not close the issue."
+        "paths. complete_claim stands you up; it closes the issue only "
+        "with close_status."
     ),
 }
 #: What the office does not claim to know. The answer glossary

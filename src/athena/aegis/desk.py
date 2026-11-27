@@ -56,7 +56,7 @@ from athena.core import (
     identity,
     notifications,
 )
-from athena.core import clock, packet_time, run_control_commands, workers
+from athena.core import clock, packet_time, run_control_commands, run_controls, workers
 from athena.core.desk_cursors import DESK_CURSOR
 
 SCHEMA = "athena.agent_desk.v2"
@@ -446,12 +446,15 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
 def _questions_for_me(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict:
     """Open blocking questions another account asked on an issue this actor
     created, delegated or is assigned to (AD5, D30), oldest first: the
-    accounts that can answer one. Each names the call that answers it; the
+    accounts that can answer one. An admin also reads the questions no account
+    but the asker could answer. Each names the call that answers it; the
     asker resumes its handoff once it has read the answer."""
     lane = run_state.open_questions(
         conn,
         actor=actor,
         answerable_by=int(actor["id"]),
+        # A question only its asker could answer goes to the operator (AD5).
+        operator_fallback=identity.is_admin(actor),
         now=now,
         limit=QUESTIONS_LIMIT,
     )
@@ -499,11 +502,23 @@ def next_moves(desk: dict, *, now: datetime) -> list[dict]:
             {},
         )
     for control in asks["run_controls"]["items"]:
-        add(
-            f"an unanswered {control['kind']} run control #{control['id']}",
-            "acknowledge_run_control",
-            {"control_id": control["id"]},
-        )
+        if control.get("state") != run_controls.STATE_ACKNOWLEDGED:
+            add(
+                f"an unanswered {control['kind']} run control #{control['id']}",
+                "acknowledge_run_control",
+                {"control_id": control["id"]},
+            )
+        else:
+            # Acknowledged is a receipt, not an answer: the move that settles it
+            # is complete (or decline). A fresh-context completion carries a
+            # handoff, every other kind a summary of what you did.
+            fresh = control["kind"] == run_controls.KIND_REQUEST_FRESH_CONTEXT
+            add(
+                f"run control #{control['id']} ({control['kind']}) is acknowledged; "
+                f"complete it with {'a handoff' if fresh else 'a summary of what you did'}",
+                "complete_run_control",
+                {"control_id": control["id"]},
+            )
     held = {lease["issue_id"]: lease for lease in work["leases"]["items"]}
     for handoff in asks["claim_handoffs"]["items"]:
         lease = held.get(handoff["issue_id"])

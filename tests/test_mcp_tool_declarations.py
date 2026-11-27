@@ -223,13 +223,16 @@ def test_the_listing_drops_only_titles_and_indentation():
     # must not change what a client validates or what the server checks: each
     # listed input schema is exactly the argument model's schema without its
     # titles and null defaults, and each description is its docstring without the source's
-    # indentation.
+    # indentation. The server's model also forbids an argument it does not
+    # declare (an unknown one is refused, never dropped); the listing leaves that
+    # keyword out, since a client's validation would only repeat the server's.
     server = mcp_server.build_server(_NoServer(), scopes=None)
     listed = {tool.name: tool for tool in asyncio.run(server.list_tools())}
     assert len(listed) == len(mcp_server.declared())
     for name, tool in listed.items():
         registered = server._tool_manager.get_tool(name)  # noqa: SLF001
         model = registered.fn_metadata.arg_model.model_json_schema(by_alias=True)
+        assert model.pop("additionalProperties") is False, name
         assert tool.inputSchema == _without_titles(model), name
         assert tool.description == inspect.cleandoc(tool.description), name
     # A property named title survives (create_issue's title argument).

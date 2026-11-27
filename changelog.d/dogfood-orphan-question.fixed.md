@@ -1,0 +1,1 @@
+- A blocking question that no account but its asker could answer (a self-created, self-assigned issue) reaches the operator's desk under `asks.questions`.

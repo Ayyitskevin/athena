@@ -85,7 +85,10 @@ the lanes, each `{why, tool, arguments}`. The order is fixed:
 
 1. a worker the operator asked to stop (no tool: Athena cannot signal a
    process, so stopping it is yours to do);
-2. an unanswered run control: `acknowledge_run_control(control_id)`;
+2. a run control addressed to your run: unanswered,
+   `acknowledge_run_control(control_id)`; already acknowledged (a receipt, not
+   an answer), `complete_run_control(control_id)` with a summary, or a handoff
+   for `request_fresh_context`;
 3. a handoff to resume on an issue you hold: `resume_claim_handoff`;
 4. your lease expiring within 10 minutes: renew with
    `claim_issue(issue_id, generation)`; or already lapsed: clear it with
@@ -109,7 +112,7 @@ argument the move cannot supply (a comment's `body`).
 | `asks.worker_kill_requests` | your workers the operator asked to stop, still unconfirmed | 50 matching workers, with exact `total`, `limit` and `clipped` |
 | `asks.review_requests` | visible current requests for you and superseded targets on review issues you still hold; present and empty when there are none | 20, `visible_total`, `returned`, `clipped` |
 | `asks.claim_handoffs` | context handed to you on issues you hold, unacknowledged | 20 |
-| `asks.questions` | open blocking questions another account asked on an issue you created, are assigned or delegated, and do not hold yourself (AD5): the accounts that can answer one. Oldest first; each names `next: {tool: comment_on_issue, arguments: {issue_id}}` and carries `authored_by` | 5, `total` and `clipped` |
+| `asks.questions` | open blocking questions another account asked on an issue you created, are assigned or delegated, and do not hold yourself (AD5): the accounts that can answer one. An admin also reads the questions no account but the asker could answer (the asker created the issue and is its assignee, or it has none). Oldest first; each names `next: {tool: comment_on_issue, arguments: {issue_id}}` and carries `authored_by` | 5, `total` and `clipped` |
 | `work.delegations` | your delegation inbox | 20, `has_more`/`next_offset` |
 | `work.leases` | `items`: issues you hold NOW, with `active` and the 0057 generation. Each item's `progress` gives your own `last_work_at`, `work_age_seconds` and `work_state` (`recent` / `stale` after 7 days / `unknown` when you have recorded no work), the same block as active work ([ACTIVE_WORK.md](ACTIVE_WORK.md)). Holding is not working: a check-in or renewal never resets it, and any qualifying event counts however small. `lapsed`: your expired rows on open or done issues, labelled `issue_done`; holders settle their own rows deliberately with `complete_claim` and the observed generation. Reading never settles a row; only an admin may settle another actor's expired row, naming its generation | 20 each, `total` / `lapsed_total`; `lapsed_clipped` says whether rows are omitted; `lapsed_oldest_expires_at` is null when empty or clipped (unknown when clipped); total/clipped distinguish these cases, and claim order is not expiry order |
 | `work.ready` | issues you could claim now, in claim order (see below); each says why it is yours, the previous holder of a lapsed lease, and any open handoff. Also `GET /desk/ready?limit=` alone | 20 (REST 1-50), `total` and `clipped`; `held_by_you` counts your live leases |

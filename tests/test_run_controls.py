@@ -235,6 +235,16 @@ def test_fresh_context_completes_with_the_bounded_handoff_only(tmp_path):
         )
         assert wrong_shape.status_code == 422
         assert "only request_fresh_context" in wrong_shape.json()["detail"]
+        # The dogfood's bare "summary is required": a steer completed with no
+        # summary is told which field its kind needs and why.
+        for body in ({}, {"summary": "  "}):
+            bare = client.post(
+                f"/run-controls/{steer['id']}/complete", json=body, headers=bearer
+            )
+            assert bare.status_code == 422
+            assert bare.json()["detail"] == (
+                "completing a steer control requires a summary of what you did"
+            )
 
 
 def test_a_heartbeat_only_run_is_steerable_through_its_sole_checkin(tmp_path):

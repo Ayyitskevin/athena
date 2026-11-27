@@ -158,9 +158,21 @@ def _claimant_or_reject(conn: sqlite3.Connection, issue: dict, actor: dict) -> N
     it to work."""
     if claimant_is_eligible(conn, issue, actor):
         return
+    # The dogfood's creator met this 403 with nothing to do next, and a seat has
+    # no tool that makes itself a claimant: the move is to ask for the issue.
     raise IssueCommandError(
         "forbidden",
         "only the assignee, a delegated contributor, or an admin may claim this issue",
+        extra={
+            "next": {
+                "tool": "comment_on_issue",
+                "arguments": {"issue_id": issue["id"]},
+                "hint": (
+                    "ask for it: a conductor delegates it to you "
+                    "(delegate_issue), or the operator assigns it"
+                ),
+            }
+        },
     )
 
 
