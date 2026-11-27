@@ -1,0 +1,1 @@
+- **The MCP desk previews notifications one row per issue (AD12, D34).** `GET /desk?group=issue` folds `signals.notifications` by target, as `GET /notifications/grouped` does, each group with the `unread_ids` that acknowledge it; `my_desk` asks for it by default (`explain=true` returns the rows). REST keeps rows unless asked.

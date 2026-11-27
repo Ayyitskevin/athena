@@ -56,7 +56,7 @@ from support import (
 )
 
 from athena import demo
-from athena.aegis import answer_glossary
+from athena.aegis import answer_glossary, notification_groups
 from athena.core import db, token_commands, users
 from athena.main import create_app
 from athena.mcp import server as mcp_server
@@ -623,6 +623,19 @@ def test_ad2_explain_answers_the_full_answer_and_the_default_is_its_lean_shape(d
         assert explained == rest, name
         shape = answer_glossary.SHAPES[explained["schema"]]
         assert default["schema"] == shape.lean_schema, name
+        if name == "desk":
+            # The MCP desk also folds its notification preview one row per
+            # target (AD12), as GET /desk?group=issue does.
+            signals = explained["signals"]
+            explained = {
+                **explained,
+                "signals": {
+                    **signals,
+                    "notifications": notification_groups.group_rows(
+                        signals["notifications"]
+                    ),
+                },
+            }
         assert default == answer_glossary.lean(explained), name
     assert day.facts["desk"][0]["schema"] == "athena.agent_desk.v2"
     assert day.facts["desk"][1]["schema"] == "athena.agent_desk.v3"
@@ -631,7 +644,6 @@ def test_ad2_explain_answers_the_full_answer_and_the_default_is_its_lean_shape(d
 # --- the requirements the day is waiting on -----------------------------------------
 
 
-@unmet("AD4", "the desk lists every lane and names no first move")
 def test_ad4_the_desk_names_the_first_move(day):
     play(day, the_day)
     first = (day.facts["first_desk"].get("next") or [None])[0]
@@ -641,15 +653,23 @@ def test_ad4_the_desk_names_the_first_move(day):
     )
 
 
-@unmet("AD5", "the conductor finds a delegate's question only in the ranking")
 def test_ad5_a_delegates_question_is_on_the_delegators_desk(day):
+    """AD5: the question Sol asked on the slice Nova created and delegated is on
+    Nova's desk, by its asker, with the call that answers it; Sol's own desk
+    does not list it as asked of Sol."""
     play(day, the_day)
-    rows = day.facts["conductor_desk"].get("asks", {}).get("questions", {})
+    lane = day.facts["conductor_desk"]["asks"]["questions"]
     slice_id = day.facts["slice"]["id"]
-    require(
-        any(row["issue"]["id"] == slice_id for row in rows.get("items", [])),
-        "AD5: Nova's desk carries the question Sol asked on the slice",
-    )
+    (row,) = lane["items"]
+    assert lane["total"] == 1 and row["issue"]["id"] == slice_id
+    assert row["asked_by"]["id"] == day.user_id("seat")
+    assert row["blocking_question"] == "Should the lockout window be 10 or 15 minutes?"
+    assert row["authored_by"] == {"id": day.user_id("seat"), "is_agent": True}
+    assert row["next"] == {
+        "tool": "comment_on_issue",
+        "arguments": {"issue_id": slice_id},
+    }
+    assert day.facts["first_desk"]["asks"]["questions"]["items"] == []
 
 
 def test_ad6_the_reply_comes_back_with_the_handoff(day):

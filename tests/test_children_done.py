@@ -240,3 +240,29 @@ def test_the_grouped_inbox_is_one_row_per_target_and_acknowledges_by_group(
             "/notifications/grouped", params={"unread": True}, headers=mine
         ).json()
         assert [item["target_id"] for item in left["items"]] == [quiet["id"]]
+
+
+def test_the_desk_preview_groups_on_request(tmp_path):
+    """AD12: GET /desk?group=issue folds signals.notifications one row per
+    target; the default keeps rows."""
+    app, _ = make_app(tmp_path)
+    with TestClient(app) as client:
+        bootstrap(client)
+        owner = add_user(client, "owner@e.com", role="member")
+        busy = _issue(client, "Busy", assignee_id=owner["id"])
+        for n in range(3):
+            said = client.post(
+                f"/issues/{busy['id']}/comments",
+                json={"body": f"note {n}"},
+                headers=ADMIN,
+            )
+            assert said.status_code == 201, said.text
+        mine = as_user(owner["id"])
+        rows = client.get("/desk", headers=mine).json()["signals"]["notifications"]
+        grouped = client.get("/desk", params={"group": "issue"}, headers=mine).json()[
+            "signals"
+        ]["notifications"]
+        assert len(rows) >= 3
+        assert [group["target_id"] for group in grouped] == [busy["id"]]
+        assert grouped[0]["count"] == len(rows)
+        assert sorted(grouped[0]["unread_ids"]) == sorted(row["id"] for row in rows)

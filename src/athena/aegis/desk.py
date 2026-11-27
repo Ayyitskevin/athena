@@ -56,7 +56,7 @@ from athena.core import (
     identity,
     notifications,
 )
-from athena.core import clock, run_control_commands, workers
+from athena.core import clock, packet_time, run_control_commands, workers
 from athena.core.desk_cursors import DESK_CURSOR
 
 SCHEMA = "athena.agent_desk.v2"
@@ -68,6 +68,7 @@ CONTROLS_LIMIT = 20
 DELEGATIONS_LIMIT = 20
 LEASES_LIMIT = 20
 HANDOFFS_LIMIT = 20
+QUESTIONS_LIMIT = 5
 WORKER_STOPS_LIMIT = 50
 NOTIFICATIONS_LIMIT = 10
 
@@ -366,6 +367,9 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
                 "clipped": handoffs["clipped"],
                 "meaning": CLAIM_HANDOFFS_MEANING,
             },
+            # Questions you can answer (AD5): another account's open blocking
+            # question on an issue you created, delegated or are assigned to.
+            "questions": _questions_for_me(conn, actor=actor, now=lease_now),
         },
         "work": {
             "protocol": dict(WORK_PROTOCOL),
@@ -435,7 +439,118 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
         "cursor": cursor,
     }
     _mark_authors(conn, desk, actor)
-    return desk
+    # The first moves, from this same snapshot (AD4), ahead of every lane.
+    return {"schema": desk["schema"], "next": next_moves(desk, now=now), **desk}
+
+
+def _questions_for_me(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict:
+    """Open blocking questions another account asked on an issue this actor
+    created, delegated or is assigned to (AD5, D30), oldest first: the
+    accounts that can answer one. Each names the call that answers it; the
+    asker resumes its handoff once it has read the answer."""
+    lane = run_state.open_questions(
+        conn,
+        actor=actor,
+        answerable_by=int(actor["id"]),
+        now=now,
+        limit=QUESTIONS_LIMIT,
+    )
+    for item in lane["items"]:
+        item["next"] = {
+            "tool": "comment_on_issue",
+            "arguments": {"issue_id": item["issue"]["id"]},
+        }
+    return {
+        "items": lane["items"],
+        "total": lane["total"],
+        "limit": QUESTIONS_LIMIT,
+        "clipped": lane["clipped"],
+    }
+
+
+#: How many first moves the desk names (AD4).
+NEXT_LIMIT = 5
+#: A lease this close to its expiry is renewed before anything else is begun.
+NEXT_RENEW_WITHIN_SECONDS = 600
+
+
+def next_moves(desk: dict, *, now: datetime) -> list[dict]:
+    """At most :data:`NEXT_LIMIT` first moves, each ``{why, tool, arguments}``,
+    ordered by the fixed rule docs/DESK.md states (AD4): a kill request, an
+    unanswered run control, a handoff to resume, an own lease expiring within
+    ten minutes or already lapsed, a question asked of you, a review request,
+    then the first ready issue. An empty desk names wait_for_events.
+
+    Advice from a snapshot, never a reservation: each call makes its own
+    checks. ``why`` holds fixed words, ids and closed vocabulary only, never a
+    peer's text. A move with no tool (a kill request: Athena cannot signal a
+    process) names none."""
+    asks, work = desk["asks"], desk["work"]
+    moves: list[dict] = []
+
+    def add(why: str, tool: str | None, arguments: dict) -> None:
+        moves.append({"why": why, "tool": tool, "arguments": arguments})
+
+    for worker in asks["worker_kill_requests"]["items"]:
+        add(
+            f"the operator asked worker #{worker['worker_id']} to stop; stop the "
+            "process yourself (Athena cannot signal it)",
+            None,
+            {},
+        )
+    for control in asks["run_controls"]["items"]:
+        add(
+            f"an unanswered {control['kind']} run control #{control['id']}",
+            "acknowledge_run_control",
+            {"control_id": control["id"]},
+        )
+    held = {lease["issue_id"]: lease for lease in work["leases"]["items"]}
+    for handoff in asks["claim_handoffs"]["items"]:
+        lease = held.get(handoff["issue_id"])
+        add(
+            f"context handed to you on issue #{handoff['issue_id']}, which you hold",
+            "resume_claim_handoff",
+            {
+                "issue_id": handoff["issue_id"],
+                "handoff_token": handoff["handoff_token"],
+                "generation": None if lease is None else lease["generation"],
+            },
+        )
+    for lease in work["leases"]["items"]:
+        # The desk's own clock read: the answer's expires_in_seconds is stamped
+        # later, from this same instant.
+        seconds = packet_time.seconds_until(lease.get("expires_at"), now=now)
+        if seconds is not None and seconds <= NEXT_RENEW_WITHIN_SECONDS:
+            add(
+                f"your lease on issue #{lease['issue_id']} expires in {seconds}s",
+                "claim_issue",
+                {"issue_id": lease["issue_id"], "generation": lease["generation"]},
+            )
+    for lease in work["leases"]["lapsed"]:
+        add(
+            f"your lease on issue #{lease['issue_id']} lapsed; clear it",
+            "complete_claim",
+            {"issue_id": lease["issue_id"], "generation": lease["generation"]},
+        )
+    for question in asks.get("questions", {}).get("items", []):
+        add(
+            f"a question asked of you on issue #{question['issue']['id']}",
+            "comment_on_issue",
+            {"issue_id": question["issue"]["id"]},
+        )
+    reviews = asks["review_requests"] or {}
+    for request in reviews.get("items", []):
+        if request.get("status") == "requested":
+            add(
+                f"a review requested of you on issue #{request['review_issue_id']}",
+                "get_issue_work_context",
+                {"issue_id": request["review_issue_id"]},
+            )
+    if work["ready"]["items"]:
+        add("an issue you could claim now", "claim_next_ready", {})
+    if not moves:
+        add("nothing is asked of you and nothing is ready", "wait_for_events", {})
+    return moves[:NEXT_LIMIT]
 
 
 def _mark_authors(conn: sqlite3.Connection, desk: dict, actor: dict) -> None:
@@ -455,6 +570,8 @@ def _mark_authors(conn: sqlite3.Connection, desk: dict, actor: dict) -> None:
     issue_refs.extend(item["issue"] for item in waiting["items"] if "issue" in item)
     issue_refs.extend(item["issue"] for item in waiting["not_offered"]["items"])
     issue_refs.extend(item["issue"] for item in work["waiting_on"]["items"])
+    asked_of_me = desk["asks"]["questions"]["items"]
+    issue_refs.extend(item["issue"] for item in asked_of_me)
     for overlap in office_lane["fence_overlaps"]:
         issue_refs.extend((overlap["your_issue"], overlap["issue"]))
     seats = [office_lane[key] for key in ("chair", "next_to_sit") if office_lane[key]]
@@ -470,6 +587,7 @@ def _mark_authors(conn: sqlite3.Connection, desk: dict, actor: dict) -> None:
     for seat in seats:
         seat[authorship.KEY] = authors[seat["issue_id"]]
     questions = [item for item in waiting["items"] if item["kind"] == "question"]
+    questions += asked_of_me
     askers = authorship.accounts(conn, (item["asked_by"]["id"] for item in questions))
     for item in questions:
         item[authorship.KEY] = askers.get(item["asked_by"]["id"])

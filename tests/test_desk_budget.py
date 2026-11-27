@@ -262,3 +262,24 @@ def test_a_section_that_is_not_in_the_desk_is_refused():
     _size, refused = _call(server, {"section": "work.nothing"})
     assert refused["code"] == "invalid_arguments"
     assert refused["detail"] == "no section 'work.nothing' in this answer"
+
+
+def test_a_list_kept_whole_keeps_its_texts_whole_too():
+    """A list declared WHOLE (the desk's identity scopes) is never shortened,
+    neither in rows nor in the texts of its rows, however tight the budget:
+    the cap that shortens row texts elsewhere skips it."""
+    answer = {
+        "identity": {"scopes": ["docs:write", "issue:write", "read"]},
+        # Many rows that must all stay (a floor of 100): only the cap on row
+        # texts (shrink's second stage) can bring them within, and it caps
+        # every row text short enough to cut a scope name.
+        "work": {"rows": [{"text": "x" * 50} for _ in range(100)]},
+    }
+    cut = results.shrink(
+        answer,
+        2_000,
+        keep={("identity", "scopes"): results.WHOLE, ("work", "rows"): 100},
+    )
+    assert cut["identity"]["scopes"] == ["docs:write", "issue:write", "read"]
+    assert results.serialized_size(cut) <= 2_000
+    assert "identity.scopes[*]" not in cut.get("_truncated", {})

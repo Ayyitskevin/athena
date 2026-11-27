@@ -1789,12 +1789,18 @@ class AthenaClient:
             json=self._params(project_id=project_id, title=title),
         )
 
-    def my_desk(self, *, lean: bool = False) -> Any:
+    def my_desk(self, *, lean: bool = False, group: str | None = None) -> Any:
         """Your desk: identity, what is asked of you, what you hold, and what
         changed since your cursor. Includes `office` (the one-chair cubicle).
-        ``lean`` drops the fixed explanations and null keys."""
+        ``lean`` drops the fixed explanations and null keys; ``group="issue"``
+        folds the notification preview one row per target."""
+        params: dict[str, str] = {}
         if lean:
-            return self._result(self._client.get("/desk", params={"lean": "true"}))
+            params["lean"] = "true"
+        if group is not None:
+            params["group"] = group
+        if params:
+            return self._result(self._client.get("/desk", params=params))
         return self._result(self._client.get("/desk"))
 
     def ready_work(self, *, limit: int | None = None) -> Any:

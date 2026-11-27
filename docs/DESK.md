@@ -78,6 +78,28 @@ the value the command recorded, and the prose `detail` names the same values for
 person. An event with none of them has none of the keys, and an event recorded
 before migration 0086 has them only in its `detail`.
 
+## The first moves
+
+The desk opens with `next` (AD4): at most five moves from the same snapshot as
+the lanes, each `{why, tool, arguments}`. The order is fixed:
+
+1. a worker the operator asked to stop (no tool: Athena cannot signal a
+   process, so stopping it is yours to do);
+2. an unanswered run control: `acknowledge_run_control(control_id)`;
+3. a handoff to resume on an issue you hold: `resume_claim_handoff`;
+4. your lease expiring within 10 minutes: renew with
+   `claim_issue(issue_id, generation)`; or already lapsed: clear it with
+   `complete_claim(issue_id, generation)`;
+5. a question asked of you (`asks.questions`): `comment_on_issue(issue_id)`;
+6. a review requested of you: `get_issue_work_context(issue_id)` on the review
+   issue;
+7. an issue you could claim now: `claim_next_ready()`.
+
+A desk with none of these names `wait_for_events`. `why` holds fixed words, ids
+and closed vocabulary only, never a peer's text. A move is advice from a
+snapshot, not a reservation: each call makes its own checks, and some need an
+argument the move cannot supply (a comment's `body`).
+
 ## The lanes
 
 | Lane | Holds | Bound |
@@ -87,12 +109,13 @@ before migration 0086 has them only in its `detail`.
 | `asks.worker_kill_requests` | your workers the operator asked to stop, still unconfirmed | 50 matching workers, with exact `total`, `limit` and `clipped` |
 | `asks.review_requests` | visible current requests for you and superseded targets on review issues you still hold; present and empty when there are none | 20, `visible_total`, `returned`, `clipped` |
 | `asks.claim_handoffs` | context handed to you on issues you hold, unacknowledged | 20 |
+| `asks.questions` | open blocking questions another account asked on an issue you created, are assigned or delegated, and do not hold yourself (AD5): the accounts that can answer one. Oldest first; each names `next: {tool: comment_on_issue, arguments: {issue_id}}` and carries `authored_by` | 5, `total` and `clipped` |
 | `work.delegations` | your delegation inbox | 20, `has_more`/`next_offset` |
 | `work.leases` | `items`: issues you hold NOW, with `active` and the 0057 generation. Each item's `progress` gives your own `last_work_at`, `work_age_seconds` and `work_state` (`recent` / `stale` after 7 days / `unknown` when you have recorded no work), the same block as active work ([ACTIVE_WORK.md](ACTIVE_WORK.md)). Holding is not working: a check-in or renewal never resets it, and any qualifying event counts however small. `lapsed`: your expired rows on open or done issues, labelled `issue_done`; holders settle their own rows deliberately with `complete_claim` and the observed generation. Reading never settles a row; only an admin may settle another actor's expired row, naming its generation | 20 each, `total` / `lapsed_total`; `lapsed_clipped` says whether rows are omitted; `lapsed_oldest_expires_at` is null when empty or clipped (unknown when clipped); total/clipped distinguish these cases, and claim order is not expiry order |
 | `work.ready` | issues you could claim now, in claim order (see below); each says why it is yours, the previous holder of a lapsed lease, and any open handoff. Also `GET /desk/ready?limit=` alone | 20 (REST 1-50), `total` and `clipped`; `held_by_you` counts your live leases |
 | `work.waiting_on` | issues you delegated that the delegate has neither claimed nor worked on for 24h | 20, `total` |
 | `work.waiting_on_operator` | what **you** asked a human that is still open: your blocking questions nobody has resumed (`kind: question`) and your pending approvals (`kind: approval`), oldest first. Read it before asking again. Nothing enforces a response time. `not_offered`: issues the ready lane holds back from you until another account answers (see below), each with `reason` `awaiting_answer` or `completed_by_you`, `settled_by_you`, and `settled_at` only when the settlement was yours | 20, `total` across both kinds; `not_offered` 20 with its own `total` |
-| `signals` | unread notifications, `events_since_cursor`, `latest_visible_event_id` | 10 notifications, count capped at 500 |
+| `signals` | unread notifications, `events_since_cursor`, `latest_visible_event_id`. With `?group=issue` (the MCP desk's default, AD12) the notification preview is one row per target, as `GET /notifications/grouped` answers: `count`, `unread`, `verbs`, `newest` and the `unread_ids` that `mark_notification_read(ids=...)` takes | 10 notifications, count capped at 500 |
 | `cursor` | your stored position, or `null` | — |
 | `office` | your chair, fence overlaps and what to sit in next, as `GET /office` answers it ([OFFICE.md](OFFICE.md)) | one chair |
 
