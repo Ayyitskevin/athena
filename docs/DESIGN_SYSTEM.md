@@ -87,7 +87,7 @@ The old `--max-width: 720px` applied a prose measure to kanban boards. Gone.
 |---|---|
 | App bar | full, translucent, sticky |
 | Context rail | `--rail: 232px`, collapsible via cookie |
-| Work region | full-bleed |
+| Work region | full width, with the page gutter: `.work` pads itself `--sp-6` (`--sp-5 --sp-4` on a phone). Only the Mentor document layout (`.doc-layout`) is full-bleed and pads its own columns |
 | Prose | `--measure: 76ch`, applied **locally** inside the full-width shell |
 
 ### A long name never widens the page
@@ -159,7 +159,8 @@ don't add routes without also placing them in one of these five groups.
 | Trust | evidence you can hand over | `/admin/security` `/admin/users` |
 
 Account settings (`/settings/password`, `/settings/identities`) live in the user
-menu — they are not steps in the loop.
+menu — they are not steps in the loop. `/`, where the logo links, is the
+dashboard for a signed-in session and the landing page signed out.
 
 ## Agent-native UI vocabulary
 
@@ -182,7 +183,12 @@ that shows an agent, show these — the data already exists:
   render a compensating event as `undoes #2841`. History is append-only.
 - **Say what a number counts.** Every aggregate states its window and its
   exclusions in the same block — a scope label that moves without its number
-  states something false.
+  states something false. Say it in an operator's words: "every pending
+  request", "the newest 200 pending requests; older ones may exist", "1 of 1
+  examined". Not "input completeness unknown" or "considered candidates".
+- **Names, not row ids or identifiers.** A page names the account ("Created by
+  Ann"), never its id, and words a machine's detail ("claimed until 15:38 UTC")
+  with the stored text in the element's title.
 
 ## Things that are load-bearing and easy to break
 

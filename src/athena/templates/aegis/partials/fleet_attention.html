@@ -28,14 +28,13 @@
         </ul>
         {% if not fleet_attention.total %}
         <p class="muted">
-            No attention found in the examined sources — not a promise that every
-            agent is healthy or that unexamined input is clear.
+            Nothing needs you in what was examined. That is not a claim that
+            every agent is healthy.
         </p>
         {% endif %}
         <p class="muted">
-            Standing queues are not time-windowed; event counts use their stated windows.
-            Counts sum signals, not unique tasks or fleet health.
-            Input caps alone prove neither overflow nor completeness.
+            Each count says what it examined. The total adds signals, so one
+            issue can be counted more than once.
         </p>
         {% if fleet_attention.now["items"] %}
         <h4>Now queue</h4>
@@ -56,10 +55,10 @@
                     {% if item.source_link and (not row.subject or item.source_link != row.subject.href) %}<a href="{{ item.source_link }}">{{ "History" if item.source_link.endswith("/history") else "Source" }}</a> · {% endif %}
                     owner {{ item.owner_name or 'unassigned' }}
                     · {{ item.freshness }} UTC
-                    · examined {{ item.examined }} of {{ item.total }} considered candidates, not a full input population
+                    · {{ item.examined }} of {{ item.total }} examined
                 </span>
                 {% if item.next_action == "operator-link" and item.link %}
-                <a href="{{ item.link }}">Open owning surface</a>
+                <a href="{{ item.link }}">Open {{ row.kind | lower }}</a>
                 {% elif item.next_action == "agent-command" %}
                 <code>{{ item.command }}</code>
                 {% elif item.signal == "awaiting_input" %}
@@ -72,9 +71,8 @@
         </ol>
         {% if fleet_attention.now.clipped %}
         <p class="muted">
-            Ranked output clipped: showing {{ fleet_attention.now.returned }} ranked rows after examining
-            {{ fleet_attention.now.examined }} considered candidates;
-            output clipping does not establish input completeness.
+            Showing the first {{ fleet_attention.now.returned }} of
+            {{ fleet_attention.now.examined }} examined; more may exist.
         </p>
         {% endif %}
         {% endif %}

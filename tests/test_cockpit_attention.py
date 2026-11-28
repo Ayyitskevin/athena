@@ -422,7 +422,9 @@ def test_the_dashboard_shows_the_rollup_to_admins_only(tmp_path):
         assert f"/aegis/issues/{urgent['id']}/history" in page.text
         assert "Held by Sol: missed its check-in" in page.text
         assert "owner Sol" in page.text
-        assert "Open owning surface" in page.text
+        # The link says where it goes in the row's own word (K3.3).
+        assert ">Open claim</a>" in page.text
+        assert "owning surface" not in page.text
         assert "heartbeat_agent_run" not in page.text
         # And the nav now reaches the surfaces that had no link at all.
         assert "/admin/agents/runs" in page.text
@@ -455,9 +457,9 @@ def test_a_quiet_fleet_says_so_without_claiming_health(tmp_path):
             follow_redirects=False,
         )
         page = c.get("/aegis/dashboard")
-        assert "No attention found in the examined sources" in page.text
+        assert "Nothing needs you in what was examined" in page.text
         # The distinction the whole projection is built on.
-        assert "not a promise that every" in page.text
+        assert "not a claim that every agent is healthy" in " ".join(page.text.split())
 
     conn = db.connect(db_file)
     assert fleet_attention.build_attention(conn)["total"] == 0
@@ -560,12 +562,19 @@ def test_pending_input_bounds_are_visible_on_both_surfaces(tmp_path, count):
             "security_refusals",
         ]
         assert projection["total"] == min(count, 200)
+        # The count states its scope in the same block (design system), in
+        # words (K3.3): everything under the read's cap, and at the cap that
+        # older requests may exist.
+        scope = (
+            "every pending request"
+            if count < 200
+            else "the newest 200 pending requests; older ones may exist"
+        )
+        assert pending["scope"] == scope
         for html in _attention_surfaces(c):
-            assert "up to 200 newest pending requests" in html
-            assert "input completeness unknown" in html
-            assert "Standing queues are not time-windowed" in html
-            assert "not unique tasks or fleet health" in html
-            assert "neither overflow nor completeness" in html
+            assert scope in html
+            assert "Each count says what it examined" in html
+            assert "one issue can be counted more than once" in html
             assert "/admin/agents" in html
             assert "more than 200" not in html
             assert "Nothing is asking for you right now" not in html
@@ -623,7 +632,7 @@ def test_worker_stop_count_includes_the_full_registry_on_both_surfaces(
             assert "Nothing is asking for you right now" not in html
             if expected == 0:
                 assert (
-                    "No attention found in the examined sources" in html
+                    "Nothing needs you in what was examined" in html
                     or "Recorded inbox" in html
                 )
 

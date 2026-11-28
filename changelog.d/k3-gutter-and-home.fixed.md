@@ -1,0 +1,1 @@
+- The operator's pages have a gutter (no page had one: headings touched the sidebar and panels the window's edge), and `/`, where the logo links, is the dashboard for a signed-in session.

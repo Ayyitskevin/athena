@@ -53,6 +53,9 @@ SCHEMA = "athena.fleet_attention.v1"
 #: How far back the event-counted signals look. A day is long enough to catch an
 #: overnight probe and short enough that a stale number never reads as a live one.
 DEFAULT_WINDOW_HOURS = 24
+#: How many pending approvals the card reads, newest first. Its scope label
+#: says "every pending request" below this and names the cap at it.
+PENDING_APPROVALS_READ = 200
 
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -159,7 +162,9 @@ def needs_you(
     failing_webhooks = [
         hook for hook in webhooks.list_webhooks(conn) if hook["failure_count"]
     ]
-    pending_approvals = approvals.list_requests(conn, state="pending", limit=200)
+    pending_approvals = approvals.list_requests(
+        conn, state="pending", limit=PENDING_APPROVALS_READ
+    )
     # Questions an agent asked that no person has answered since: the ranked
     # queue's only ``critical`` kind, so they are in the number (U7). Counted by
     # the operator rule the ranked rows and the questions panel use.
@@ -234,9 +239,13 @@ def needs_you(
             "label": "Approvals waiting on you",
             "count": len(pending_approvals),
             "href": "/admin/agents",
+            # The read is capped: under the cap it is every pending request,
+            # at the cap there may be older ones it did not reach.
             "scope": (
-                "standing queue; up to 200 newest pending requests read; "
-                "input completeness unknown"
+                "every pending request"
+                if len(pending_approvals) < PENDING_APPROVALS_READ
+                else f"the newest {PENDING_APPROVALS_READ} pending requests; "
+                "older ones may exist"
             ),
         },
         {

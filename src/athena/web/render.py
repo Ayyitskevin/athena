@@ -289,6 +289,37 @@ def completion_header(detail: str | None) -> str:
     return (detail or "").partition(issue_activity.COMPLETION_REPORT_MARKER)[0]
 
 
+_CLAIM_DETAIL = re.compile(
+    r"^generation [0-9a-f]+; until (?P<until>[^;]+); path_fence (?P<fence>[^;]+); "
+    r"coordination_root .*$",
+    re.DOTALL,
+)
+_FENCE_WORDS = {
+    "issue_only": "",
+    "rooted": "; paths fenced within their root",
+    "unresolved": "; paths fenced as written, root unknown",
+}
+
+
+def claim_words(event: Mapping[str, Any]) -> str:
+    """A ``claimed`` or ``lease_renewed`` row in an operator's words (K3.2).
+
+    The stored detail identifies the exact possession for a machine
+    (``generation 634e...; until ...; path_fence issue_only; coordination_root
+    null``), and the history showed it raw. An operator reads how long the
+    claim holds and whether it fences paths; the generation stays in the
+    trail and in the row's title. A detail that is not in that form (an
+    imported or older row) is returned as it is, so nothing is dropped."""
+    detail = event.get("detail") or ""
+    match = _CLAIM_DETAIL.match(detail)
+    if match is None:
+        return detail
+    fence = match.group("fence").strip()
+    return f"until {match.group('until').strip()} UTC" + _FENCE_WORDS.get(
+        fence, f"; path fence {fence}"
+    )
+
+
 def completion_parts(event: Mapping[str, Any]) -> dict[str, Any]:
     """Split one ``claim_completed`` row for the report partial (U9).
 

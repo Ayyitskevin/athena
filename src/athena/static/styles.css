@@ -507,7 +507,11 @@ code, kbd, pre, samp { font-family: var(--font-mono); }
    "anywhere", not "break-word": only "anywhere" also lowers the min-content
    width, which is what lets a flex or grid item give the width back. Tables
    opt back out below, and break only their name cells. */
-.work { flex: 1; min-width: 0; background: var(--bg); overflow-wrap: anywhere; }
+.work { flex: 1; min-width: 0; padding: var(--sp-6); background: var(--bg); overflow-wrap: anywhere; }
+/* The page gutter (K3.1). Until it was set here no page had one: a heading
+   touched the rail and a panel ran to the window's edge. The document layout
+   is the one full-bleed page: its tree and reading column pad themselves. */
+.work:has(> .doc-layout) { padding: 0; }
 
 /* Region widths. `.container` survives so untouched templates keep working
    during the migration; new surfaces opt into what they need. */
@@ -1861,6 +1865,7 @@ pre.prose { white-space: pre-wrap; overflow-wrap: anywhere; }
   .doc-main { padding: var(--sp-6) var(--sp-5) var(--sp-10); }
   .app-search { order: 10; flex-basis: 100%; max-width: none; margin-left: 0; }
   .container, .container--wide { padding: var(--sp-5) var(--sp-4); }
+  .work { padding: var(--sp-5) var(--sp-4); }
   .stat-row { grid-template-columns: repeat(2, 1fr); }
   .stat { padding: var(--sp-4); border-left: 1px solid var(--border); }
   .stat:nth-child(odd) { padding-left: 0; border-left: 0; }

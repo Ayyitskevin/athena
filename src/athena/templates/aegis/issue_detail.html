@@ -103,7 +103,7 @@
         {% endif %}
         <div class="meta-item"><strong>Priority</strong> <span class="chip" data-tone="{{ issue.priority | priority_tone }}">{{ issue.priority }}</span></div>
         <div class="meta-item"><strong>Created</strong> {{ issue.created_at }}</div>
-        <div class="meta-item"><strong>Created By</strong> {{ issue.created_by }}</div>
+        <div class="meta-item"><strong>Created by</strong> {{ created_by_name or "Unknown" }}</div>
         <div class="meta-item"><strong>Assignee</strong> {{ issue.assignee_name or "Unassigned" }}</div>
         <div class="meta-item"><strong>Project</strong>
             {% if issue.project_id %}

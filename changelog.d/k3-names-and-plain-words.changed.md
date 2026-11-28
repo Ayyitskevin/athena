@@ -1,0 +1,1 @@
+- The issue page and the issue list name who created an issue instead of showing the account's id; a claim in an issue's history reads "claimed until … UTC" instead of its generation hash and root; the fleet attention card states each count's scope in plain words.

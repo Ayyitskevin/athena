@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi.responses import HTMLResponse
 
 from athena.aegis import issues, leases, statuses
-from athena.core import labels
+from athena.core import labels, users
 from athena.web.form_errors import BrowserRefusal
 
 # Attachment-command refusal codes the browser adapters answer with.
@@ -42,6 +42,19 @@ def attach_claims(conn, rows: list[dict]) -> list[dict]:
     held = leases.live_holders(conn, [row["id"] for row in rows])
     for row in rows:
         row["claim"] = held.get(row["id"])
+    return rows
+
+
+def attach_creators(conn, rows: list[dict]) -> list[dict]:
+    """Put each issue's creator's name on it under "created_by_name", in one
+    bulk read (K3.2): the list said "Created By 1". None where the issue has
+    no creator on record."""
+    named = users.get_users_by_ids(
+        conn, [row["created_by"] for row in rows if row.get("created_by")]
+    )
+    for row in rows:
+        creator = named.get(row["created_by"]) if row.get("created_by") else None
+        row["created_by_name"] = creator["name"] if creator else None
     return rows
 
 

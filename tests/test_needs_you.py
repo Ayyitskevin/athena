@@ -219,7 +219,7 @@ def test_an_open_question_counts_in_needs_you(tmp_path):
         assert _BADGE.findall(page) == ["1"], "the badge leaves the question out"
         assert _CARD.findall(page) == ["1"], "the card leaves the question out"
         assert "Questions waiting on you" in page
-        assert "No attention found in the examined sources" not in page
+        assert "Nothing needs you in what was examined" not in page
 
         # A person answers: it waits on the agent now, and leaves the number.
         client.post(
