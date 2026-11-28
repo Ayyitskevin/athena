@@ -7,15 +7,18 @@ No global app state, no surprises.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import asynccontextmanager
+import functools
 import hashlib
 import os
 import logging
 import secrets
 from pathlib import Path
 import sqlite3
+from typing import Any
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.openapi.docs import (
     get_redoc_html,
     get_swagger_ui_html,
@@ -333,6 +336,166 @@ def _attach_security_headers(
             "Strict-Transport-Security", "max-age=63072000; includeSubDomains"
         )
     return response
+
+
+#: Overrides for the dependencies of the shared routes, FastAPI's
+#: ``app.dependency_overrides`` for every app in this process at once. A test
+#: sets one with ``monkeypatch.setitem(main.SITE_DEPENDENCY_OVERRIDES, dep, fake)``;
+#: nothing in the product reads or writes it.
+SITE_DEPENDENCY_OVERRIDES: dict[Callable[..., Any], Callable[..., Any]] = {}
+
+
+class _SiteOverrides:
+    """What the shared routes ask for overrides (FastAPI reads the attribute)."""
+
+    dependency_overrides = SITE_DEPENDENCY_OVERRIDES
+
+
+class _OverridesAreSiteWide(dict):
+    """``app.dependency_overrides`` of an Athena app: empty, and it says why.
+
+    The routes are shared by every app in the process (:func:`_site_router`),
+    so one app's mapping could not reach them, and an override that is silently
+    ignored is a test that proves nothing. Setting one here is refused with the
+    place that works."""
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        raise TypeError(
+            "Athena's routes are shared across app instances, so "
+            "app.dependency_overrides does not reach them; set the override in "
+            "athena.main.SITE_DEPENDENCY_OVERRIDES (monkeypatch.setitem)"
+        )
+
+
+@functools.cache
+def _site_templates() -> Jinja2Templates:
+    """The Jinja environment, built once per process.
+
+    Its filters, globals and compiled templates are the package's own and the
+    same for every app, so apps share it as they share the routes
+    (:func:`_site_router`): a second app renders a page without compiling it
+    again."""
+    package_root = Path(__file__).resolve().parent
+    templates = Jinja2Templates(directory=package_root / "templates")
+    # Forge event details carry a URL supplied by an outside system. The filter
+    # links it only when its host belongs to a registered source; a template that
+    # passes no hosts renders inert text, so a surface that has not opted in
+    # degrades to today's behavior rather than breaking.
+    templates.env.filters["forge_detail"] = render.render_forge_detail
+    # A completion report is agent-written data (U9): these split a claim_completed
+    # row into its header and the parsed report the shared partial renders.
+    templates.env.filters["completion_parts"] = render.completion_parts
+    templates.env.filters["completion_header"] = render.completion_header
+    # Chip tone mapping (design system: docs/DESIGN_SYSTEM.md). Presentation-only,
+    # no database access — see chips.py for which domains are exact vs. best-effort.
+    templates.env.filters["status_tone"] = chips.status_tone
+    templates.env.filters["category_tone"] = chips.category_tone
+    templates.env.filters["priority_tone"] = chips.priority_tone
+    templates.env.filters["checkin_tone"] = chips.checkin_tone
+    templates.env.filters["health_tone"] = chips.health_tone
+    templates.env.filters["token_tone"] = chips.token_tone
+    templates.env.filters["sprint_tone"] = chips.sprint_tone
+    # The static fingerprint, computed once per process rather than per render.
+    # Templates append it to every /static URL so a released asset change reaches
+    # a browser holding a year-long cached copy (see STATIC_CACHE_CONTROL).
+    templates.env.globals["static_version"] = static_version(package_root / "static")
+    # The navigation badge's refresh contract (U12), built per request by the
+    # shell; see web/live.py.
+    templates.env.globals["nav_live"] = web_live.nav
+    return templates
+
+
+@functools.cache
+def _site_router() -> APIRouter:
+    """Every router Athena serves, included once per process.
+
+    FastAPI works out a route's dependency graph, its parameter and response
+    models and its path pattern per *included* router object, on the first
+    request that reaches it: about 0.6 s for Athena's routes. Including the
+    routers into each app made every app pay that again, which one served
+    process never notices and a test suite that builds seven thousand apps
+    paid seven thousand times (K1 of docs/plans/CONSOLIDATION_SPEC.md). The
+    routers are the same in every app, so they are included here once, and
+    :func:`create_app` gives each app these same included-router objects.
+
+    An app still owns everything that differs between apps: its state, its
+    middleware, its exception handlers and its lifespan. A handler reaches them
+    through ``request.app``, which is the app that received the request."""
+    site = APIRouter(dependency_overrides_provider=_SiteOverrides)
+    browser_dependencies = [Depends(_require_browser_session)]
+    site.include_router(web_router, dependencies=browser_dependencies)
+    site.include_router(web_issues.router, dependencies=browser_dependencies)
+    site.include_router(web_issue_actions.router, dependencies=browser_dependencies)
+    site.include_router(web_issue_discussion.router, dependencies=browser_dependencies)
+    site.include_router(web_projects.router, dependencies=browser_dependencies)
+    site.include_router(web_activity.router, dependencies=browser_dependencies)
+    site.include_router(web_boards.router, dependencies=browser_dependencies)
+    site.include_router(web_filters.router, dependencies=browser_dependencies)
+    site.include_router(web_auth.router, dependencies=browser_dependencies)
+    site.include_router(web_mentor.router, dependencies=browser_dependencies)
+    site.include_router(web_mentor_graph.router, dependencies=browser_dependencies)
+    site.include_router(web_mentor_spaces.router, dependencies=browser_dependencies)
+    site.include_router(web_mentor_pages.router, dependencies=browser_dependencies)
+    site.include_router(web_labels.router, dependencies=browser_dependencies)
+    site.include_router(web_admin.router, dependencies=browser_dependencies)
+    site.include_router(web_admin_agents.router, dependencies=browser_dependencies)
+    site.include_router(web_admin_security.router, dependencies=browser_dependencies)
+    site.include_router(web_admin_automation.router, dependencies=browser_dependencies)
+    site.include_router(web_work_context.router, dependencies=browser_dependencies)
+    site.include_router(web_palette.router, dependencies=browser_dependencies)
+    site.include_router(web_fleet_metrics.router, dependencies=browser_dependencies)
+
+    # Core REST API (users, api tokens, cross-module search).
+    site.include_router(users_api.router)
+    site.include_router(approvals_api.router)
+    site.include_router(workers_api.router)
+    site.include_router(fleet_seats_api.router)
+    site.include_router(security_api.router)
+    site.include_router(mentor_learnings_api.router)
+    site.include_router(aegis_dispatch_api.router)
+    site.include_router(aegis_embeds_api.router)
+    site.include_router(aegis_forge_api.router)
+    site.include_router(tokens_api.router)
+    site.include_router(idempotency_api.router)
+    site.include_router(idempotency_api.admin_router)
+    site.include_router(agent_runs_api.router)
+    site.include_router(run_controls_api.router)
+    site.include_router(answerability_api.router)
+    site.include_router(aegis_desk_api.router)
+    site.include_router(workflows_playbook_api.router)
+    site.include_router(workflows_fleet_assign_api.router)
+    # Before search_api: both live under /search, and the workspace route is the
+    # more specific path. Registration order does not decide the match here (the
+    # paths are distinct), but keeping the composed route adjacent to its layer's
+    # other router is what makes the layering legible in one read.
+    site.include_router(workflows_workspace_search_api.router)
+    site.include_router(search_api.router)
+    site.include_router(activity_api.router)
+    site.include_router(events_api.router)
+    site.include_router(webhooks_api.router)
+    site.include_router(attachments_api.router)
+    site.include_router(notifications_api.router)
+
+    # Aegis REST API (issues + labels + projects + saved filters).
+    site.include_router(aegis_api.router)
+    site.include_router(aegis_api.labels_router)
+    site.include_router(aegis_api.projects_router)
+    site.include_router(aegis_delegations_api.router)
+    site.include_router(aegis_filters_api.router)
+    site.include_router(aegis_fleet_work_api.router)
+    site.include_router(aegis_fleet_attention_api.router)
+    site.include_router(aegis_notification_priority_api.router)
+    site.include_router(aegis_notification_state_api.router)
+    site.include_router(aegis_sprints_api.router)
+    site.include_router(aegis_automation_api.router)
+    site.include_router(aegis_work_context_api.router)
+    site.include_router(aegis_fleet_metrics_api.router)
+
+    # Mentor REST API (spaces + pages + versions).
+    site.include_router(mentor_api.spaces_router)
+    site.include_router(mentor_api.pages_router)
+    site.include_router(mentor_api.notebook_router)
+    return site
 
 
 def create_app(
@@ -921,107 +1084,15 @@ def create_app(
         StaticFiles(directory=package_root / "static"),
         name="static",
     )
-    templates = Jinja2Templates(directory=package_root / "templates")
-    # Forge event details carry a URL supplied by an outside system. The filter
-    # links it only when its host belongs to a registered source; a template that
-    # passes no hosts renders inert text, so a surface that has not opted in
-    # degrades to today's behavior rather than breaking.
-    templates.env.filters["forge_detail"] = render.render_forge_detail
-    # A completion report is agent-written data (U9): these split a claim_completed
-    # row into its header and the parsed report the shared partial renders.
-    templates.env.filters["completion_parts"] = render.completion_parts
-    templates.env.filters["completion_header"] = render.completion_header
-    # Chip tone mapping (design system: docs/DESIGN_SYSTEM.md). Presentation-only,
-    # no database access — see chips.py for which domains are exact vs. best-effort.
-    templates.env.filters["status_tone"] = chips.status_tone
-    templates.env.filters["category_tone"] = chips.category_tone
-    templates.env.filters["priority_tone"] = chips.priority_tone
-    templates.env.filters["checkin_tone"] = chips.checkin_tone
-    templates.env.filters["health_tone"] = chips.health_tone
-    templates.env.filters["token_tone"] = chips.token_tone
-    templates.env.filters["sprint_tone"] = chips.sprint_tone
-    # The static fingerprint, computed once here rather than per render. Templates
-    # append it to every /static URL so a released asset change reaches a browser
-    # holding a year-long cached copy (see STATIC_CACHE_CONTROL).
-    app.state.static_version = static_version(package_root / "static")
-    templates.env.globals["static_version"] = app.state.static_version
-    # The navigation badge's refresh contract (U12), built per request by the
-    # shell; see web/live.py.
-    templates.env.globals["nav_live"] = web_live.nav
+    # The templates and the static fingerprint are the package's, the same for
+    # every app in the process: see _site_templates.
+    templates = _site_templates()
+    app.state.static_version = templates.env.globals["static_version"]
     init_templates(templates)
-    browser_dependencies = [Depends(_require_browser_session)]
-    app.include_router(web_router, dependencies=browser_dependencies)
-    app.include_router(web_issues.router, dependencies=browser_dependencies)
-    app.include_router(web_issue_actions.router, dependencies=browser_dependencies)
-    app.include_router(web_issue_discussion.router, dependencies=browser_dependencies)
-    app.include_router(web_projects.router, dependencies=browser_dependencies)
-    app.include_router(web_activity.router, dependencies=browser_dependencies)
-    app.include_router(web_boards.router, dependencies=browser_dependencies)
-    app.include_router(web_filters.router, dependencies=browser_dependencies)
-    app.include_router(web_auth.router, dependencies=browser_dependencies)
-    app.include_router(web_mentor.router, dependencies=browser_dependencies)
-    app.include_router(web_mentor_graph.router, dependencies=browser_dependencies)
-    app.include_router(web_mentor_spaces.router, dependencies=browser_dependencies)
-    app.include_router(web_mentor_pages.router, dependencies=browser_dependencies)
-    app.include_router(web_labels.router, dependencies=browser_dependencies)
-    app.include_router(web_admin.router, dependencies=browser_dependencies)
-    app.include_router(web_admin_agents.router, dependencies=browser_dependencies)
-    app.include_router(web_admin_security.router, dependencies=browser_dependencies)
-    app.include_router(web_admin_automation.router, dependencies=browser_dependencies)
-    app.include_router(web_work_context.router, dependencies=browser_dependencies)
-    app.include_router(web_palette.router, dependencies=browser_dependencies)
-    app.include_router(web_fleet_metrics.router, dependencies=browser_dependencies)
-
-    # Core REST API (users, api tokens, cross-module search).
-    app.include_router(users_api.router)
-    app.include_router(approvals_api.router)
-    app.include_router(workers_api.router)
-    app.include_router(fleet_seats_api.router)
-    app.include_router(security_api.router)
-    app.include_router(mentor_learnings_api.router)
-    app.include_router(aegis_dispatch_api.router)
-    app.include_router(aegis_embeds_api.router)
-    app.include_router(aegis_forge_api.router)
-    app.include_router(tokens_api.router)
-    app.include_router(idempotency_api.router)
-    app.include_router(idempotency_api.admin_router)
-    app.include_router(agent_runs_api.router)
-    app.include_router(run_controls_api.router)
-    app.include_router(answerability_api.router)
-    app.include_router(aegis_desk_api.router)
-    app.include_router(workflows_playbook_api.router)
-    app.include_router(workflows_fleet_assign_api.router)
-    # Before search_api: both live under /search, and the workspace route is the
-    # more specific path. Registration order does not decide the match here (the
-    # paths are distinct), but keeping the composed route adjacent to its layer's
-    # other router is what makes the layering legible in one read.
-    app.include_router(workflows_workspace_search_api.router)
-    app.include_router(search_api.router)
-    app.include_router(activity_api.router)
-    app.include_router(events_api.router)
-    app.include_router(webhooks_api.router)
-    app.include_router(attachments_api.router)
-    app.include_router(notifications_api.router)
-
-    # Aegis REST API (issues + labels + projects + saved filters).
-    app.include_router(aegis_api.router)
-    app.include_router(aegis_api.labels_router)
-    app.include_router(aegis_api.projects_router)
-    app.include_router(aegis_delegations_api.router)
-    app.include_router(aegis_filters_api.router)
-    app.include_router(aegis_fleet_work_api.router)
-    app.include_router(aegis_fleet_attention_api.router)
-    app.include_router(aegis_notification_priority_api.router)
-    app.include_router(aegis_notification_state_api.router)
-    app.include_router(aegis_sprints_api.router)
-    app.include_router(aegis_automation_api.router)
-    app.include_router(aegis_work_context_api.router)
-    app.include_router(aegis_fleet_metrics_api.router)
-
-    # Mentor REST API (spaces + pages + versions).
-    app.include_router(mentor_api.spaces_router)
-    app.include_router(mentor_api.pages_router)
-    app.include_router(mentor_api.notebook_router)
+    # Every router, by reference: see _site_router. The app adds only its own
+    # few routes below (the documents and the probes).
+    app.router.routes.extend(_site_router().routes)
+    app.dependency_overrides = _OverridesAreSiteWide()
 
     # The agent-facing OpenAPI document (agent_openapi.py): the operations an
     # agent's token can call, with the headers and refusal body the middleware
