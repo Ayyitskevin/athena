@@ -301,7 +301,9 @@ def test_a_callback_without_a_valid_signature_is_refused_before_any_lookup(tmp_p
         )
 
 
-def test_callback_authentication_precedes_json_parsing_and_database(tmp_path):
+def test_callback_authentication_precedes_json_parsing_and_database(
+    tmp_path, monkeypatch
+):
     # HMAC is the callback's entire identity boundary. Malformed JSON must not
     # reveal that it is malformed until the raw bytes authenticate, and neither
     # refusal may spend a SQLite connection.
@@ -310,7 +312,9 @@ def test_callback_authentication_precedes_json_parsing_and_database(tmp_path):
     def database_must_not_open():
         raise AssertionError("callback perimeter should have refused first")
 
-    app.dependency_overrides[get_conn] = database_must_not_open
+    monkeypatch.setitem(
+        athena_main.SITE_DEPENDENCY_OVERRIDES, get_conn, database_must_not_open
+    )
     malformed = b'{"not":'
     wrong_headers = {
         "Content-Type": "application/json",
@@ -421,7 +425,7 @@ def test_bad_callback_headers_cannot_trigger_pre_hmac_sqlite(tmp_path, monkeypat
         }
 
 
-def test_callback_attempts_charge_the_anonymous_perimeter_limit(tmp_path):
+def test_callback_attempts_charge_the_anonymous_perimeter_limit(tmp_path, monkeypatch):
     # Invalid signatures have no actor to charge. The direct peer-IP budget is
     # consumed before body work or a DB dependency, so a bad-signature flood is
     # bounded just like the forge inbound path.
@@ -430,7 +434,9 @@ def test_callback_attempts_charge_the_anonymous_perimeter_limit(tmp_path):
     def database_must_not_open():
         raise AssertionError("invalid callbacks must not open SQLite")
 
-    app.dependency_overrides[get_conn] = database_must_not_open
+    monkeypatch.setitem(
+        athena_main.SITE_DEPENDENCY_OVERRIDES, get_conn, database_must_not_open
+    )
     headers = {
         "Content-Type": "application/json",
         "X-Athena-Signature": "sha256=" + "0" * 64,

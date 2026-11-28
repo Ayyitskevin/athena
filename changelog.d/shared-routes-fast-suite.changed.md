@@ -1,0 +1,1 @@
+- The local gate and CI run several times faster: every app in a process now shares one set of included routers and one template environment instead of rebuilding them per app, and a test database is copied from a migrated template. `app.dependency_overrides` is refused on an Athena app, whose routes are shared; `athena.main.SITE_DEPENDENCY_OVERRIDES` is the seam.

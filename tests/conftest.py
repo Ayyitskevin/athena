@@ -14,6 +14,8 @@ effect immediately.
 
 from datetime import UTC, datetime
 import functools
+import sqlite3
+import threading
 
 import fastapi.dependencies.models as fastapi_dependency_models
 import httpx
@@ -26,6 +28,59 @@ from athena.core import clock as app_clock
 from athena.core import db, passwords, users_api
 
 _TEST_BOOTSTRAP_TOKEN = "test-bootstrap-token-0000000000000001"
+
+# --- a migrated database is copied, not rebuilt (K1) --------------------------
+#
+# Almost every test starts an app on an empty database file, and an empty file
+# means every migration again: 0.2 s of the 0.22 s an app took to start, some
+# seven thousand times a run. A worker now migrates an empty database once per
+# migration inventory, keeps that database in memory, and every later empty
+# database takes its pages through SQLite's backup API (about 10 ms).
+#
+# Nothing about the result differs from migrating: the pages are the ones the
+# same migrations wrote, and ``db.migrate`` still runs afterwards, so the
+# checksum ledger is validated on every database as it is in production. Only a
+# database with no objects at all is filled this way. One that already has a
+# table (an upgrade, a restore, a half-built fixture) and one a test gave a
+# different inventory (``migration_inventory_through``) go through the real
+# migrations. tests/test_suite_template_database.py holds both halves.
+_real_migrate = db.migrate
+_migrated_templates: dict[
+    tuple[tuple[str, str], ...], tuple[sqlite3.Connection, list[str]]
+] = {}
+_template_lock = threading.Lock()
+
+
+def _is_empty_database(conn: sqlite3.Connection) -> bool:
+    return (
+        not conn.in_transaction
+        and conn.execute("SELECT count(*) FROM sqlite_master").fetchone()[0] == 0
+    )
+
+
+def _migrate_from_template(conn: sqlite3.Connection) -> list[str]:
+    if not _is_empty_database(conn):
+        return _real_migrate(conn)
+    inventory = tuple((m.version, m.checksum) for m in db._migration_inventory())
+    with _template_lock:
+        template = _migrated_templates.get(inventory)
+        if template is None:
+            applied = _real_migrate(conn)
+            # Kept only once every migration applied: a failed run is never a
+            # template. Thread-shared because TestClient starts each app on a
+            # thread of its own; the lock above serialises its use.
+            snapshot = sqlite3.connect(":memory:", check_same_thread=False)
+            conn.backup(snapshot)
+            _migrated_templates[inventory] = (snapshot, applied)
+            return applied
+        snapshot, applied = template
+        snapshot.backup(conn)
+    # The real call on the copy: nothing is pending, and the ledger is checked.
+    assert _real_migrate(conn) == []
+    return list(applied)
+
+
+db.migrate = _migrate_from_template
 
 # FastAPI memoises "is this callable async/a generator?" in module-level
 # lru_caches keyed by the endpoint and dependency callables themselves. Athena's
