@@ -385,6 +385,7 @@ def _site_templates() -> Jinja2Templates:
     # A completion report is agent-written data (U9): these split a claim_completed
     # row into its header and the parsed report the shared partial renders.
     templates.env.filters["completion_parts"] = render.completion_parts
+    templates.env.filters["claim_words"] = render.claim_words
     templates.env.filters["completion_header"] = render.completion_header
     # Chip tone mapping (design system: docs/DESIGN_SYSTEM.md). Presentation-only,
     # no database access — see chips.py for which domains are exact vs. best-effort.

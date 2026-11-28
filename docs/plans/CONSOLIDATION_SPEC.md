@@ -2,7 +2,7 @@
 
 Date: 2026-11-28. Baseline: `e4ee42f` (`main` after the dogfood verdict, #496).
 Status: **specified; decisions accepted by the owner's delegation of
-2026-11-28 ("I trust your judgement"). Built: K1 (#497), K2 (this change).**
+2026-11-28 ("I trust your judgement"). Built: K1 (#497), K2 (#498), K3 (this change).**
 Requirement IDs begin `K`. Decision IDs continue the agent-day
 specification's, from D36.
 
@@ -111,17 +111,19 @@ two link cards. Signed out, `/` stays the landing page. The work region has no
 padding, so every page's heading touches the sidebar and every panel the
 window's edge; it gets the design system's page padding.
 
-**K3.2 Names, not ids or internals.** The issue page says who created the
-issue, not `Created By 1`, and a claim in the history reads as a claim, not a
-generation hash and `coordination_root null`.
+**K3.2 Names, not ids or internals.** The issue page and the issue list say
+who created the issue, not `Created By 1`, and a claim in the history reads as
+a claim ("claimed until … UTC"), not a generation hash and
+`coordination_root null`; the stored detail stays in the row's title.
 
 **K3.3 The attention card reads as sentences.** `Open owning surface` and
 `examined 1 of 1 considered candidates, not a full input population` become
 words an operator would use. The design system's rule stands: every count
 states its scope in the same block.
 
-*Done when* before and after screenshots of `/`, the dashboard and an issue are
-in the pull request, and `tests/test_cockpit_polish.py` holds the new copy.
+*Done when* the owner has before and after screenshots of the dashboard and an
+issue, and `tests/test_operator_first_minute.py` and the attention tests hold
+the redirect, the gutter, the names and the new copy.
 
 ### K4. Subtraction
 
@@ -157,12 +159,16 @@ parked. A parked subsystem that is still unused at the next review is cut.
 tool in none, whose route the request log never shows, is retired with its
 client method and tests.
 
-**K4.4 Documents.** Specifications of shipped features and finished plans move
-to `docs/archive/`, listed as a directory. `docs/` keeps what an operator or a
-contributor reads to use or change Athena today.
+**K4.4 Documents: withdrawn.** The plan was to move specifications of shipped
+features to an archive and reach 45 top-level documents. On reading them, the
+eight top-level `*_SPEC.md` files are accepted contracts their features still
+follow ("Implementation follows this contract"), cited from code and from
+other documents, and the finished plans already sit under `docs/plans/`,
+indexed as one directory. Moving live contracts to reach a count would have
+been the kind of change this program exists to stop.
 
-*Done when* the surface counts are lower than 424, 148 and 73, each removal is
-a ledger entry, and `docs/` has no more than 45 top-level documents (61 today).
+*Done when* the surface counts are lower than 424, 148 and 73 and each removal
+is a ledger entry.
 
 ## Considered and not done
 
@@ -177,6 +183,8 @@ a ledger entry, and `docs/` has no more than 45 top-level documents (61 today).
   gain.
 - **One shared set of test helpers** (93 files define their own `_bootstrap`).
   K1 gets the speed without touching them.
+- **Removing dead code.** A scan for functions nothing references found under
+  50 lines outside the console entry points. There is none worth a change.
 
 ## Corrections to the review that preceded this
 
@@ -211,8 +219,8 @@ Accepted by delegation, each reversible:
 ## Delivery
 
 One pull request per requirement group, merged when hosted CI is green and the
-local product gate passes on its head: K1 with this specification, then K2,
-K3, and K4.4. K4.2 and K4.3 follow the owner's evidence.
+local product gate passes on its head: K1 with this specification, then K2
+and K3. K4.2 and K4.3 follow the owner's evidence (K4.1).
 
 ## Scorecard
 
@@ -222,6 +230,6 @@ K3, and K4.4. K4.2 and K4.3 follow the owner's evidence.
 | hosted CI, push to green | 17.5 min | | 7.5 min |
 | prose `next` values | 5 | 0 | 0 |
 | timestamp shapes over MCP | 2 | 1 | 1 |
-| signed-in `/` | link cards | dashboard | link cards |
-| top-level documents | 61 | 45 or fewer | 61 |
+| signed-in `/` | link cards | dashboard | dashboard |
+| page gutter | 0 px | the design system's | 24 px |
 | routes, tools, tables | 424, 148, 73 | lower | 424, 148, 73 |

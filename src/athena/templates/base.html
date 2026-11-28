@@ -119,9 +119,8 @@
                     <a href="{{ signal.href }}">{{ signal.label }} <span class="chip" data-tone="accent">{{ signal.count }}</span> <span class="muted">{{ signal.scope }}</span></a>
                     {% endif %}{% endfor %}
                     {% if request.state.user.role == "admin" %}
-                    <p>Standing queues are not time-windowed; event counts use their stated windows.
-                        Counts sum signals, not unique tasks or fleet health.
-                        Input caps alone prove neither overflow nor completeness.</p>
+                    <p>Each count says what it examined. The total adds signals, so one issue
+                        can be counted more than once.</p>
                     <a href="/admin/run-controls">Run controls</a>
                     {% endif %}
                 </div>

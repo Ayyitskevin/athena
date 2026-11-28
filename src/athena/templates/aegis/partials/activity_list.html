@@ -14,6 +14,10 @@
         <span class="activity-actor">{{ e.actor_name }}</span>
         {% if completion is not none %}
             completed the claim{% if completion.header %} <span class="activity-detail">{{ completion.header }}</span>{% endif %}
+        {% elif e.verb in ["claimed", "lease_renewed"] %}
+            {# K3.2: how long and how fenced, in words. The stored detail (the
+               generation, the root) stays in the trail and in the title. #}
+            {{ "renewed the claim" if e.verb == "lease_renewed" else "claimed" }} <span class="activity-detail" title="{{ e.detail }}">{{ e | claim_words }}</span>
         {% elif e.verb == "lease_released" %}
             {# U3: an admin ended another account's lease. A release, not work done. #}
             released another account's lease <span class="activity-detail">{{ e.detail }}</span>

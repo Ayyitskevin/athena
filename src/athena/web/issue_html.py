@@ -217,8 +217,13 @@ def render_issue_detail(
     )
     offered = undo.offer(conn, user, trail) if can_write else None
 
+    creator = (
+        users.get_user(conn, issue["created_by"]) if issue.get("created_by") else None
+    )
     context = {
         "issue": issue,
+        # Who, not which row (K3.2): the page said "Created By 1".
+        "created_by_name": creator["name"] if creator else None,
         "body_html": render_issue_body(
             conn, issue["body"], actor=user, issue_id=issue_id
         ),

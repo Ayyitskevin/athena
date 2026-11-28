@@ -702,6 +702,9 @@ def test_ranked_pending_input_is_not_output_completeness(tmp_path, count):
             follow_redirects=False,
         )
         html = " ".join(c.get("/aegis/dashboard?panel=fleet-attention").text.split())
-        assert "considered candidates, not a full input population" in html
-        assert "Ranked output clipped" in html
-        assert "output clipping does not establish input completeness" in html
+        # Each row says how much was examined, and a clipped list says so and
+        # that more may exist, in words (K3.3).
+        assert " examined" in html
+        assert "considered candidates" not in html
+        assert "Showing the first " in html
+        assert "examined; more may exist" in html

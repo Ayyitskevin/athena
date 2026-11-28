@@ -67,7 +67,11 @@ def get_templates() -> Jinja2Templates:
 
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    """Simple landing page. No dynamic data yet — just the foundation."""
+    """The landing page signed out; signed in, the dashboard (K3.1). The logo
+    links here, and a signed-in operator who followed it met two link cards
+    where the page that says what needs them is one click further."""
+    if getattr(request.state, "user", None) is not None:
+        return RedirectResponse("/aegis/dashboard", status_code=303)
     return get_templates().TemplateResponse(
         request=request,
         name="home.html",
