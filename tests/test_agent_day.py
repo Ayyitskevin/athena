@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 import functools
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -57,7 +58,7 @@ from support import (
 
 from athena import demo
 from athena.aegis import answer_glossary, notification_groups
-from athena.core import db, token_commands, users
+from athena.core import db, packet_time, token_commands, users
 from athena.main import create_app
 from athena.mcp import server as mcp_server
 
@@ -721,3 +722,65 @@ def test_ad8_the_packet_knows_its_reader_holds_the_lease(day):
         day.facts["brief_packet"]["your_lease"]["generation"]
         == (day.facts["slice_packet"]["your_lease"]["generation"])
     )
+
+
+# --- the contract, finished (K2 of docs/plans/CONSOLIDATION_SPEC.md) -----------------
+
+#: Storage's timestamp shape, which no answer may carry as a whole value.
+_STORED_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?")
+
+
+def _walk(value: Any, path: str = ""):
+    """Every (path, key, value) of a JSON answer, containers included."""
+    if isinstance(value, dict):
+        # A truncated list's next is the arguments that continue the same call,
+        # the one documented other shape; it is not a call and is not walked.
+        envelope = {"items", "count", "truncated", "next"} <= set(value)
+        for key, inner in value.items():
+            if envelope and key == "next":
+                continue
+            yield f"{path}.{key}", key, inner
+            yield from _walk(inner, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, inner in enumerate(value):
+            yield from _walk(inner, f"{path}[{index}]")
+
+
+def _is_call(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and "tool" in value
+        and (value["tool"] is None or isinstance(value["tool"], str))
+        and isinstance(value.get("arguments", {}), dict)
+    )
+
+
+def test_k2_every_next_is_a_call_and_every_timestamp_has_one_shape(day):
+    """WHY: a dogfood session met `next` as a sentence in three answers and as a
+    call everywhere else, and two timestamp shapes in one day ("2026-11-27
+    14:14:41" from issues and approvals, RFC 3339 from packets). An agent
+    branches on shape before it reads a value, so both were contract bugs.
+    Every answer of the scripted day, refusals included, is walked here."""
+    agents = play(day, the_day)
+    answers = [
+        (role, tool, answer)
+        for role, agent in agents.items()
+        for tool, answer in agent.meter.answers
+    ]
+    assert len(answers) >= 20
+    nexts = 0
+    stamps = 0
+    for role, tool, answer in answers:
+        for path, key, value in _walk(answer):
+            where = f"{role} {tool}{path}"
+            if key == "next" and value is not None:
+                nexts += 1
+                calls = value if isinstance(value, list) else [value]
+                assert calls and all(_is_call(call) for call in calls), (where, value)
+            if isinstance(value, str):
+                assert not _STORED_TIMESTAMP.fullmatch(value), (where, value)
+                if packet_time.is_timestamp_key(key) and value:
+                    stamps += 1
+                    assert re.fullmatch(packet_time.PATTERN, value), (where, value)
+    # The walk met what it claims to check: the day has both in quantity.
+    assert nexts >= 5 and stamps >= 50, (nexts, stamps)

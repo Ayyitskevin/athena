@@ -318,6 +318,16 @@ def test_a_yielded_issue_is_ready_with_its_open_handoff(tmp_path):
         assert row["open_handoff"]["handoff_token"] == yielded.json()["handoff_token"]
         assert row["open_handoff"]["reason"] == "blocked"
         assert row["open_handoff"]["yielded_by"] == "One"
+        # What follows the claim is a call with what the lane already knows
+        # (K2.1); the generation is the claim's to answer.
+        assert row["open_handoff"]["next"] == {
+            "tool": "resume_claim_handoff",
+            "arguments": {
+                "issue_id": issue["id"],
+                "handoff_token": yielded.json()["handoff_token"],
+            },
+            "hint": "after claiming, with the generation the claim answers",
+        }
 
 
 # ── order ───────────────────────────────────────────────────────────────────

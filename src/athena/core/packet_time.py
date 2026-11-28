@@ -143,6 +143,25 @@ def stamp(packet: Any, *, now: datetime) -> Any:
     return out
 
 
+def shape(packet: Any) -> Any:
+    """The packet with every timestamp in the one shape, and nothing else.
+
+    :func:`stamp` without the expiry seconds, for an answer whose clock read
+    its reader does not have: the MCP client applies it to every REST answer
+    it receives (K2.2), so an agent meets one timestamp shape whatever route
+    answered. Returns new containers and leaves ``packet`` as it was."""
+    if isinstance(packet, list):
+        return [shape(item) for item in packet]
+    if not isinstance(packet, Mapping):
+        return packet
+    return {
+        key: rfc3339(value)
+        if is_timestamp_key(key) and isinstance(value, str)
+        else shape(value)
+        for key, value in packet.items()
+    }
+
+
 def _serialize(value: str) -> str:
     shaped = rfc3339(value)
     return shaped if isinstance(shaped, str) else value

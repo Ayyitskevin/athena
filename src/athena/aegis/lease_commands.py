@@ -50,6 +50,7 @@ from athena.core import (
     coordination_roots,
     db,
     identity,
+    next_call,
     notifications,
     packet_time,
     reported_usage,
@@ -702,18 +703,21 @@ COMPLETION_NEXT = "complete_claim released the lease only; issue status is uncha
 HELD_VERDICTS = ("HOLD", "BLOCKED")
 
 
-def _completion_next(report: dict | None) -> str:
-    """The completion answer's ``next``. A report of HOLD or BLOCKED says what
-    is wrong with one piece of work; this asks its author, while the finding is
-    in front of it, for the one rule that would have prevented it, and names
-    the call that records it (W4). Nothing is recorded or promoted by
-    reporting: the learning is the reporter's own later act."""
+def _completion_next(report: dict | None, issue_id: int) -> dict:
+    """The completion answer's ``next``, a call (K2.1): the pickup that follows
+    a release. A report of HOLD or BLOCKED says what is wrong with one piece of
+    work; its ``next`` asks the author, while the finding is in front of it,
+    for the one rule that would have prevented it, and is the call that
+    records it (W4). Nothing is recorded or promoted by reporting: the
+    learning is the reporter's own later act."""
     verdict = None if report is None else report.get("verdict")
     if verdict not in HELD_VERDICTS:
-        return COMPLETION_NEXT
-    return (
+        return next_call.call("claim_next_ready", COMPLETION_NEXT)
+    return next_call.call(
+        "record_run_learning",
         f"{COMPLETION_NEXT}. You reported {verdict}: record the one rule that "
-        "would have prevented it with record_run_learning(issue_id, summary)"
+        "would have prevented it, as summary",
+        issue_id=issue_id,
     )
 
 
@@ -1616,7 +1620,7 @@ def complete_claim(
             # Always present on both branches: an absent field would make
             # "the clock had already released this" a defaulted meaning.
             "lapsed": lapsed,
-            "next": _completion_next(report),
+            "next": _completion_next(report, issue_id),
         }
         if submission is not None:
             result["candidate_submission"] = review_commands.insert_submission(

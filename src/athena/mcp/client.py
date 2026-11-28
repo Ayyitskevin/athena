@@ -17,7 +17,7 @@ import re
 
 import httpx
 
-from athena.core import refusal_codes
+from athena.core import packet_time, refusal_codes
 from athena.core.coordination_roots import RootError, parse_selector
 
 
@@ -180,7 +180,7 @@ class AthenaClient:
     def _result(self, response: httpx.Response) -> Any:
         if response.status_code >= 400:
             try:
-                payload = response.json()
+                payload = packet_time.shape(response.json())
             except Exception:  # noqa: BLE001 — body may not be JSON
                 payload = None
             if isinstance(payload, dict):
@@ -201,7 +201,10 @@ class AthenaClient:
             )
         if response.status_code == 204 or not response.content:
             return None
-        result = response.json()
+        # One timestamp shape for an agent, whatever route answered (K2.2):
+        # REST packets already carry it; issue, approval and comment answers
+        # carry storage's. Shaped here, before any budget measures the answer.
+        result = packet_time.shape(response.json())
         etag = response.headers.get("ETag")
         if isinstance(result, dict) and etag is not None:
             result["_etag"] = etag

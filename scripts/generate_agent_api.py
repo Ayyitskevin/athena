@@ -167,15 +167,11 @@ def registered_descriptions() -> dict[str, str]:
     sys.path.insert(0, str(REPO / "src"))
     from athena.mcp.server import build_server  # noqa: PLC0415 — after sys.path
 
-    server = build_server(None, scopes=None)  # type: ignore[arg-type]
-    try:
-        registered = server._tool_manager.list_tools()  # noqa: SLF001
-        pairs = [(t.name, t.description or "") for t in registered]
-    except AttributeError:  # future mcp versions: fall back to the async API
-        import asyncio  # noqa: PLC0415
+    import asyncio  # noqa: PLC0415
 
-        listed = asyncio.run(server.list_tools())
-        pairs = [(t.name, t.description or "") for t in listed]
+    server = build_server(None, scopes=None)  # type: ignore[arg-type]
+    listed = asyncio.run(server.list_tools())
+    pairs = [(t.name, t.description or "") for t in listed]
     summaries: dict[str, str] = {}
     for name, desc in pairs:
         first = (desc.strip().splitlines() or [""])[0].strip()

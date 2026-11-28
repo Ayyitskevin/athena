@@ -30,7 +30,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.shared.memory import create_connected_server_and_client_session
 import pytest
 
-from athena.core import refusal_codes
+from athena.core import packet_time, refusal_codes
 from athena.main import create_app
 from athena.mcp import results
 from athena.mcp import server as mcp_server
@@ -94,8 +94,9 @@ def test_a_list_is_one_object_with_its_four_keys(app_client):
     assert [row["title"] for row in whole["items"]] == [
         row["title"] for row in page["items"] + tail["items"]
     ]
-    # The rows are the REST rows as summaries: everything but the body (A6).
-    rest = app_client.get("/issues").json()["issues"]
+    # The rows are the REST rows as summaries: everything but the body (A6),
+    # with their timestamps in the one shape (K2.2).
+    rest = packet_time.shape(app_client.get("/issues").json()["issues"])
     assert whole["items"] == [
         {key: value for key, value in row.items() if key != "body"} for row in rest
     ]
@@ -131,7 +132,14 @@ def test_a_dict_answer_keeps_its_fields(app_client):
     server = mcp_server.build_server(AthenaClient(client=app_client))
     (result,) = _wire(server, [("get_issue", {"issue_id": issue["id"]})])
     rest = app_client.get(f"/issues/{issue['id']}")
-    assert _one(result) == {**rest.json(), "_etag": rest.headers["ETag"]}
+    # The REST answer, its timestamps in the one shape (K2.2), and the tag.
+    stored = rest.json()["created_at"]
+    assert " " in stored and not stored.endswith("Z")  # REST keeps storage's
+    assert _one(result) == {
+        **packet_time.shape(rest.json()),
+        "_etag": rest.headers["ETag"],
+    }
+    assert _one(result)["created_at"] == stored.replace(" ", "T") + "Z"
 
 
 def test_in_process_call_tool_answers_the_same_single_object(app_client):

@@ -99,7 +99,13 @@ def test_reported_failure_and_unrun_evidence_release_the_claim_and_survive_conte
             "issue_status": "open",
             "issue_still_open": True,
             "lapsed": False,
-            "next": "complete_claim released the lease only; issue status is unchanged",
+            "next": {
+                "tool": "claim_next_ready",
+                "arguments": {},
+                "hint": (
+                    "complete_claim released the lease only; issue status is unchanged"
+                ),
+            },
         }
         events = client.get(
             f"/activity?target_kind=issue&target_id={issue['id']}&verb=claim_completed",
@@ -146,7 +152,13 @@ def test_absent_report_preserves_legacy_detail_and_response(tmp_path, fields):
             "issue_status": "open",
             "issue_still_open": True,
             "lapsed": False,
-            "next": "complete_claim released the lease only; issue status is unchanged",
+            "next": {
+                "tool": "claim_next_ready",
+                "arguments": {},
+                "hint": (
+                    "complete_claim released the lease only; issue status is unchanged"
+                ),
+            },
         }
         assert result.json() == expected
         assert result.content == json.dumps(expected, separators=(",", ":")).encode(

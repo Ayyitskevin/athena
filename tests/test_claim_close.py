@@ -54,6 +54,11 @@ def test_close_status_releases_and_closes_in_one_call(tmp_path):
         answer = done.json()
         assert answer["released"] is True
         assert answer["close"] == {"status": "done", "applied": True}
+        assert answer["next"] == {
+            "tool": "claim_next_ready",
+            "arguments": {},
+            "hint": "released the lease and set the issue to done",
+        }
         assert answer["issue_status"] == "done"
         assert answer["issue_still_open"] is False
         # The answer carries the closed issue's tag for the next guarded write.
@@ -108,7 +113,12 @@ def test_a_gated_close_asks_and_keeps_the_release(tmp_path):
         assert close["code"] == "approval_required"
         assert close["approval"]["state"] == "pending"
         assert "lease is released" in close["detail"]
-        assert "update_issue" in close["next"]
+        # The retry is a call, not a sentence to parse (K2.1).
+        assert close["next"] == {
+            "tool": "update_issue",
+            "arguments": {"issue_id": issue_id, "status": "done"},
+            "hint": "once the operator approves",
+        }
         assert body["issue_still_open"] is True
         issue = client.get(f"/issues/{issue_id}", headers=bearer(sol)).json()
         assert issue["status"] != "done"

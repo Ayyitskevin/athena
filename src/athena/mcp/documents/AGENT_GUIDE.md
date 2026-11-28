@@ -16,6 +16,11 @@ resources, in every profile: this guide at `athena://docs/loop-guide`, the boot 
 `athena://docs/glossary`. A resource costs nothing until it is read. The server offers
 no prompts.
 
+A `next` is a call, never a sentence: `{tool, arguments, hint}`, with `arguments` and
+`hint` present where the answer has them. The desk's `next` is a list of calls, each
+with `why`. Make the call; do not parse the hint. The one other shape is a truncated
+list's `next`, which is the arguments that continue the same call (below).
+
 Every refusal (any 4xx or 5xx JSON body) carries a `code` beside its `detail`, from
 one registry. Branch on `code`, never on the `detail` text. Over MCP a refused call
 returns that same object with `isError` true, and `next` names the call that resolves
@@ -383,7 +388,8 @@ Content-Type: application/json
 
 ```json
 {"released":true,"issue_id":1,"issue_status":"in_progress","issue_still_open":true,
- "next":"complete_claim released the lease only; issue status is unchanged"}
+ "next":{"tool":"claim_next_ready","arguments":{},
+         "hint":"complete_claim released the lease only; issue status is unchanged"}}
 ```
 
 HTTP 200.

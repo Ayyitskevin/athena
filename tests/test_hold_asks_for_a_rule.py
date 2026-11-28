@@ -74,10 +74,13 @@ def test_the_answer_names_the_call_and_the_call_records_the_rule(tmp_path, verdi
         )
         after = client.get(runbook, headers=bearer(world["rex"]))
 
-    next_text = answer["next"]
-    assert next_text.startswith(lease_commands.COMPLETION_NEXT)
-    assert f"You reported {verdict}" in next_text
-    assert next_text.endswith("record_run_learning(issue_id, summary)")
+    # A call, not a sentence to parse (K2.1): the tool that records the rule,
+    # with the issue it is about, and the ask as its hint.
+    following = answer["next"]
+    assert following["tool"] == "record_run_learning"
+    assert following["arguments"] == {"issue_id": world["issue_id"]}
+    assert following["hint"].startswith(lease_commands.COMPLETION_NEXT)
+    assert f"You reported {verdict}" in following["hint"]
     # Reporting recorded nothing: the runbook is the reporter's later act.
     assert before.status_code == 200 and before.json() is None
     assert recorded.status_code == 201, recorded.text
@@ -93,7 +96,11 @@ def test_a_report_that_holds_nothing_is_answered_as_before(tmp_path, report):
         world = _world(client)
         answer = _complete(client, world, **report)
 
-    assert answer["next"] == lease_commands.COMPLETION_NEXT
-    assert answer["next"] == (
+    assert answer["next"] == {
+        "tool": "claim_next_ready",
+        "arguments": {},
+        "hint": lease_commands.COMPLETION_NEXT,
+    }
+    assert lease_commands.COMPLETION_NEXT == (
         "complete_claim released the lease only; issue status is unchanged"
     )

@@ -62,6 +62,7 @@ from athena.core import (
     work_query,
 )
 from athena.core.ids import RowIdPath
+from athena.core.next_call import NextCallOut
 from athena.aegis.review_models import (
     CandidateSubmission,
     CandidateSubmissionReceipt,
@@ -1677,7 +1678,7 @@ class ClaimCloseOut(BaseModel):
     detail: str | None = None
     approval: dict | None = None
     retry_after_seconds: int | None = None
-    next: str | None = None
+    next: NextCallOut | None = None
 
 
 class CompleteClaimOut(BaseModel):
@@ -1690,7 +1691,7 @@ class CompleteClaimOut(BaseModel):
     # this one is the difference between "you stood up" and "you cleared a row
     # you had already lost".
     lapsed: bool
-    next: str
+    next: NextCallOut
     candidate_submission: CandidateSubmissionReceipt | None = None
     candidate_review: CandidateReviewReceipt | None = None
     close: ClaimCloseOut | None = None

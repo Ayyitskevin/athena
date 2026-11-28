@@ -80,9 +80,14 @@ def test_pickup_is_one_post_with_explicit_arguments_and_run(
         else:
             result = client.claim_next_ready(**arguments)
 
-    # Historical receipt bytes pass through; no fresh context read or renewal.
+    # The historical receipt passes through; no fresh context read or renewal.
     # The transport marks the answer a replay, and the client says so (F14).
-    assert result == {**receipt, "_replayed": True}
+    # Its timestamp arrives in the one shape (K2.2), whatever the receipt held.
+    assert result == {
+        **receipt,
+        "observed_at": "2035-01-01T00:00:00Z",
+        "_replayed": True,
+    }
     assert len(requests) == 1
     request = requests[0]
     assert request.url.query == b""

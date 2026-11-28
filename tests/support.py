@@ -483,6 +483,8 @@ class Meter:
     tools: Counter[str] = field(default_factory=Counter)
     over_budget: list[str] = field(default_factory=list)
     refusals: list[Refusal] = field(default_factory=list)
+    #: Every answer as the agent received it, refusals included, with its tool.
+    answers: list[tuple[str, dict]] = field(default_factory=list)
 
 
 def assert_registered_refusal(answer: Mapping[str, Any]) -> None:
@@ -532,6 +534,7 @@ class McpAgent:
             self.meter.over_budget.append(f"{tool}: {len(text)} > {budget}")
         answer = json.loads(text)
         assert isinstance(answer, dict), f"{tool} answered {type(answer).__name__}"
+        self.meter.answers.append((tool, answer))
         if result.isError:
             assert_registered_refusal(answer)
             self.meter.refusals.append(Refusal(self.name, tool, answer))
