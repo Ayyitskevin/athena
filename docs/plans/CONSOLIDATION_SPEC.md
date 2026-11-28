@@ -2,7 +2,7 @@
 
 Date: 2026-11-28. Baseline: `e4ee42f` (`main` after the dogfood verdict, #496).
 Status: **specified; decisions accepted by the owner's delegation of
-2026-11-28 ("I trust your judgement"). Built: K1 (this change).**
+2026-11-28 ("I trust your judgement"). Built: K1 (#497), K2 (this change).**
 Requirement IDs begin `K`. Decision IDs continue the agent-day
 specification's, from D36.
 
@@ -21,9 +21,9 @@ proportion and friction, not correctness:
 
 - **the loop is slow**: the local product gate takes 34:54, so every change,
   by a person or an agent, waits half an hour to learn it is green;
-- **the two front doors are unfinished**: an operator signs in to an empty
-  page, and an agent still meets three `next` values that are prose and two
-  timestamp shapes;
+- **the two front doors are unfinished**: the operator's pages have no
+  gutter and the logo leads to an empty page, and an agent still meets five
+  `next` values that are prose and two timestamp shapes;
 - **nothing has ever been removed**, and no evidence newer than August says
   what could be.
 
@@ -48,9 +48,10 @@ doors, and sets up the first removals on evidence.
 | surface | 424 routes, 148 tools (92 in no working profile), 73 tables |
 | local product gate, `-n 3` | 34:54 for 7,057 tests |
 | a test's app: migrate, then first two requests | 0.18 s + 0.74 s; a later request is 0.01 s |
-| `next` values that are prose, not a call | 3 (`complete_claim`, its close, the ready lane's open handoff) |
+| `next` values that are prose, not a call | 5 (`complete_claim`, three of its close, the ready lane's open handoff) |
 | timestamp shapes in MCP answers | 2 (`2026-11-27 14:14:41` and RFC 3339) |
-| what a signed-in operator sees at `/` | two link cards |
+| what a signed-in operator sees at `/` (the logo's link) | two link cards |
+| space between the sidebar and a page's content | 0 px, on every page |
 
 ## Requirements
 
@@ -82,25 +83,33 @@ test proves the copied database equals a migrated one.
 ### K2. The agent's contract, finished
 
 **K2.1 `next` is a call, a list of calls, or null.** A call is
-`{tool, arguments?, hint?, why?}`. The three prose values become calls; the
-sentence each carried moves to `hint`.
+`{tool, arguments?, hint?}`; the desk's list carries `why` in place of `hint`.
+The five prose values become `{tool, arguments, hint}` (`core/next_call.py`);
+the sentence each carried moves to `hint`. One other shape stays, because it is
+one documented rule in one place: beside `truncated` in a list, `next` is the
+arguments that continue the same call.
 
 **K2.2 One timestamp shape in every MCP answer.** REST packets already take
 RFC 3339 through `core/packet_time.py`; issue, approval and comment answers
-still carry SQLite's shape. The MCP server stamps every answer at its one
-exit. REST is unchanged.
+still carry SQLite's shape. The MCP client shapes every REST answer where it
+receives it, before any response budget measures it. REST is unchanged. Every
+parameter that takes a timestamp back (`since`, `mute_until`, `schedule_at`)
+already parses both shapes.
 
-**K2.3 One seam for the MCP SDK's private parts.** The six references to
-FastMCP internals move behind one module with a test that fails by name when
-the SDK moves them.
+**K2.3 One seam for the MCP SDK's private parts.** The six reads of FastMCP
+internals become two functions in `mcp/server.py`, with a test that names each
+private name against the installed SDK and fails if another module reads one.
 
 *Done when* a test walks every answer of the scripted agent's day and finds no
 prose `next` and no timestamp outside the one shape.
 
 ### K3. The operator's first minute
 
-**K3.1 A signed-in operator lands on the dashboard.** `/` shows it; signed out,
-`/` stays the landing page.
+**K3.1 `/` is the dashboard for a signed-in operator, and pages have a
+gutter.** Sign-in already lands on the dashboard; the logo's link, `/`, showed
+two link cards. Signed out, `/` stays the landing page. The work region has no
+padding, so every page's heading touches the sidebar and every panel the
+window's edge; it gets the design system's page padding.
 
 **K3.2 Names, not ids or internals.** The issue page says who created the
 issue, not `Created By 1`, and a claim in the history reads as a claim, not a
@@ -171,19 +180,21 @@ a ledger entry, and `docs/` has no more than 45 top-level documents (61 today).
 
 ## Corrections to the review that preceded this
 
-- "`next` has about seven shapes." It has one call shape with optional keys,
-  a list of calls on the desk, null, and three prose exceptions (K2.1).
+- "`next` has about seven shapes." It had one call shape with optional keys,
+  a list of calls on the desk, null, and five prose exceptions (K2.1).
 - "Generate the MCP layer from one declaration." Measured, and not worth it.
 - "The gate is slow because of its machinery." It was app construction (K1).
+- "An operator signs in to an empty page." Sign-in lands on the dashboard; the
+  empty page is `/`, where the logo leads (K3.1).
 
 ## Compatibility
 
-- K2.1 changes three `next` values from a string to an object.
+- K2.1 changes five `next` values from a string to an object, in REST and MCP.
 - K2.2 changes timestamps in MCP answers that were in SQLite's shape.
 - K3.1 changes what `/` returns to a signed-in browser.
 - K4 removes routes and tools; a parked route answers 410 with a pointer.
 
-Not changed: REST bodies other than the three `next` values, visibility
+Not changed: REST bodies other than the five `next` values, visibility
 (hidden reads as missing), migrations (forward only), coverage floors.
 
 ## Decisions
@@ -207,9 +218,10 @@ K3, and K4.4. K4.2 and K4.3 follow the owner's evidence.
 
 | measure | baseline | target | now |
 |---|---|---|---|
-| local product gate | 34:54 | under 15:00 | (K1) |
-| prose `next` values | 3 | 0 | 3 |
-| timestamp shapes over MCP | 2 | 1 | 2 |
+| local product gate | 34:54 | under 15:00 | 13:06 |
+| hosted CI, push to green | 17.5 min | | 7.5 min |
+| prose `next` values | 5 | 0 | 0 |
+| timestamp shapes over MCP | 2 | 1 | 1 |
 | signed-in `/` | link cards | dashboard | link cards |
 | top-level documents | 61 | 45 or fewer | 61 |
 | routes, tools, tables | 424, 148, 73 | lower | 424, 148, 73 |

@@ -314,7 +314,12 @@ NOT_PEER_WRITTEN: dict[str, tuple[str, str]] = {
         "the yielding actor's display name; the handoff's own read names its id",
     ),
     "desk:.work.ready.items[].open_handoff.yielded_at": (TIME, "server clock"),
-    "desk:.work.ready.items[].open_handoff.next": (SERVER, "fixed guidance"),
+    "desk:.work.ready.items[].open_handoff.next.tool": (SERVER, "fixed tool name"),
+    "desk:.work.ready.items[].open_handoff.next.hint": (SERVER, "fixed guidance"),
+    "desk:.work.ready.items[].open_handoff.next.arguments.handoff_token": (
+        ID,
+        "the handoff's token",
+    ),
     "desk:.work.waiting_on_operator.meaning": (SERVER, "fixed lane text"),
     "desk:.work.waiting_on_operator.items[].kind": (CLOSED, "question or approval"),
     "desk:.work.waiting_on_operator.items[].action_kind": (

@@ -1,0 +1,1 @@
+- A `next` in any answer is a call (`{tool, arguments, hint}`), never a sentence: `complete_claim`, its close and the ready lane's open handoff answered prose and now name the tool and its arguments.

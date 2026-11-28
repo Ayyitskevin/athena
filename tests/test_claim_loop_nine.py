@@ -129,8 +129,9 @@ def test_complete_claim_says_the_issue_is_still_open(tmp_path):
     assert result["released"] is True
     assert result["issue_still_open"] is True
     assert result["issue_status"] == "open"
-    assert "unchanged" in result["next"]
-    assert "PATCH" not in result["next"]
+    assert result["next"]["tool"] == "claim_next_ready"
+    assert "unchanged" in result["next"]["hint"]
+    assert "PATCH" not in result["next"]["hint"]
 
 
 def test_rest_desk_and_work_context_narrate_the_claim(tmp_path):

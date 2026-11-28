@@ -38,6 +38,7 @@ from athena.aegis.review_models import (
     CandidateReviewRequestReceipt,
 )
 from athena.core.ids import MAX_SQLITE_INTEGER, RowIdPath
+from athena.core.next_call import NextCallOut
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, issue_write_actor, optional_actor
 
@@ -273,7 +274,7 @@ class ReadyClaimHandoff(BaseModel):
     reason: lease_commands.ClaimYieldReason
     yielded_by: str
     yielded_at: Timestamp
-    next: str
+    next: NextCallOut
 
 
 class ReadyClaimAcquired(ReadyClaimBase):

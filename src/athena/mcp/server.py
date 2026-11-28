@@ -1134,7 +1134,7 @@ def build_server(
             description=_listed_description(function, declaration),
             annotations=_annotations(declaration),
         )(shaped)
-        listed = mcp._tool_manager.get_tool(name)  # noqa: SLF001
+        listed = sdk_tool(mcp, name)
         assert listed is not None, name
         listed.parameters = listed_schema(listed.parameters)
         _refuse_unknown_arguments(listed)
@@ -1154,6 +1154,28 @@ def build_server(
 # Every session reads the listing before its first call, so it carries what
 # decides a call and nothing a client cannot use. Both trims happen here, once,
 # for every tool.
+
+
+# --- the SDK's private parts, in one place (K2.3) -----------------------------
+#
+# FastMCP offers no public way to read a registered tool's record, to replace
+# its argument model, or to reach the protocol server beneath it. Athena needs
+# all three (the listing it shortens, the unknown argument it refuses, the one
+# JSON object every answer is). Each private name is read here and nowhere else
+# in the package, so an SDK release that moves one fails
+# tests/test_mcp_sdk_seam.py by the name that moved.
+
+
+def sdk_tool(mcp: FastMCP, name: str) -> Any:
+    """FastMCP's own record of the tool ``name``, or None: its ``parameters``
+    (the listed input schema) and ``fn_metadata`` (the argument model)."""
+    return mcp._tool_manager.get_tool(name)  # noqa: SLF001
+
+
+def sdk_protocol_server(mcp: FastMCP) -> Any:
+    """The low-level server FastMCP wraps: its ``call_tool`` registration and
+    its ``request_handlers``."""
+    return mcp._mcp_server  # noqa: SLF001
 
 
 def _refuse_unknown_arguments(tool: Any) -> None:
@@ -1432,7 +1454,7 @@ def tool_failure_for(mcp: FastMCP, name: str, exc: BaseException) -> dict[str, A
     An argument refusal also gets its examples and ``next`` (AD9)."""
     failure = tool_failure(exc)
     if failure.get("code") == "invalid_arguments":
-        registered = mcp._tool_manager.get_tool(name)  # noqa: SLF001
+        registered = sdk_tool(mcp, name)
         if registered is not None:
             failure = with_examples(failure, name, registered.parameters)
     return failure
@@ -1495,7 +1517,7 @@ def _answer_refusals_as_one_object(mcp: FastMCP) -> None:
         return [TextContent(type="text", text=text)], structured
 
     # The same registration FastMCP makes for its own call_tool, replaced.
-    mcp._mcp_server.call_tool(validate_input=False)(call_tool)  # noqa: SLF001
+    sdk_protocol_server(mcp).call_tool(validate_input=False)(call_tool)
 
 
 def _advertise_no_prompts(mcp: FastMCP) -> None:
@@ -1506,7 +1528,7 @@ def _advertise_no_prompts(mcp: FastMCP) -> None:
     prompts that do not exist. Removing the two handlers drops the capability
     from the handshake; a client that asks anyway is told the method is not
     found."""
-    handlers = mcp._mcp_server.request_handlers  # noqa: SLF001
+    handlers = sdk_protocol_server(mcp).request_handlers
     handlers.pop(ListPromptsRequest, None)
     handlers.pop(GetPromptRequest, None)
 

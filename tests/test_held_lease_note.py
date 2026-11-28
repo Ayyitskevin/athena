@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from athena.aegis import leases
-from athena.core import db
+from athena.core import db, packet_time
 from athena.core.etag import strong_etag
 from athena.main import create_app
 from athena.mcp.client import AthenaClient
@@ -156,10 +156,15 @@ def test_own_row_note_crosses_real_chain_without_releasing(
     note = body["held_lease"]
     assert set(note) == {"generation", "expires_at", "active", "message"}
     assert note["generation"] == claim["generation"]
-    # The note rides the issue's own write answer, which keeps the stored
-    # shape; the claim answers the lease packet in RFC 3339 (A13). One instant,
+    # The note rides the issue's own write answer. Over REST it keeps
+    # storage's shape; the MCP client shapes every answer it receives (K2.2),
+    # so there it is the lease packet's RFC 3339 (A13) already. One instant,
     # lapsed or not: the clock moved, the expiry did not.
-    assert note["expires_at"] == claim["expires_at"].replace("T", " ").removesuffix("Z")
+    if surface == "rest":
+        assert " " in note["expires_at"]
+    else:
+        assert note["expires_at"] == claim["expires_at"]
+    assert packet_time.rfc3339(note["expires_at"]) == claim["expires_at"]
     assert note["active"] is (not expired)
     assert "separate deliberate action" in note["message"]
     assert (

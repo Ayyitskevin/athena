@@ -20,7 +20,13 @@ import sqlite3
 
 from athena.aegis import issue_commands
 from athena.aegis import statuses
-from athena.core import approval_commands, approvals, budgets, run_context
+from athena.core import (
+    approval_commands,
+    approvals,
+    budgets,
+    next_call,
+    run_context,
+)
 
 
 def check_offered(
@@ -57,7 +63,10 @@ def close_after_release(
 ) -> dict:
     """``released`` (``complete_claim``'s answer) with the close applied, or
     with ``close.applied`` false and why. Runs after the release committed."""
-    retry = f"update_issue with status {status!r}"
+
+    def retry(when: str) -> dict:
+        return next_call.call("update_issue", when, issue_id=issue_id, status=status)
+
     try:
         updated = issue_commands.update_issue(
             conn, actor=actor, issue_id=issue_id, status=status
@@ -78,7 +87,7 @@ def close_after_release(
             approvals.APPROVAL_REQUIRED_CODE,
             f"{exc.action_kind} requires operator approval",
             approval=asked.public(),
-            next=f"once the operator approves, {retry}",
+            next=retry("once the operator approves"),
         )
     except approvals.ApprovalRejected as exc:
         close = _not_applied(
@@ -93,7 +102,7 @@ def close_after_release(
             budgets.BUDGET_EXHAUSTED_CODE,
             "the agent budget is exhausted for this window",
             retry_after_seconds=exc.retry_after_seconds,
-            next=f"after {exc.retry_after_seconds}s, {retry}",
+            next=retry(f"after {exc.retry_after_seconds}s"),
         )
     except issue_commands.IssueCommandError as exc:
         close = _not_applied(status, exc.code or exc.kind, exc.detail)
@@ -106,7 +115,10 @@ def close_after_release(
             **released,
             "issue_status": updated["status"],
             "issue_still_open": still_open,
-            "next": f"released the lease and set the issue to {updated['status']}",
+            "next": next_call.call(
+                "claim_next_ready",
+                f"released the lease and set the issue to {updated['status']}",
+            ),
             "close": {"status": updated["status"], "applied": True},
         }
     return {**released, "close": close}

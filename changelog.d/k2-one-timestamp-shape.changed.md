@@ -1,0 +1,1 @@
+- Every MCP answer carries timestamps in one shape, RFC 3339 UTC to the second, whatever route answered; issue, approval, comment and check-in answers carried storage's shape (`2026-11-27 14:14:41`). REST is unchanged.

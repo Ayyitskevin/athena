@@ -47,7 +47,7 @@ import sqlite3
 
 from athena.aegis import claim_handoffs, dependencies, issues, leases, statuses
 from athena.aegis.issue_commands import AUTOMATION_ACTOR_EMAIL
-from athena.core import access, clock, db, identity
+from athena.core import access, clock, db, identity, next_call
 from athena.core.ids import MAX_SQLITE_INTEGER
 
 SCHEMA = "athena.ready_queue.v1"
@@ -562,7 +562,12 @@ def _ready_lane(
                     "reason": handoff["reason"],
                     "yielded_by": handoff["yielded"]["actor_name"],
                     "yielded_at": handoff["yielded"]["created_at"],
-                    "next": "after claiming, resume it with resume_claim_handoff",
+                    "next": next_call.call(
+                        "resume_claim_handoff",
+                        "after claiming, with the generation the claim answers",
+                        issue_id=issue_id,
+                        handoff_token=handoff["handoff_token"],
+                    ),
                 },
             }
         )
